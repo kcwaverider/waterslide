@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "tier_config_hash": "sha256:e3b0c44298fc1c14",
+  "repos": [
+    {
+      "name": "tapistree",
+      "commit": "0123456789abcdef0123456789abcdef01234567"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "tapistree:api/workers/handlers.py",
+      "kind": "module",
+      "label": "handlers",
+      "tier": "domain",
+      "parent": null,
+      "source": {
+        "repo": "tapistree",
+        "path": "api/workers/handlers.py",
+        "line_start": 1,
+        "line_end": 80,
+        "hash": "sha256:f885d41a92fec84c"
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "tapistree:api/workers/handlers.py#dispatch",
+      "kind": "function",
+      "label": "dispatch → café handlers",
+      "tier": "domain",
+      "parent": "tapistree:api/workers/handlers.py",
+      "source": {
+        "repo": "tapistree",
+        "path": "api/workers/handlers.py",
+        "line_start": 5,
+        "line_end": 30,
+        "hash": "sha256:db8d1b6d64e4ec90"
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "tapistree:api/workers/indexer.py",
+      "kind": "module",
+      "label": "indexer",
+      "tier": "domain",
+      "parent": null,
+      "source": {
+        "repo": "tapistree",
+        "path": "api/workers/indexer.py",
+        "line_start": 1,
+        "line_end": 60,
+        "hash": "sha256:70fa78e5ae555639"
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "tapistree:api/workers/indexer.py#run",
+      "kind": "function",
+      "label": "Indexer — run",
+      "tier": "domain",
+      "parent": "tapistree:api/workers/indexer.py",
+      "source": {
+        "repo": "tapistree",
+        "path": "api/workers/indexer.py",
+        "line_start": 12,
+        "line_end": 40,
+        "hash": "sha256:acba25512100f80b"
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": true,
+      "entry_point_kind": "queue_subscriber",
+      "is_infrastructure": false,
+      "tags": [
+        "async",
+        "résumé"
+      ]
+    },
+    {
+      "id": "topic:note.indexed",
+      "kind": "topic",
+      "label": "note.indexed",
+      "tier": "store",
+      "parent": null,
+      "source": null,
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_3c8846ff248cdf64",
+      "from": "tapistree:api/workers/indexer.py#run",
+      "to": "tapistree:api/workers/handlers.py#dispatch",
+      "kind": "call",
+      "label": "dispatch",
+      "schema_id": null,
+      "response_schema_id": null,
+      "confidence": "annotated",
+      "confidence_reason": "hand-annotated: handlers registered dynamically at startup",
+      "condition": null,
+      "exclusive_group": null,
+      "is_error_path": false,
+      "source": null,
+      "source_count": 0,
+      "branch_ordinal": null,
+      "is_broken": false,
+      "broken_reason": null,
+      "skips_tiers": []
+    },
+    {
+      "id": "e_e1385f30411a8296",
+      "from": "topic:note.indexed",
+      "to": "tapistree:api/workers/indexer.py#run",
+      "kind": "subscribe",
+      "label": "note.indexed",
+      "schema_id": null,
+      "response_schema_id": null,
+      "confidence": "inferred",
+      "confidence_reason": "matched subscribe topic literal 'note.indexed' in api/workers/indexer.py",
+      "condition": null,
+      "exclusive_group": null,
+      "is_error_path": false,
+      "source": {
+        "repo": "tapistree",
+        "path": "api/workers/indexer.py",
+        "line_start": 12,
+        "line_end": null
+      },
+      "source_count": 1,
+      "branch_ordinal": null,
+      "is_broken": false,
+      "broken_reason": null,
+      "skips_tiers": []
+    }
+  ],
+  "schemas": []
+}

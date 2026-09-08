@@ -1,0 +1,107 @@
+{
+  "duplicate-node-id.json": {
+    "code": "E_DUPLICATE_ID",
+    "path": "$.nodes[1].id",
+    "why": "second node repeats the first node's id (invariant 1)"
+  },
+  "edge-endpoint-unresolved.json": {
+    "code": "E_EDGE_ENDPOINT",
+    "path": "$.edges[4].to",
+    "why": "edge points at a node id that does not exist (invariant 2)"
+  },
+  "parent-unresolved.json": {
+    "code": "E_PARENT",
+    "path": "$.nodes[7].parent",
+    "why": "node's parent id does not exist (invariant 3)"
+  },
+  "schema-ref-unresolved.json": {
+    "code": "E_SCHEMA_REF",
+    "path": "$.edges[4].schema_id",
+    "why": "edge schema_id names a schema that is not in the graph (invariant 4)"
+  },
+  "ref-schema-id-unresolved.json": {
+    "code": "E_SCHEMA_REF",
+    "path": "$.schemas[0].fields[0].ref_schema_id",
+    "why": "field ref_schema_id names a schema that is not in the graph (invariant 4)"
+  },
+  "illegal-node-kind.json": {
+    "code": "E_ILLEGAL_ENUM",
+    "path": "$.nodes[7].kind",
+    "why": "node kind 'widget' is not in the enum (invariant 5)"
+  },
+  "illegal-skips-tier.json": {
+    "code": "E_ILLEGAL_ENUM",
+    "path": "$.edges[4].skips_tiers[0]",
+    "why": "skips_tiers contains 'basement', not a tier (invariant 11)"
+  },
+  "missing-confidence-reason.json": {
+    "code": "E_CONFIDENCE_REASON",
+    "path": "$.nodes[1].confidence_reason",
+    "why": "inferred node with confidence_reason null (invariant 6)"
+  },
+  "entry-point-without-kind.json": {
+    "code": "E_ENTRY_POINT_KIND",
+    "path": "$.nodes[7].entry_point_kind",
+    "why": "is_entry_point true with entry_point_kind null (invariant 7)"
+  },
+  "broken-without-reason.json": {
+    "code": "E_BROKEN_REASON",
+    "path": "$.edges[4].broken_reason",
+    "why": "is_broken true with broken_reason null (invariant 8)"
+  },
+  "fork-without-source.json": {
+    "code": "E_FORK_SOURCE",
+    "path": "$.edges[0].source",
+    "why": "edge in an exclusive_group with source null (invariant 9)"
+  },
+  "tombstone-with-source.json": {
+    "code": "E_TOMBSTONE_SOURCE",
+    "path": "$.nodes[5].source",
+    "why": "tombstone node that still carries a source (invariant 10)"
+  },
+  "missing-key.json": {
+    "code": "E_MISSING_KEY",
+    "path": "$.edges[4].broken_reason",
+    "why": "broken_reason key omitted instead of null (invariant 12, §2.5)"
+  },
+  "source-count-mismatch.json": {
+    "code": "E_SOURCE_COUNT",
+    "path": "$.edges[4].source_count",
+    "why": "source non-null but source_count 0 (invariant 13)"
+  },
+  "branch-ordinal-without-group.json": {
+    "code": "E_BRANCH_ORDINAL",
+    "path": "$.edges[4].branch_ordinal",
+    "why": "branch_ordinal set on an edge with no exclusive_group (invariant 14)"
+  },
+  "duplicate-branch-ordinal.json": {
+    "code": "E_BRANCH_ORDINAL_DUPLICATE",
+    "path": "$.edges[1].branch_ordinal",
+    "why": "two alternatives in one exclusive_group share branch_ordinal 0 (invariant 15)"
+  },
+  "skips-tiers-into-external.json": {
+    "code": "E_SKIPS_TIERS_EXCLUDED",
+    "path": "$.edges[3].skips_tiers",
+    "why": "external_call edge with non-empty skips_tiers; external is not a depth (invariant 16)"
+  },
+  "wrong-schema-version.json": {
+    "code": "E_SCHEMA_VERSION",
+    "path": "$.schema_version",
+    "why": "schema_version 2 against a version 1 model; must fail loudly (handoff §5.2)"
+  },
+  "canonical-with-volatile.json": {
+    "code": "E_VOLATILE_SHAPE",
+    "path": "$",
+    "why": "parsed_at present in a graph validated as canonical shape (graph model §7.3)"
+  },
+  "unknown-key.json": {
+    "code": "E_UNKNOWN_KEY",
+    "path": "$.nodes[7]",
+    "why": "node carries a key the model does not define"
+  },
+  "not-an-object.json": {
+    "code": "E_NOT_OBJECT",
+    "path": "$",
+    "why": "a JSON array, not a graph object"
+  }
+}

@@ -1,0 +1,497 @@
+{
+  "schema_version": 2,
+  "tier_config_hash": "sha256:e3b0c44298fc1c14",
+  "repos": [
+    {
+      "name": "tapistree",
+      "commit": "0123456789abcdef0123456789abcdef01234567"
+    },
+    {
+      "name": "tapistree-ios",
+      "commit": "89abcdef0123456789abcdef0123456789abcdef"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "ext:cohere/embed",
+      "kind": "external_service",
+      "label": "Cohere Embed",
+      "tier": "external",
+      "parent": null,
+      "source": null,
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "mongo:tapistree.notes",
+      "kind": "collection",
+      "label": "notes",
+      "tier": "store",
+      "parent": null,
+      "source": null,
+      "confidence": "inferred",
+      "confidence_reason": "inferred collection 'notes' from entity class Note",
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "tapistree-ios:Sources/Services/NoteService.swift",
+      "kind": "module",
+      "label": "NoteService.swift",
+      "tier": "ui_logic",
+      "parent": null,
+      "source": {
+        "repo": "tapistree-ios",
+        "path": "Sources/Services/NoteService.swift",
+        "line_start": 1,
+        "line_end": 120,
+        "hash": "sha256:be7ea0d110454fbb"
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "tapistree-ios:Sources/Services/NoteService.swift#NoteService.update",
+      "kind": "client_service",
+      "label": "NoteService.update",
+      "tier": "ui_logic",
+      "parent": "tapistree-ios:Sources/Services/NoteService.swift",
+      "source": {
+        "repo": "tapistree-ios",
+        "path": "Sources/Services/NoteService.swift",
+        "line_start": 80,
+        "line_end": 96,
+        "hash": "sha256:f816b3f29061a269"
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "tapistree:api/repositories/note_repo.py",
+      "kind": "module",
+      "label": "note_repo",
+      "tier": "data_access",
+      "parent": null,
+      "source": {
+        "repo": "tapistree",
+        "path": "api/repositories/note_repo.py",
+        "line_start": 1,
+        "line_end": 70,
+        "hash": "sha256:6e576d8e896fde60"
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "tapistree:api/repositories/note_repo.py#NoteRepository.save",
+      "kind": "repository",
+      "label": "NoteRepository.save",
+      "tier": "data_access",
+      "parent": "tapistree:api/repositories/note_repo.py",
+      "source": {
+        "repo": "tapistree",
+        "path": "api/repositories/note_repo.py",
+        "line_start": 22,
+        "line_end": 35,
+        "hash": "sha256:23215d6f720f216d"
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "tapistree:api/routers/notes.py",
+      "kind": "module",
+      "label": "notes router",
+      "tier": "api",
+      "parent": null,
+      "source": {
+        "repo": "tapistree",
+        "path": "api/routers/notes.py",
+        "line_start": 1,
+        "line_end": 90,
+        "hash": "sha256:ac4abe4ba61574e5"
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "tapistree:api/routers/notes.py#update_note",
+      "kind": "endpoint",
+      "label": "PUT /notes/{id}",
+      "tier": "api",
+      "parent": "tapistree:api/routers/notes.py",
+      "source": {
+        "repo": "tapistree",
+        "path": "api/routers/notes.py",
+        "line_start": 42,
+        "line_end": 58,
+        "hash": "sha256:8a84e406c08ac959"
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": true,
+      "entry_point_kind": "http_route",
+      "is_infrastructure": false,
+      "tags": [
+        "auth_required"
+      ]
+    },
+    {
+      "id": "tapistree:api/services/note_service.py",
+      "kind": "module",
+      "label": "note_service",
+      "tier": "domain",
+      "parent": null,
+      "source": {
+        "repo": "tapistree",
+        "path": "api/services/note_service.py",
+        "line_start": 1,
+        "line_end": 140,
+        "hash": "sha256:7807b67547cec2a3"
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "tapistree:api/services/note_service.py#NoteService.reject",
+      "kind": "function",
+      "label": "NoteService.reject",
+      "tier": "domain",
+      "parent": "tapistree:api/services/note_service.py",
+      "source": {
+        "repo": "tapistree",
+        "path": "api/services/note_service.py",
+        "line_start": 54,
+        "line_end": 61,
+        "hash": "sha256:9d8e3ca2a17801e1"
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "tapistree:api/services/note_service.py#NoteService.update",
+      "kind": "function",
+      "label": "NoteService.update",
+      "tier": "domain",
+      "parent": "tapistree:api/services/note_service.py",
+      "source": {
+        "repo": "tapistree",
+        "path": "api/services/note_service.py",
+        "line_start": 30,
+        "line_end": 52,
+        "hash": "sha256:07fc3c2d33aa6952"
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_542f164d5f46dab8",
+      "from": "tapistree:api/services/note_service.py#NoteService.update",
+      "to": "tapistree:api/repositories/note_repo.py#NoteRepository.save",
+      "kind": "call",
+      "label": "save",
+      "schema_id": "sch_note_update_req",
+      "response_schema_id": null,
+      "confidence": "certain",
+      "confidence_reason": null,
+      "condition": {
+        "expr": "if note.is_valid()",
+        "source_line": 40
+      },
+      "exclusive_group": "note_service.py:NoteService.update:L40",
+      "is_error_path": false,
+      "source": {
+        "repo": "tapistree",
+        "path": "api/services/note_service.py",
+        "line_start": 41,
+        "line_end": null
+      },
+      "source_count": 1,
+      "branch_ordinal": 0,
+      "is_broken": false,
+      "broken_reason": null,
+      "skips_tiers": []
+    },
+    {
+      "id": "e_a7d772cb0f59d4e6",
+      "from": "tapistree:api/services/note_service.py#NoteService.update",
+      "to": "tapistree:api/services/note_service.py#NoteService.reject",
+      "kind": "call",
+      "label": "reject",
+      "schema_id": null,
+      "response_schema_id": null,
+      "confidence": "certain",
+      "confidence_reason": null,
+      "condition": {
+        "expr": "else",
+        "source_line": 44
+      },
+      "exclusive_group": "note_service.py:NoteService.update:L40",
+      "is_error_path": true,
+      "source": {
+        "repo": "tapistree",
+        "path": "api/services/note_service.py",
+        "line_start": 45,
+        "line_end": null
+      },
+      "source_count": 1,
+      "branch_ordinal": 1,
+      "is_broken": false,
+      "broken_reason": null,
+      "skips_tiers": []
+    },
+    {
+      "id": "e_c7c2efc3fef2f48e",
+      "from": "tapistree-ios:Sources/Services/NoteService.swift#NoteService.update",
+      "to": "tapistree:api/routers/notes.py#update_note",
+      "kind": "http_request",
+      "label": "PUT /notes/{id}",
+      "schema_id": "sch_note_update_req",
+      "response_schema_id": "sch_note_response",
+      "confidence": "inferred",
+      "confidence_reason": "matched URL path literal to route decorator",
+      "condition": null,
+      "exclusive_group": null,
+      "is_error_path": false,
+      "source": {
+        "repo": "tapistree-ios",
+        "path": "Sources/Services/NoteService.swift",
+        "line_start": 88,
+        "line_end": null
+      },
+      "source_count": 1,
+      "branch_ordinal": null,
+      "is_broken": false,
+      "broken_reason": null,
+      "skips_tiers": []
+    },
+    {
+      "id": "e_d33065d13a4a0ccf",
+      "from": "tapistree:api/services/note_service.py#NoteService.update",
+      "to": "ext:cohere/embed",
+      "kind": "external_call",
+      "label": "embed",
+      "schema_id": "sch_embed_request",
+      "response_schema_id": null,
+      "confidence": "certain",
+      "confidence_reason": null,
+      "condition": null,
+      "exclusive_group": null,
+      "is_error_path": false,
+      "source": {
+        "repo": "tapistree",
+        "path": "api/services/note_service.py",
+        "line_start": 36,
+        "line_end": 38
+      },
+      "source_count": 2,
+      "branch_ordinal": null,
+      "is_broken": false,
+      "broken_reason": null,
+      "skips_tiers": []
+    },
+    {
+      "id": "e_dd18a22155d2d22b",
+      "from": "tapistree:api/routers/notes.py#update_note",
+      "to": "tapistree:api/services/note_service.py#NoteService.update",
+      "kind": "call",
+      "label": "update",
+      "schema_id": "sch_note_update_req",
+      "response_schema_id": "sch_note_response",
+      "confidence": "certain",
+      "confidence_reason": null,
+      "condition": null,
+      "exclusive_group": null,
+      "is_error_path": false,
+      "source": {
+        "repo": "tapistree",
+        "path": "api/routers/notes.py",
+        "line_start": 51,
+        "line_end": null
+      },
+      "source_count": 1,
+      "branch_ordinal": null,
+      "is_broken": false,
+      "broken_reason": null,
+      "skips_tiers": []
+    },
+    {
+      "id": "e_fe04e8a748b5b8db",
+      "from": "tapistree:api/repositories/note_repo.py#NoteRepository.save",
+      "to": "mongo:tapistree.notes",
+      "kind": "write",
+      "label": "replace_one",
+      "schema_id": "sch_note_update_req",
+      "response_schema_id": null,
+      "confidence": "inferred",
+      "confidence_reason": "inferred collection 'notes' from entity class Note",
+      "condition": null,
+      "exclusive_group": null,
+      "is_error_path": false,
+      "source": {
+        "repo": "tapistree",
+        "path": "api/repositories/note_repo.py",
+        "line_start": 31,
+        "line_end": null
+      },
+      "source_count": 1,
+      "branch_ordinal": null,
+      "is_broken": false,
+      "broken_reason": null,
+      "skips_tiers": []
+    }
+  ],
+  "schemas": [
+    {
+      "id": "sch_embed_request",
+      "name": "EmbedRequest",
+      "source": {
+        "repo": "tapistree",
+        "path": "api/clients/cohere.py",
+        "line_start": 8,
+        "line_end": 12
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "fields": [
+        {
+          "name": "texts",
+          "type": "list[str]",
+          "optional": false,
+          "classification": [
+            "free_text",
+            "may_contain_pii"
+          ],
+          "ref_schema_id": null
+        },
+        {
+          "name": "model",
+          "type": "str",
+          "optional": true,
+          "classification": [],
+          "ref_schema_id": null
+        }
+      ]
+    },
+    {
+      "id": "sch_note_response",
+      "name": "NoteResponse",
+      "source": {
+        "repo": "tapistree",
+        "path": "api/models/note.py",
+        "line_start": 20,
+        "line_end": 26
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "fields": [
+        {
+          "name": "note_id",
+          "type": "str",
+          "optional": false,
+          "classification": [
+            "identifier"
+          ],
+          "ref_schema_id": null
+        },
+        {
+          "name": "body",
+          "type": "str",
+          "optional": false,
+          "classification": [
+            "free_text",
+            "may_contain_pii"
+          ],
+          "ref_schema_id": null
+        },
+        {
+          "name": "updated_at",
+          "type": "datetime",
+          "optional": false,
+          "classification": [],
+          "ref_schema_id": null
+        }
+      ]
+    },
+    {
+      "id": "sch_note_update_req",
+      "name": "NoteUpdateRequest",
+      "source": {
+        "repo": "tapistree",
+        "path": "api/models/note.py",
+        "line_start": 12,
+        "line_end": 18
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "fields": [
+        {
+          "name": "note_id",
+          "type": "str",
+          "optional": false,
+          "classification": [
+            "identifier"
+          ],
+          "ref_schema_id": null
+        },
+        {
+          "name": "body",
+          "type": "str",
+          "optional": false,
+          "classification": [
+            "free_text",
+            "may_contain_pii"
+          ],
+          "ref_schema_id": null
+        },
+        {
+          "name": "tags",
+          "type": "list[str]",
+          "optional": true,
+          "classification": [],
+          "ref_schema_id": null
+        }
+      ]
+    }
+  ]
+}

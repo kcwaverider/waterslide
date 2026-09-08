@@ -1,0 +1,194 @@
+{
+  "schema_version": 1,
+  "tier_config_hash": "sha256:e3b0c44298fc1c14",
+  "repos": [
+    {
+      "name": "ledger",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "ledger:app/queries.py",
+      "kind": "module",
+      "label": "queries",
+      "tier": "data_access",
+      "parent": null,
+      "source": {
+        "repo": "ledger",
+        "path": "app/queries.py",
+        "line_start": 1,
+        "line_end": 30,
+        "hash": "sha256:07193df400d460d8"
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "ledger:app/queries.py#load_entries",
+      "kind": "repository",
+      "label": "load_entries",
+      "tier": "data_access",
+      "parent": "ledger:app/queries.py",
+      "source": {
+        "repo": "ledger",
+        "path": "app/queries.py",
+        "line_start": 5,
+        "line_end": 14,
+        "hash": "sha256:0cf67fc72b3c86c7"
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "ledger:app/routes.py",
+      "kind": "module",
+      "label": "routes",
+      "tier": "api",
+      "parent": null,
+      "source": {
+        "repo": "ledger",
+        "path": "app/routes.py",
+        "line_start": 1,
+        "line_end": 40,
+        "hash": "sha256:e22bc966d9352957"
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "ledger:app/routes.py#list_entries",
+      "kind": "endpoint",
+      "label": "GET /entries",
+      "tier": "api",
+      "parent": "ledger:app/routes.py",
+      "source": {
+        "repo": "ledger",
+        "path": "app/routes.py",
+        "line_start": 10,
+        "line_end": 18,
+        "hash": "sha256:a330395cc0a53ad1"
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": true,
+      "entry_point_kind": "http_route",
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "mongo:ledger.entries",
+      "kind": "collection",
+      "label": "entries",
+      "tier": "store",
+      "parent": null,
+      "source": null,
+      "confidence": "inferred",
+      "confidence_reason": "inferred collection 'entries' from entity class Entry",
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_d1fded81d067ea7b",
+      "from": "ledger:app/queries.py#load_entries",
+      "to": "mongo:ledger.entries",
+      "kind": "read",
+      "label": "find",
+      "schema_id": null,
+      "response_schema_id": "sch_entry_list",
+      "confidence": "inferred",
+      "confidence_reason": "inferred collection 'entries' from entity class Entry",
+      "condition": null,
+      "exclusive_group": null,
+      "is_error_path": false,
+      "source": {
+        "repo": "ledger",
+        "path": "app/queries.py",
+        "line_start": 11,
+        "line_end": null
+      },
+      "source_count": 1,
+      "branch_ordinal": null,
+      "is_broken": false,
+      "broken_reason": null,
+      "skips_tiers": []
+    },
+    {
+      "id": "e_e4d6231a55bba427",
+      "from": "ledger:app/routes.py#list_entries",
+      "to": "ledger:app/queries.py#load_entries",
+      "kind": "call",
+      "label": "load_entries",
+      "schema_id": null,
+      "response_schema_id": "sch_entry_list",
+      "confidence": "certain",
+      "confidence_reason": null,
+      "condition": null,
+      "exclusive_group": null,
+      "is_error_path": false,
+      "source": {
+        "repo": "ledger",
+        "path": "app/routes.py",
+        "line_start": 15,
+        "line_end": null
+      },
+      "source_count": 1,
+      "branch_ordinal": null,
+      "is_broken": false,
+      "broken_reason": null,
+      "skips_tiers": [
+        "domain"
+      ]
+    }
+  ],
+  "schemas": [
+    {
+      "id": "sch_entry_list",
+      "name": "list[Entry]",
+      "source": {
+        "repo": "ledger",
+        "path": "app/models.py",
+        "line_start": 3,
+        "line_end": 9
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "fields": [
+        {
+          "name": "id",
+          "type": "str",
+          "optional": false,
+          "classification": [
+            "identifier"
+          ],
+          "ref_schema_id": null
+        },
+        {
+          "name": "amount",
+          "type": "Decimal",
+          "optional": false,
+          "classification": [
+            "financial"
+          ],
+          "ref_schema_id": null
+        }
+      ]
+    }
+  ]
+}
