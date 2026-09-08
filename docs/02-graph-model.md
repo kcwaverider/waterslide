@@ -401,6 +401,27 @@ map with false breakage.
 if `source_count == 0`; `branch_ordinal` non-null exactly when `exclusive_group`
 is non-null.
 
+#### 3.3.1 Edge id encoding (normative)
+
+"A hash of `from` + `to` + `kind`" is not enough to make two implementations
+agree, and naive concatenation lets different tuples share an input. One
+encoding, implemented once:
+
+| Step | Definition |
+|---|---|
+| Key | Non-fork edge: `[from, to, kind]`. Fork edge: `[from, to, kind, exclusive_group, branch_ordinal]` |
+| Input bytes | The key serialized as a JSON array with no whitespace, strings NFC-normalized, encoded UTF-8. JSON array framing makes the input unambiguous — no separator can appear inside a quoted string unescaped |
+| Hash | SHA-256 over the input bytes |
+| Output | `e_` followed by the first 16 lowercase hex characters of the digest |
+
+Sixty-four bits is ample for graphs of thousands of edges and keeps ids readable
+in diffs. The full digest is not persisted anywhere.
+
+`core/` exports the single function that does this, and packs **must** call it
+rather than compute ids themselves — the same reason the Zod schemas live in
+`core/` (handoff §5.2). Hand-written fixtures may use any unique string as an
+edge id; the validator checks uniqueness and resolution, not derivation.
+
 ### 3.4 `skips_tiers`
 
 Populated when an edge jumps more than one band — a `ui_view` writing straight to
@@ -654,12 +675,12 @@ resolved by config, which is why declared always wins.
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `schema_version` | int | yes | Bump on breaking model changes |
-| `parsed_at` | ISO 8601 | yes | When this graph was produced |
+| `parsed_at` | ISO 8601 | yes (artifact only, §7.3) | When this graph was produced |
 | `repos` | Repo[] | yes | Always a list, even at length one |
 | `repos[].name` | string | yes | Used in node ids |
-| `repos[].path` | string | yes | Local checkout path |
+| `repos[].path` | string | yes (artifact only, §7.3) | Local checkout path |
 | `repos[].commit` | string | yes | Hash, for reproducibility |
-| `repos[].dirty` | bool | yes | Uncommitted changes present |
+| `repos[].dirty` | bool | yes (artifact only, §7.3) | Uncommitted changes present |
 | `tier_config_hash` | string | yes | Invalidates layout when tiers change |
 | `stats` | object | no | Counts, including breakdown by confidence. The only optional key in the model — safe because §7.1 excludes it from the canonical graph, so its presence cannot affect byte-identity |
 
@@ -713,6 +734,7 @@ Two runs over identical inputs must produce byte-identical canonical graphs.
 | Line endings | `\n` |
 | Trailing newline | Present |
 | Unicode | NFC-normalized, UTF-8, no BOM |
+| String escaping | Only what RFC 8259 §7 requires: `"`, `\`, and U+0000–U+001F, using the two-character short forms (`\n`, `\t`, `\r`, `\b`, `\f`) where they exist and `\u00XX` lowercase-hex otherwise. Every other code point, non-ASCII included, is emitted as literal UTF-8, never as a `\u` escape. `/` is not escaped. This is `JSON.stringify`'s behaviour for well-formed strings |
 | Numbers | Integers only in the model; no float formatting question arises |
 
 Sorting is byte-wise on the UTF-8 encoding, not locale-aware — locale collation
@@ -726,6 +748,24 @@ cheaper and harder to get subtly wrong.
 Provide a `--canonical` flag (or equivalent) that writes only canonical fields in
 canonical form. Anything depending on stability — layout, change detection,
 diffing — reads that.
+
+### 7.3 Two shapes, one validator
+
+The §7 table marks `parsed_at`, `repos[].path` and `repos[].dirty` as required,
+yet the canonical graph omits them by definition, and fixtures are written in
+canonical form. Both are valid, as different shapes of the same contract:
+
+| Shape | Contents | Where it appears |
+|---|---|---|
+| **`CanonicalGraph`** | Every field except the §7.1 volatile ones | Fixtures, `--canonical` output, everything that compares or diffs |
+| **`GraphArtifact`** | `CanonicalGraph` plus the volatile fields | `graph.json` as written by `parse` |
+
+In Zod terms `GraphArtifact` extends `CanonicalGraph`; there is one set of node,
+edge and schema schemas, not two. The validator accepts either shape and applies
+every invariant to the fields both share. "Required" in the §7 table means
+required *in the artifact*; the three volatile fields are simply not part of the
+canonical shape rather than being optional within it, so §2.5's rule against
+optional keys still holds.
 
 ---
 
@@ -761,8 +801,8 @@ Computed at render time:
   against `baseline.json`. Derivation table lives in persisted-files spec §1.5.
   It must **not** be derived from the absence of a saved position; that coupled
   diff detection to layout storage and broke once layout became personal.
-- **Default branch selection** at each `exclusive_group`, per §3.2. Deterministic
-  from `is_error_path`, source line and `branch_ordinal`, so never persisted.
+- **Default branch selection** at each `exclusive_group`. Deterministic under
+  §3.2's four-step total ordering, so never persisted.
 - **Aggregated edges** for zoomed-out views — forty calls to Mongo become one
   thick line, and the animation shows one object moving rather than forty.
 - **Reachable set** from an entry point — the "blast radius" driving flow mode.

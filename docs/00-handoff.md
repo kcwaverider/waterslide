@@ -164,24 +164,26 @@ Requirements:
 - `core` has **no dependencies on `packs/*`**, and this must be *mechanically*
   enforced. npm workspaces alone will **not** do it: every workspace is symlinked
   into the root `node_modules`, so an undeclared import from `core` into `packs`
-  still resolves and typechecks. Use both:
-  - **TypeScript project references** — `core`'s tsconfig does not reference
-    `packs/*`, so the import fails to compile.
-  - **ESLint `no-restricted-imports`** — a zone rule banning `packs/*` from
-    `core/**`, so the failure names the rule instead of surfacing as a module
-    resolution error.
+  still resolves and typechecks. TypeScript project references do **not** help
+  either: they define build order, not import permissions, and a linked workspace
+  package that exposes declarations compiles fine without one. The enforcement is:
+  - **ESLint `no-restricted-imports`** — a zone rule banning `packs/*` (both the
+    workspace package names and relative paths) from `core/**`. This is the
+    guardrail, and it names the rule in the failure.
+  - **TypeScript project references** for build order only. Do not describe them
+    as a boundary.
 
-  CI must fail on either. A convention that holds only because nobody tested it is
-  exactly what §5.2 exists to prevent.
-- The CI job must run the validator over every fixture, including the malformed
-  ones, and assert each is rejected. A validator that isn't in CI isn't an
-  arbiter (§5.2).
+  CI must fail on the lint error. A convention that holds only because nobody
+  tested it is exactly what §5.2 exists to prevent.
+- The CI job must run the validator over every fixture. It must accept every
+  valid fixture and reject every malformed fixture with the expected diagnostic.
+  A validator that isn't in CI isn't an arbiter (§5.2).
 - Keep tree-sitter queries in `.scm` files and the `is_error_path` construct
   tables in data files, per §2.
 
 **Done when:** `npm run typecheck`, `npm test`, and the CI workflow all pass on an
 empty-but-wired repo, and a deliberately added import from `core` into `packs`
-fails both typecheck and lint. Write that import, watch it fail, then delete it —
+fails lint. Write that import, watch it fail, then delete it —
 an unverified guardrail isn't one.
 
 ---
@@ -205,15 +207,15 @@ against.
 | 1 | Node ids unique; edge ids unique; schema ids unique |
 | 2 | Every edge `from` and `to` resolves to a node in the graph |
 | 3 | Every `parent` resolves to a node in the graph |
-| 4 | Every `schema_id`, `response_schema_id` and `ref_schema_id` resolves to a schema |
+| 4 | Every **non-null** `schema_id`, `response_schema_id` and `ref_schema_id` resolves to a schema |
 | 5 | Every enum value is a legal member |
 | 6 | `confidence != certain` → `confidence_reason` non-null (nodes, edges, schemas) |
 | 7 | `is_entry_point: true` → `entry_point_kind` non-null |
 | 8 | `is_broken: true` → `broken_reason` non-null |
 | 9 | `exclusive_group` non-null → `source` non-null (graph model §3.2) |
-| 10 | `kind: tombstone` → `source` is null |
+| 10 | Node `kind: tombstone` → node `source` is null (nodes only; `tombstone` is not an edge kind) |
 | 11 | Every `skips_tiers` member is a legal `tier` enum value |
-| 12 | Every field-table key with Required `yes` or a condition is **present**, per graph model §2.5 |
+| 12 | Every field-table key with Required `yes` or a condition is **present**, per graph model §2.5. Volatile fields (§7.1) are required in the artifact and absent from the canonical graph; the validator accepts either shape, §7.3 |
 | 13 | `source == null` if and only if `source_count == 0` (graph model §3.3) |
 | 14 | `branch_ordinal` non-null if and only if `exclusive_group` non-null |
 | 15 | `branch_ordinal` values are unique within each `exclusive_group` |
