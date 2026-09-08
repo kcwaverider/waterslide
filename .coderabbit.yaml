@@ -1,0 +1,22 @@
+reviews:
+  path_filters:
+    - "!package-lock.json"
+    - "!**/package-lock.json"
+    - "!**/dist/**"
+  path_instructions:
+    - path: "fixtures/malformed/**"
+      instructions: >
+        These files are deliberately invalid. They exist so the validator can be
+        tested against known-bad input. Do not report their invalidity as a bug.
+        Do report a fixture that is invalid in a different way than its filename
+        and comments claim.
+    - path: "fixtures/valid/**"
+      instructions: >
+        Hand-written graph fixtures in canonical serialized form. Key order,
+        array sort order and whitespace are load-bearing — see
+        docs/02-graph-model.md §7.2. Do not suggest reformatting.
+    - path: "docs/**"
+      instructions: >
+        Specifications written before implementation and authoritative over the
+        code. Prioritise internal contradictions and cross-document
+        inconsistencies over prose style.

@@ -418,6 +418,17 @@ Mitigations, in order of reliability:
 - When two contract-touching PRs are open at once, merge one and rebase the other
   before review rather than reviewing both against the same base.
 
+### 8.3 Review cadence
+
+Automated review runs on every push and draws from a limited hourly pool.
+Pushing while a review is still running discards the review in progress — the
+result never posts, but the allowance is spent.
+
+**Batch commits locally and push once per review cycle.** Push, wait for the
+review to post, act on it, then push again. One review per round. Review
+configuration lives in a file at the repo root and must be present on the
+feature branch to apply to that branch's PR.
+
 ---
 
 ## 9. Remaining milestones
