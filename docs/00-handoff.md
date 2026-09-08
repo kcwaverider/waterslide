@@ -148,15 +148,16 @@ produces code that looks right and diverges quietly.
 ### 4.2 Stage 0 — Toolchain (do this first, serially)
 
 The repo ships with docs, a README, a licence and a gitignore, and nothing else.
-M0 cannot land without a toolchain, and the validator-in-CI requirement (§5.2)
-needs a workflow. **This is agent work, not human work** — set it up before M0.
+M0 cannot land without a toolchain, and the validator-as-arbiter requirement
+(§5.2) needs somewhere to run on every commit. **This is agent work, not human
+work** — set it up before M0.
 
 | Piece | Choice |
 |---|---|
 | Package manager / layout | **npm workspaces** — `core`, `packs/*`, `cli`, `web` |
 | TypeScript | **Strict, ESM.** `"strict": true`, `"module": "nodenext"` |
 | Test runner | **vitest** |
-| CI | **GitHub Actions**: typecheck → test → validate fixtures, on every PR |
+| Gate | **Pre-commit hook**: typecheck → lint → test, on every commit. GitHub Actions is road map (§5.2) |
 | Formatting | Prettier, default config. Not worth a debate |
 
 Requirements:
@@ -173,18 +174,21 @@ Requirements:
   - **TypeScript project references** for build order only. Do not describe them
     as a boundary.
 
-  CI must fail on the lint error. A convention that holds only because nobody
-  tested it is exactly what §5.2 exists to prevent.
-- The CI job must run the validator over every fixture. It must accept every
-  valid fixture and reject every malformed fixture with the expected diagnostic.
-  A validator that isn't in CI isn't an arbiter (§5.2).
+  The pre-commit hook must fail on the lint error. A convention that holds only
+  because nobody tested it is exactly what §5.2 exists to prevent.
+- The test suite, run by the pre-commit hook, must run the validator over every
+  fixture. It must accept every valid fixture and reject every malformed fixture
+  with the expected diagnostic. A validator that doesn't run on every commit
+  isn't an arbiter (§5.2).
+- The pre-commit hook is a plain script under version control, installed by
+  `npm install` via `core.hooksPath`. No hook-manager dependency.
 - Keep tree-sitter queries in `.scm` files and the `is_error_path` construct
   tables in data files, per §2.
 
-**Done when:** `npm run typecheck`, `npm test`, and the CI workflow all pass on an
-empty-but-wired repo, and a deliberately added import from `core` into `packs`
-fails lint. Write that import, watch it fail, then delete it —
-an unverified guardrail isn't one.
+**Done when:** `npm run typecheck`, `npm run lint` and `npm test` all pass on an
+empty-but-wired repo, the pre-commit hook runs all three, and a deliberately added
+import from `core` into `packs` fails lint. Write that import, watch it fail, then
+delete it — an unverified guardrail isn't one.
 
 ---
 
@@ -215,7 +219,7 @@ against.
 | 9 | `exclusive_group` non-null → `source` non-null (graph model §3.2) |
 | 10 | Node `kind: tombstone` → node `source` is null (nodes only; `tombstone` is not an edge kind) |
 | 11 | Every `skips_tiers` member is a legal `tier` enum value |
-| 12 | Every field-table key with Required `yes` or a condition is **present**, per graph model §2.5. Volatile fields (§7.1) are required in the artifact and absent from the canonical graph; the validator accepts either shape, §7.3 |
+| 12 | Every field-table key with Required `yes` or a condition is **present**, per graph model §2.5. Volatile fields (§7.1) are required in the artifact shape and must be absent in the canonical shape; the caller names the shape explicitly, §7.3 |
 | 13 | `source == null` if and only if `source_count == 0` (graph model §3.3) |
 | 14 | `branch_ordinal` non-null if and only if `exclusive_group` non-null |
 | 15 | `branch_ordinal` values are unique within each `exclusive_group` |
@@ -228,7 +232,11 @@ target still exists. See graph model §5.1.
   **Written in canonical form** (graph model §7.2), so round-trip verification is
   a plain file diff. **At least one valid fixture must be multi-repo** — graph
   model §0 requires the two-repo case exercised from milestone one, and a
-  single-repo fixture would let repo-scoped ids pass untested.
+  single-repo fixture would let repo-scoped ids pass untested. **At least one
+  valid fixture uses edge ids produced by `core`'s id function** (graph model
+  §3.3.1), and a unit test pins that function's output for a known input as a
+  literal expected hash. Without both, nothing tests the encoding and a wrong
+  implementation survives until two packs disagree in Stage 2.
 
 **Done when:** hand-written fixtures round-trip byte-identically, and the
 validator rejects each malformed fixture with a specific message. Round-tripping
@@ -248,8 +256,10 @@ persuasively. Make disagreement structurally impossible instead:
 - The model is **importable code**, not prose. Both packs import the same Zod
   schemas from `core/`. Drift becomes an import error, not a judgement call.
 - Emit a **JSON Schema** from the model with `z.toJSONSchema()` and commit it.
-- The **validator is the arbiter**, and runs in CI on every PR. Every track's
-  output must pass it.
+- The **validator is the arbiter**, and runs in the pre-commit hook on every
+  commit. Every track's output must pass it. Running it in CI on every PR is
+  road map, not MVP — the reasoning holds unchanged if this ever gets more than
+  one contributor, but a hook is enough while it has one.
 - **`core/` is privileged.** Only the orchestrating session changes it. A pack
   that needs a model change files a request; it does not edit `core/` itself.
 - The graph model **version field must fail loudly** on mismatch. A thin map looks
@@ -402,8 +412,9 @@ single diff shows the problem.
 Mitigations, in order of reliability:
 
 - `core/` is privileged (§5.2). Contract changes go through one session, not three.
-- The validator runs in CI on every PR, so an inconsistency fails a check rather
-  than relying on someone noticing.
+- The validator runs in the pre-commit hook on every commit, so an inconsistency
+  fails a check rather than relying on someone noticing. CI on every PR is road
+  map (§5.2).
 - When two contract-touching PRs are open at once, merge one and rebase the other
   before review rather than reviewing both against the same base.
 
