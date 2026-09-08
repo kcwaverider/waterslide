@@ -68,7 +68,7 @@ Notes that matter:
 ## 3. Build sequence at a glance
 
 ```
-STAGE 0  ──────────────  serial, human    Repo, tooling, docs PR
+STAGE 0  ──────────────  serial, agent    Toolchain, CI, workspaces
 STAGE 1  ──────────────  SERIAL           M0: freeze the contract
 STAGE 2  ──┬── path A ──┐
             ├── path B ──┤  3 PARALLEL     M1: both packs + crude renderer
@@ -129,8 +129,10 @@ Do not read all six docs now. Read at the point of use.
 
 | When | Read | Depth |
 |---|---|---|
-| Now | `01-scope.md` | Fully. 89 lines, tells you what not to build |
+| Now | `01-scope.md` | Fully. Tells you what not to build |
 | Now | `02-graph-model.md` | Fully. Everything depends on it |
+| **M0** | `05-parser-pipeline.md` **§3 and §3.6 only** | Fully. The pack interface and `UnresolvedRef` are M0 contract items |
+| **M0** | `03-persisted-files.md` **§0 and §1.5 only** | Fully. `graph.json` shape and the baseline node record |
 | M1 | `05-parser-pipeline.md` §0–4, §6, §8, §9 | Fully |
 | M1 (Swift track) | `05-parser-pipeline.md` §7 | Fully |
 | M2 | `04-ui-layout.md` §0–4 | §0 first. Take the rejected-alternatives block seriously |
@@ -143,23 +145,90 @@ produces code that looks right and diverges quietly.
 
 ---
 
+### 4.2 Stage 0 — Toolchain (do this first, serially)
+
+The repo ships with docs, a README, a licence and a gitignore, and nothing else.
+M0 cannot land without a toolchain, and the validator-in-CI requirement (§5.2)
+needs a workflow. **This is agent work, not human work** — set it up before M0.
+
+| Piece | Choice |
+|---|---|
+| Package manager / layout | **npm workspaces** — `core`, `packs/*`, `cli`, `web` |
+| TypeScript | **Strict, ESM.** `"strict": true`, `"module": "nodenext"` |
+| Test runner | **vitest** |
+| CI | **GitHub Actions**: typecheck → test → validate fixtures, on every PR |
+| Formatting | Prettier, default config. Not worth a debate |
+
+Requirements:
+
+- `core` has **no dependencies on `packs/*`**, and this must be *mechanically*
+  enforced. npm workspaces alone will **not** do it: every workspace is symlinked
+  into the root `node_modules`, so an undeclared import from `core` into `packs`
+  still resolves and typechecks. TypeScript project references do **not** help
+  either: they define build order, not import permissions, and a linked workspace
+  package that exposes declarations compiles fine without one. The enforcement is:
+  - **ESLint `no-restricted-imports`** — a zone rule banning `packs/*` (both the
+    workspace package names and relative paths) from `core/**`. This is the
+    guardrail, and it names the rule in the failure.
+  - **TypeScript project references** for build order only. Do not describe them
+    as a boundary.
+
+  CI must fail on the lint error. A convention that holds only because nobody
+  tested it is exactly what §5.2 exists to prevent.
+- The CI job must run the validator over every fixture. It must accept every
+  valid fixture and reject every malformed fixture with the expected diagnostic.
+  A validator that isn't in CI isn't an arbiter (§5.2).
+- Keep tree-sitter queries in `.scm` files and the `is_error_path` construct
+  tables in data files, per §2.
+
+**Done when:** `npm run typecheck`, `npm test`, and the CI workflow all pass on an
+empty-but-wired repo, and a deliberately added import from `core` into `packs`
+fails lint. Write that import, watch it fail, then delete it —
+an unverified guardrail isn't one.
+
+---
+
 ## 5. M0 — Freeze the contract (serial, no parallelism)
 
 Nothing forks until this lands. These are the interfaces every other track builds
 against.
 
 - Node, Edge, Schema entities per doc 02 §2–4, with all enums.
-- Identity scheme per §1: `{scope}:{locator}`, all four scope forms.
+- Identity scheme per §1: `{scope}:{locator}`, **all six scope prefixes** — `svc`, `{repo}`, `mongo`, `sql`, `topic`, `ext`.
 - Serialization per §8, including the graph model version field.
 - The **language pack interface** per doc 05 §3 — all five returns, including
   `provides`.
 - `UnresolvedRef` shape, including `ref_kind`.
-- **Validator.** Given a `graph.json`: every edge endpoint resolves to a node
-  (broken edges included — their targets are `tombstone` nodes, graph model §5.1),
-  every `schema_id` reference resolves, every enum value is legal, every
-  non-`certain` entity carries a `confidence_reason`, and every edge with a
-  non-null `exclusive_group` has a non-null `source` (graph model §3.2).
+- **Validator.** The full list of invariants, all of which are stated in doc 02's
+  field tables. Enforcing all of them is expected, not scope widening.
+
+| # | Invariant |
+|---|---|
+| 1 | Node ids unique; edge ids unique; schema ids unique |
+| 2 | Every edge `from` and `to` resolves to a node in the graph |
+| 3 | Every `parent` resolves to a node in the graph |
+| 4 | Every **non-null** `schema_id`, `response_schema_id` and `ref_schema_id` resolves to a schema |
+| 5 | Every enum value is a legal member |
+| 6 | `confidence != certain` → `confidence_reason` non-null (nodes, edges, schemas) |
+| 7 | `is_entry_point: true` → `entry_point_kind` non-null |
+| 8 | `is_broken: true` → `broken_reason` non-null |
+| 9 | `exclusive_group` non-null → `source` non-null (graph model §3.2) |
+| 10 | Node `kind: tombstone` → node `source` is null (nodes only; `tombstone` is not an edge kind) |
+| 11 | Every `skips_tiers` member is a legal `tier` enum value |
+| 12 | Every field-table key with Required `yes` or a condition is **present**, per graph model §2.5. Volatile fields (§7.1) are required in the artifact and absent from the canonical graph; the validator accepts either shape, §7.3 |
+| 13 | `source == null` if and only if `source_count == 0` (graph model §3.3) |
+| 14 | `branch_ordinal` non-null if and only if `exclusive_group` non-null |
+| 15 | `branch_ordinal` values are unique within each `exclusive_group` |
+| 16 | `skips_tiers` is empty when either endpoint is `external_service`, `topic` or `tombstone`, or has `tier: external` (graph model §3.4) |
+
+**Not an invariant:** a broken edge does *not* have to point at a tombstone.
+Tombstones cover a removed target *node*; a removed *field* breaks an edge whose
+target still exists. See graph model §5.1.
 - **Fixtures.** Valid graphs plus at least six deliberately malformed ones.
+  **Written in canonical form** (graph model §7.2), so round-trip verification is
+  a plain file diff. **At least one valid fixture must be multi-repo** — graph
+  model §0 requires the two-repo case exercised from milestone one, and a
+  single-repo fixture would let repo-scoped ids pass untested.
 
 **Done when:** hand-written fixtures round-trip byte-identically, and the
 validator rejects each malformed fixture with a specific message. Round-tripping
@@ -424,7 +493,7 @@ From doc 01, repeated because it's the section most likely to erode:
 
 Read `01-scope.md` and `02-graph-model.md` in full. Then do M0, serially, alone.
 
-Do not fork tracks until the validator rejects all six malformed fixtures.
+Do not fork tracks until the validator rejects every malformed fixture.
 
 If anything in either doc is ambiguous, contradictory, or appears to conflict with
 this handoff, say so before writing code.

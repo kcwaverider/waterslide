@@ -107,8 +107,13 @@ Error handling deserves its own line because it looks like it belongs and doesn'
 An error branch that raises and unwinds is a one-hop stub on the map: there is
 nothing to see, and no toggle or dedicated view would make there be something to
 see. Error paths that *do* real work — an audit write, a failure event, a retry
-queue — are plumbing, and appear as ordinary edges like anything else. No special
-handling either way.
+queue — are plumbing, and appear as ordinary edges like anything else.
+
+To be precise, since "no special handling" was overstated: error paths are drawn,
+animated, inspected and counted exactly like any other edge. The single place
+`is_error_path` is consulted is picking which branch the animation plays *by
+default* at a fork (graph model §3.2) — a legibility choice about where to start,
+not an evaluation of the error handling. Nothing is hidden, dimmed, or excluded.
 
 ## The hard line
 
