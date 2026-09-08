@@ -42,7 +42,7 @@ not derivation (graph model §3.3.1).
 | `illegal-id-scope.json` | `E_ID_FORMAT` | node id scope 'widget' is neither a fixed scope nor a repo name; the edge to it is updated so only invariant 18 fires |
 | `id-path-mismatch.json` | `E_ID_FORMAT` | repo-scoped node whose source.path disagrees with the path in its id (invariant 18) |
 | `repo-named-after-scope.json` | `E_ID_FORMAT` | a repo named 'sql' collides with a fixed id scope (invariant 18); node ids and sources are renamed with it so nothing else fires |
-| `skips-tiers-into-topic.json` | `E_SKIPS_TIERS_EXCLUDED` | subscribe edge from a topic with non-empty skips_tiers; a topic is transport, not depth (invariant 16) |
+| `skips-tiers-into-topic.json` | `E_SKIPS_TIERS_EXCLUDED` | publish edge into a topic with non-empty skips_tiers; a topic is transport, not depth (invariant 16) |
 | `skips-tiers-into-tombstone.json` | `E_SKIPS_TIERS_EXCLUDED` | broken edge into a tombstone with non-empty skips_tiers; the edge is already flagged is_broken (invariant 16) |
 | `skips-tiers-external-tier.json` | `E_SKIPS_TIERS_EXCLUDED` | target is a repository placed in tier external by config, not an external_service; external is not a depth whatever the kind (invariant 16) |
 | `wrong-type.json` | `E_TYPE` | is_entry_point is the string "yes" instead of a boolean |

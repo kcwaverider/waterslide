@@ -132,7 +132,7 @@
   "skips-tiers-into-topic.json": {
     "code": "E_SKIPS_TIERS_EXCLUDED",
     "path": "$.edges[1].skips_tiers",
-    "why": "subscribe edge from a topic with non-empty skips_tiers; a topic is transport, not depth (invariant 16)"
+    "why": "publish edge into a topic with non-empty skips_tiers; a topic is transport, not depth (invariant 16)"
   },
   "skips-tiers-into-tombstone.json": {
     "code": "E_SKIPS_TIERS_EXCLUDED",
