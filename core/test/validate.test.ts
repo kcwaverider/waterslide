@@ -5,7 +5,7 @@ import {
   type CanonicalGraph,
   type GraphArtifact,
 } from "../src/model/graph.js";
-import { validate } from "../src/validate.js";
+import { validate, type ValidationErrorCode } from "../src/validate.js";
 
 const fixturesDir = new URL("../../fixtures/", import.meta.url);
 const readJson = (rel: string): unknown =>
@@ -21,6 +21,9 @@ const expected = readJson("malformed/expected.json") as Record<
 const malformedFiles = readdirSync(new URL("malformed/", fixturesDir)).filter(
   (f) => f.endsWith(".json") && f !== "expected.json",
 );
+
+const byteSort = (a: string, b: string): number =>
+  Buffer.compare(Buffer.from(a), Buffer.from(b));
 
 function toArtifact(canonical: CanonicalGraph): GraphArtifact {
   return {
@@ -38,6 +41,13 @@ function toArtifact(canonical: CanonicalGraph): GraphArtifact {
     schemas: canonical.schemas,
     stats: { node_count: canonical.nodes.length },
   };
+}
+
+function load(file: string): CanonicalGraph {
+  const result = validate(readJson(`valid/${file}`), { shape: "canonical" });
+  if (!result.ok)
+    throw new Error(`${file} is not valid: ${JSON.stringify(result.errors)}`);
+  return structuredClone(result.graph);
 }
 
 describe("valid fixtures", () => {
@@ -63,39 +73,74 @@ describe("valid fixtures", () => {
         const result = validate(raw, { shape: "artifact" });
         expect(result.ok).toBe(false);
         if (result.ok) return;
-        const codes = new Set(result.errors.map((e) => e.code));
-        expect(codes.has("E_VOLATILE_SHAPE")).toBe(true);
+        expect(
+          new Set(result.errors.map((e) => e.code)).has("E_VOLATILE_SHAPE"),
+        ).toBe(true);
         expect(result.errors.some((e) => e.path === "$.parsed_at")).toBe(true);
       });
 
       it("validates as artifact shape once the volatile fields are added", () => {
-        const canonical = validate(raw, { shape: "canonical" });
-        if (!canonical.ok) throw new Error("fixture not canonical-valid");
-        const artifact = toArtifact(canonical.graph);
-        const result = validate(artifact, { shape: "artifact" });
+        const result = validate(toArtifact(load(file)), { shape: "artifact" });
         expect(result.errors).toEqual([]);
         expect(result.ok).toBe(true);
       });
 
       it("as an artifact, is rejected as canonical shape (§7.3)", () => {
-        const canonical = validate(raw, { shape: "canonical" });
-        if (!canonical.ok) throw new Error("fixture not canonical-valid");
-        const result = validate(toArtifact(canonical.graph), {
-          shape: "canonical",
-        });
+        const graph = load(file);
+        const result = validate(toArtifact(graph), { shape: "canonical" });
         expect(result.ok).toBe(false);
         if (result.ok) return;
         expect(result.errors.every((e) => e.code === "E_VOLATILE_SHAPE")).toBe(
           true,
         );
-        expect(result.errors.map((e) => e.path).sort()).toEqual(
-          ["$", "$.repos[0]"]
-            .concat(canonical.graph.repos.length > 1 ? ["$.repos[1]"] : [])
-            .sort(),
-        );
+        const wantPaths = [
+          "$",
+          ...graph.repos.map((_, i) => `$.repos[${String(i)}]`),
+        ].sort();
+        expect(result.errors.map((e) => e.path).sort()).toEqual(wantPaths);
       });
     });
   }
+
+  it("collectively cover the positive cases the malformed set only negates", () => {
+    const graphs = validFiles.map(load);
+    const nodes = graphs.flatMap((g) => g.nodes);
+    const edges = graphs.flatMap((g) => g.edges);
+    const schemas = graphs.flatMap((g) => g.schemas);
+    expect(
+      schemas.some((s) => s.fields.some((f) => f.ref_schema_id !== null)),
+      "non-null ref_schema_id",
+    ).toBe(true);
+    expect(
+      schemas.some((s) => s.confidence !== "certain"),
+      "non-certain schema",
+    ).toBe(true);
+    expect(
+      edges.some((e) => e.kind === "publish"),
+      "publish edge",
+    ).toBe(true);
+    expect(
+      edges.some((e) => e.skips_tiers.length > 0),
+      "band-skipping edge",
+    ).toBe(true);
+    expect(
+      edges.some((e) => e.from === e.to),
+      "self-loop edge",
+    ).toBe(true);
+    const externalByConfig = nodes.filter(
+      (n) => n.tier === "external" && n.kind !== "external_service",
+    );
+    expect(
+      externalByConfig.length,
+      "node in tier external whose kind is not external_service",
+    ).toBeGreaterThan(0);
+    expect(
+      edges.some((e) =>
+        externalByConfig.some((n) => n.id === e.to || n.id === e.from),
+      ),
+      "an edge touching it",
+    ).toBe(true);
+  });
 });
 
 describe("malformed fixtures", () => {
@@ -107,7 +152,7 @@ describe("malformed fixtures", () => {
   });
 
   for (const file of malformedFiles) {
-    it(`${file} is rejected with ${expected[file]?.code ?? "?"} at ${expected[file]?.path ?? "?"}`, () => {
+    it(`${file} is rejected with exactly ${expected[file]?.code ?? "?"} at ${expected[file]?.path ?? "?"}`, () => {
       const want = expected[file];
       if (want === undefined) throw new Error(`no expectation for ${file}`);
       const result = validate(readJson(`malformed/${file}`), {
@@ -115,53 +160,74 @@ describe("malformed fixtures", () => {
       });
       expect(result.ok).toBe(false);
       if (result.ok) return;
-      const hit = result.errors.find(
-        (e) => e.code === want.code && e.path === want.path,
-      );
+      // Exactly one error: each fixture breaks exactly one rule (fixtures/malformed/README.md).
       expect(
-        hit,
+        result.errors,
         `errors were: ${JSON.stringify(result.errors, null, 2)}`,
-      ).toBeDefined();
+      ).toHaveLength(1);
+      const hit = result.errors[0];
+      expect(hit?.code).toBe(want.code);
+      expect(hit?.path).toBe(want.path);
       expect(hit?.message.length ?? 0).toBeGreaterThan(20);
     });
   }
 
-  it("every malformed fixture is a distinct case, and every error code has one", () => {
-    const whys = new Set(Object.values(expected).map((e) => e.why));
-    expect(whys.size).toBe(Object.keys(expected).length);
-    const contents = new Set(
-      malformedFiles.map((f) =>
-        readFileSync(new URL(`malformed/${f}`, fixturesDir), "utf8"),
-      ),
-    );
-    expect(contents.size).toBe(malformedFiles.length);
+  it("no two fixtures share a code and path, except the documented allowlist", () => {
+    // Pairs that legitimately share code@path: different branches of one invariant,
+    // built from different base graphs. Kept explicit so loosening is a visible edit.
+    const ALLOWED_SHARED: readonly (readonly [string, string])[] = [
+      ["skips-tiers-into-tombstone.json", "skips-tiers-external-tier.json"],
+    ];
+    const byKey = new Map<string, string[]>();
+    for (const [file, e] of Object.entries(expected)) {
+      const key = `${e.code}@${e.path}`;
+      byKey.set(key, [...(byKey.get(key) ?? []), file]);
+    }
+    for (const [key, files] of byKey) {
+      if (files.length < 2) continue;
+      const allowed = ALLOWED_SHARED.some(
+        (pair) => files.length === 2 && pair.every((f) => files.includes(f)),
+      );
+      expect(
+        allowed,
+        `${key} is shared by ${files.join(", ")} and is not allowlisted`,
+      ).toBe(true);
+    }
+  });
+
+  it("every ValidationErrorCode has at least one malformed fixture", () => {
+    // A Record over the code type: adding a code without updating this map is a
+    // compile error, so a code can no longer lose its fixture silently.
+    const COVERED: Record<ValidationErrorCode, true> = {
+      E_NOT_OBJECT: true,
+      E_SCHEMA_VERSION: true,
+      E_MISSING_KEY: true,
+      E_UNKNOWN_KEY: true,
+      E_VOLATILE_SHAPE: true,
+      E_ILLEGAL_ENUM: true,
+      E_TYPE: true,
+      E_RANGE: true,
+      E_CANONICAL_ORDER: true,
+      E_CANONICAL_NFC: true,
+      E_ID_FORMAT: true,
+      E_SOURCE_REPO: true,
+      E_PARENT_CYCLE: true,
+      E_DUPLICATE_ID: true,
+      E_EDGE_ENDPOINT: true,
+      E_PARENT: true,
+      E_SCHEMA_REF: true,
+      E_CONFIDENCE_REASON: true,
+      E_ENTRY_POINT_KIND: true,
+      E_BROKEN_REASON: true,
+      E_FORK_SOURCE: true,
+      E_TOMBSTONE_SOURCE: true,
+      E_SOURCE_COUNT: true,
+      E_BRANCH_ORDINAL: true,
+      E_BRANCH_ORDINAL_DUPLICATE: true,
+      E_SKIPS_TIERS_EXCLUDED: true,
+    };
     const codes = new Set(Object.values(expected).map((e) => e.code));
-    for (const code of [
-      "E_NOT_OBJECT",
-      "E_SCHEMA_VERSION",
-      "E_MISSING_KEY",
-      "E_UNKNOWN_KEY",
-      "E_VOLATILE_SHAPE",
-      "E_ILLEGAL_ENUM",
-      "E_TYPE",
-      "E_RANGE",
-      "E_CANONICAL_ORDER",
-      "E_CANONICAL_NFC",
-      "E_ID_FORMAT",
-      "E_DUPLICATE_ID",
-      "E_EDGE_ENDPOINT",
-      "E_PARENT",
-      "E_SCHEMA_REF",
-      "E_CONFIDENCE_REASON",
-      "E_ENTRY_POINT_KIND",
-      "E_BROKEN_REASON",
-      "E_FORK_SOURCE",
-      "E_TOMBSTONE_SOURCE",
-      "E_SOURCE_COUNT",
-      "E_BRANCH_ORDINAL",
-      "E_BRANCH_ORDINAL_DUPLICATE",
-      "E_SKIPS_TIERS_EXCLUDED",
-    ]) {
+    for (const code of Object.keys(COVERED)) {
       expect(codes.has(code), `no malformed fixture exercises ${code}`).toBe(
         true,
       );
@@ -170,10 +236,8 @@ describe("malformed fixtures", () => {
 });
 
 describe("invariant 17: canonical order is enforced in canonical shape only", () => {
-  const base = readJson("valid/derived-ids.json") as CanonicalGraph;
-
   it("rejects swapped edges as canonical but accepts them as artifact", () => {
-    const g = structuredClone(base);
+    const g = load("derived-ids.json");
     const [a, b] = [g.edges[0], g.edges[1]];
     if (!a || !b) throw new Error("fixture too small");
     g.edges[0] = b;
@@ -188,11 +252,11 @@ describe("invariant 17: canonical order is enforced in canonical shape only", ()
   });
 
   it("rejects unsorted scalar arrays and non-NFC strings as canonical", () => {
-    const g = structuredClone(base);
+    const g = load("derived-ids.json");
     const n = g.nodes.find((x) => x.is_entry_point);
     if (!n) throw new Error("no entry point");
     n.tags = ["b", "a"];
-    n.label = n.label + " cafe\u0301";
+    n.label = n.label + " café";
     const result = validate(g, { shape: "canonical" });
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -203,7 +267,7 @@ describe("invariant 17: canonical order is enforced in canonical shape only", ()
   });
 
   it("does not object to the serializer's own concerns, key order, when parsed", () => {
-    const g = structuredClone(base);
+    const g = load("derived-ids.json");
     const reordered = {
       edges: g.edges,
       schemas: g.schemas,
@@ -214,15 +278,24 @@ describe("invariant 17: canonical order is enforced in canonical shape only", ()
     };
     expect(validate(reordered, { shape: "canonical" }).ok).toBe(true);
   });
+
+  it("reports a duplicate id once, under invariant 1, not also as an order violation", () => {
+    const g = load("derived-ids.json");
+    const n0 = g.nodes[0];
+    if (!n0) throw new Error("fixture too small");
+    g.nodes.splice(1, 0, structuredClone(n0));
+    const result = validate(g, { shape: "canonical" });
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.errors.map((e) => e.code)).toEqual(["E_DUPLICATE_ID"]);
+  });
 });
 
 describe("invariant 18: node id format", () => {
-  const base = readJson("valid/single-repo-minimal.json") as CanonicalGraph;
-
   it("accepts all six scope forms in the valid fixtures", () => {
     const scopes = new Set<string>();
     for (const f of validFiles) {
-      for (const n of (readJson(`valid/${f}`) as CanonicalGraph).nodes) {
+      for (const n of load(f).nodes) {
         const scope = n.id.slice(0, n.id.indexOf(":"));
         scopes.add(
           ["svc", "mongo", "sql", "topic", "ext"].includes(scope)
@@ -247,7 +320,7 @@ describe("invariant 18: node id format", () => {
       ["ext:cohere", "external_service", "external"],
       ["justaname", "service", "domain"],
     ] as const) {
-      const g = structuredClone(base);
+      const g = load("single-repo-minimal.json");
       g.nodes.push({
         id: bad,
         kind,
@@ -262,9 +335,7 @@ describe("invariant 18: node id format", () => {
         is_infrastructure: false,
         tags: [],
       });
-      g.nodes.sort((a, b) =>
-        Buffer.compare(Buffer.from(a.id), Buffer.from(b.id)),
-      );
+      g.nodes.sort((a, b) => byteSort(a.id, b.id));
       const result = validate(g, { shape: "canonical" });
       expect(result.ok).toBe(false);
       if (!result.ok)
@@ -273,7 +344,7 @@ describe("invariant 18: node id format", () => {
   });
 
   it("rejects a repo-scoped node whose source.repo differs from its scope", () => {
-    const g = structuredClone(base);
+    const g = load("single-repo-minimal.json");
     const n = g.nodes.find((x) => x.source !== null);
     if (!n || !n.source) throw new Error("no sourced node");
     n.source.repo = "other";
@@ -285,6 +356,79 @@ describe("invariant 18: node id format", () => {
           (e) => e.code === "E_ID_FORMAT" && e.message.includes("source.repo"),
         ),
       ).toBe(true);
+  });
+});
+
+describe("repos[] identity (invariants 1, 18, 19)", () => {
+  it("rejects a duplicate repo name in artifact shape too", () => {
+    const g = toArtifact(load("derived-ids.json"));
+    const r0 = g.repos[0];
+    if (!r0) throw new Error("no repos");
+    g.repos = [r0, { ...r0 }, ...g.repos.slice(1)];
+    const result = validate(g, { shape: "artifact" });
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.errors.map((e) => e.code)).toEqual(["E_DUPLICATE_ID"]);
+  });
+
+  it("reports a repo whose name contains ':' at the repo entry", () => {
+    const g = load("derived-ids.json");
+    g.repos = [...g.repos, { name: "bad:name", commit: "c" }].sort((a, b) =>
+      byteSort(a.name, b.name),
+    );
+    const result = validate(g, { shape: "canonical" });
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(
+        result.errors.some(
+          (e) => e.code === "E_ID_FORMAT" && e.path.startsWith("$.repos["),
+        ),
+      ).toBe(true);
+  });
+
+  it("rejects a source.repo that is not in repos[] on nodes, edges and schemas", () => {
+    for (const coll of ["nodes", "edges", "schemas"] as const) {
+      const g = load("derived-ids.json");
+      const item = g[coll].find((x) => x.source !== null);
+      if (!item || !item.source) throw new Error(`no sourced ${coll}`);
+      item.source.repo = "not-a-repo";
+      const result = validate(g, { shape: "canonical" });
+      expect(result.ok).toBe(false);
+      if (!result.ok)
+        expect(
+          result.errors.some(
+            (e) =>
+              e.code === "E_SOURCE_REPO" && e.path.startsWith(`$.${coll}[`),
+          ),
+        ).toBe(true);
+    }
+  });
+});
+
+describe("parent chain (invariant 20)", () => {
+  it("rejects a two-node parent cycle at both members", () => {
+    const g = load("derived-ids.json");
+    const a = g.nodes.find(
+      (n) => n.kind === "module" && n.id.startsWith("tapistree:api/routers"),
+    );
+    const b = g.nodes.find(
+      (n) => n.kind === "module" && n.id.startsWith("tapistree:api/services"),
+    );
+    if (!a || !b) throw new Error("fixture shape changed");
+    a.parent = b.id;
+    b.parent = a.id;
+    const result = validate(g, { shape: "canonical" });
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(
+        result.errors.filter((e) => e.code === "E_PARENT_CYCLE"),
+      ).toHaveLength(2);
+  });
+
+  it("keeps self-loop edges legal: a recursive function is a real thing", () => {
+    const g = load("annotated-edge.json");
+    expect(g.edges.some((e) => e.from === e.to)).toBe(true);
+    expect(validate(g, { shape: "canonical" }).ok).toBe(true);
   });
 });
 
@@ -312,8 +456,7 @@ describe("version check", () => {
 
 describe("error reporting", () => {
   it("collects every semantic error rather than stopping at the first", () => {
-    const base = readJson("valid/derived-ids.json") as CanonicalGraph;
-    const g = structuredClone(base);
+    const g = load("derived-ids.json");
     const e0 = g.edges[0];
     const n0 = g.nodes[0];
     if (!e0 || !n0) throw new Error("fixture too small");
@@ -331,11 +474,9 @@ describe("error reporting", () => {
   });
 
   it("returns paths in JSONPath form", () => {
-    const base = readJson("valid/derived-ids.json") as CanonicalGraph;
-    const g = structuredClone(base);
-    const s0 = g.schemas[0];
-    const f0 = s0?.fields[0];
-    if (!s0 || !f0) throw new Error("fixture too small");
+    const g = load("derived-ids.json");
+    const f0 = g.schemas[0]?.fields[0];
+    if (!f0) throw new Error("fixture too small");
     f0.ref_schema_id = "sch_nowhere";
     const result = validate(g, { shape: "canonical" });
     expect(result.ok).toBe(false);
@@ -344,7 +485,7 @@ describe("error reporting", () => {
   });
 
   it("does not require a broken edge to point at a tombstone (handoff §5)", () => {
-    const g = readJson("valid/tombstone-broken-edge.json") as CanonicalGraph;
+    const g = load("tombstone-broken-edge.json");
     const brokenToLive = g.edges.filter(
       (e) =>
         e.is_broken && g.nodes.find((n) => n.id === e.to)?.kind !== "tombstone",
