@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BaselineSchema } from "../src/model/baseline.js";
+import { BaselineRepoSchema, BaselineSchema } from "../src/model/baseline.js";
 import {
   DEFAULT_TIER_BY_KIND,
   NodeKindSchema,
@@ -266,5 +266,19 @@ describe("baseline.json (persisted files §1.5)", () => {
       edges: ["e_dd18a22155d2d22b"],
     };
     expect(BaselineSchema.parse(b)).toEqual(b);
+  });
+
+  it("uses a repo record deliberately narrower than the graph artifact's", () => {
+    expect(
+      BaselineRepoSchema.safeParse({ name: "r", commit: "c" }).success,
+    ).toBe(true);
+    expect(
+      BaselineRepoSchema.safeParse({
+        name: "r",
+        commit: "c",
+        path: "/x",
+        dirty: false,
+      }).success,
+    ).toBe(false);
   });
 });
