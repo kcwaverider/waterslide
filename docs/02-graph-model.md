@@ -832,7 +832,47 @@ Computed at render time:
 
 ---
 
-## 10. Open questions
+## 10. Diagnostics
+
+**This section records a decision the specs had left undefined.** Parser pipeline
+§3.3 names `Diagnostic[]` as a pack's fifth return and §9 lists the failure
+classes, but neither fixed the fields. Two consumers need to *group* diagnostics
+— the per-run unresolved-reference summary (handoff §6, item 6; parser §9) and
+the `redundant_annotation` diagnostic (§3.3) — and grouping needs a stable code,
+not a message string. So the shape is fixed here, in the model, where the other
+contract items live.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `severity` | enum | yes | `error` \| `warning` \| `info` |
+| `code` | string | yes | Stable `snake_case` identifier. The grouping key. Never derived from the message |
+| `message` | string | yes | One human sentence. May vary; `code` may not |
+| `repo` | string \| null | yes | Repo the diagnostic concerns. Null when not tied to one |
+| `path` | string \| null | yes | File from repo root. Null when not tied to a file |
+| `line` | int \| null | yes | Line where known |
+| `pack` | string \| null | yes | `id` of the emitting pack (parser §3.1). Null when core emitted it |
+
+§2.5 applies: every key is always present, null where the table allows.
+
+Codes are open-ended — a pack may define its own — but these are reserved with
+fixed meanings so consumers can rely on them:
+
+| `code` | Emitted by | Severity | When |
+|---|---|---|---|
+| `syntax_error` | pack | `error` | File could not be parsed. No nodes from that file (parser §9) |
+| `unsupported_construct` | pack | `warning` | A construct no recognizer handles. What *was* understood is still emitted |
+| `recognizer_failure` | pack | `error` | A framework recognizer failed; the language pack's output is kept |
+| `unresolved_ref` | core | `warning` | Stage 4 could not resolve an `UnresolvedRef`. The summary groups these, then by `ref_kind` inside the message |
+| `redundant_annotation` | core | `warning` | A hand-written edge collides with a parsed edge of the same id; the parsed one wins (§3.3) |
+
+A `graph_schema_version` mismatch is **not** a diagnostic. It aborts the run
+(parser §3.1, §9).
+
+Diagnostics are not part of `graph.json`. They are a run output, surfaced as a
+count with drill-down; silent partial parsing is the failure mode they exist to
+prevent.
+
+## 11. Open questions
 
 - ~~Do conditional-edge dashes collide with confidence dashes?~~ **Resolved:**
   line style is confidence only; conditions get a label and fork marker.

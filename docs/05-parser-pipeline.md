@@ -191,7 +191,7 @@ Called once per file, given `(repo_name, path, content)`. Returns:
 | `edges` | PartialEdge[] | Relationships found. `to` may be unresolved. See §3.5 |
 | `schemas` | Schema[] | Payload shapes declared in this file |
 | `provides` | Provide[] | The names by which other files may refer to these nodes. See §3.4 |
-| `diagnostics` | Diagnostic[] | Parse failures and unsupported constructs. Never thrown |
+| `diagnostics` | Diagnostic[] | Parse failures and unsupported constructs. Never thrown. Shape: graph model §10 |
 
 Entry points are **not** a separate collection — they are the `is_entry_point`
 and `entry_point_kind` fields on a node, per graph model §2.
