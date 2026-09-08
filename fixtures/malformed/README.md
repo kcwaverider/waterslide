@@ -14,6 +14,13 @@ the id-scope files rename references and re-sort). Edge ids are not re-derived
 after mutation, which is fine: the validator checks uniqueness and resolution,
 not derivation (graph model §3.3.1).
 
+Each fixture produces **exactly one** validator error, asserted by the test. No
+two fixtures share the same error code and JSON path, with one allowlisted
+exception: `skips-tiers-into-tombstone.json` and `skips-tiers-external-tier.json`
+both report `E_SKIPS_TIERS_EXCLUDED` at `$.edges[0].skips_tiers`. They are
+different branches of invariant 16 built from different base graphs, and the
+coincidence of index is not worth breaking either fixture to avoid.
+
 | File | Expected code | What is wrong |
 |---|---|---|
 | `duplicate-node-id.json` | `E_DUPLICATE_ID` | second node repeats the first node's id (invariant 1) |
@@ -45,6 +52,9 @@ not derivation (graph model §3.3.1).
 | `skips-tiers-into-topic.json` | `E_SKIPS_TIERS_EXCLUDED` | publish edge into a topic with non-empty skips_tiers; a topic is transport, not depth (invariant 16) |
 | `skips-tiers-into-tombstone.json` | `E_SKIPS_TIERS_EXCLUDED` | broken edge into a tombstone with non-empty skips_tiers; the edge is already flagged is_broken (invariant 16) |
 | `skips-tiers-external-tier.json` | `E_SKIPS_TIERS_EXCLUDED` | target is a repository placed in tier external by config, not an external_service; external is not a depth whatever the kind (invariant 16) |
+| `source-repo-unknown.json` | `E_SOURCE_REPO` | edge source.repo names a repo that is not in repos[] (invariant 19) |
+| `duplicate-repo-name.json` | `E_DUPLICATE_ID` | repos[] lists the same repo name twice (invariant 1) |
+| `self-parent.json` | `E_PARENT_CYCLE` | a node whose parent is itself; the parent chain must be a tree (invariant 20) |
 | `wrong-type.json` | `E_TYPE` | is_entry_point is the string "yes" instead of a boolean |
 | `unknown-key.json` | `E_UNKNOWN_KEY` | node carries a key the model does not define |
 | `not-an-object.json` | `E_NOT_OBJECT` | a JSON array, not a graph object |

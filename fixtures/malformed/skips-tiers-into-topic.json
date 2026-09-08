@@ -155,6 +155,31 @@
       ]
     },
     {
+      "id": "e_8fde055911494094",
+      "from": "tapistree:api/workers/handlers.py#dispatch",
+      "to": "tapistree:api/workers/handlers.py#dispatch",
+      "kind": "call",
+      "label": "dispatch (recursive)",
+      "schema_id": null,
+      "response_schema_id": null,
+      "confidence": "certain",
+      "confidence_reason": null,
+      "condition": null,
+      "exclusive_group": null,
+      "is_error_path": false,
+      "source": {
+        "repo": "tapistree",
+        "path": "api/workers/handlers.py",
+        "line_start": 22,
+        "line_end": null
+      },
+      "source_count": 1,
+      "branch_ordinal": null,
+      "is_broken": false,
+      "broken_reason": null,
+      "skips_tiers": []
+    },
+    {
       "id": "e_e1385f30411a8296",
       "from": "topic:note.indexed",
       "to": "tapistree:api/workers/indexer.py#run",

@@ -144,6 +144,21 @@
     "path": "$.edges[0].skips_tiers",
     "why": "target is a repository placed in tier external by config, not an external_service; external is not a depth whatever the kind (invariant 16)"
   },
+  "source-repo-unknown.json": {
+    "code": "E_SOURCE_REPO",
+    "path": "$.edges[4].source.repo",
+    "why": "edge source.repo names a repo that is not in repos[] (invariant 19)"
+  },
+  "duplicate-repo-name.json": {
+    "code": "E_DUPLICATE_ID",
+    "path": "$.repos[1].name",
+    "why": "repos[] lists the same repo name twice (invariant 1)"
+  },
+  "self-parent.json": {
+    "code": "E_PARENT_CYCLE",
+    "path": "$.nodes[7].parent",
+    "why": "a node whose parent is itself; the parent chain must be a tree (invariant 20)"
+  },
   "wrong-type.json": {
     "code": "E_TYPE",
     "path": "$.nodes[7].is_entry_point",
