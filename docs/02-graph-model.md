@@ -419,8 +419,11 @@ in diffs. The full digest is not persisted anywhere.
 
 `core/` exports the single function that does this, and packs **must** call it
 rather than compute ids themselves — the same reason the Zod schemas live in
-`core/` (handoff §5.2). Hand-written fixtures may use any unique string as an
-edge id; the validator checks uniqueness and resolution, not derivation.
+`core/` (handoff §5.2). The validator checks uniqueness and resolution, not
+derivation — so derivation is pinned separately: at least one valid fixture
+carries ids produced by the exported function, and a unit test asserts the
+function's output for a known input against a literal expected hash. Malformed
+fixtures and fixtures that exercise other invariants may use any unique string.
 
 ### 3.4 `skips_tiers`
 
@@ -682,7 +685,7 @@ resolved by config, which is why declared always wins.
 | `repos[].commit` | string | yes | Hash, for reproducibility |
 | `repos[].dirty` | bool | yes (artifact only, §7.3) | Uncommitted changes present |
 | `tier_config_hash` | string | yes | Invalidates layout when tiers change |
-| `stats` | object | no | Counts, including breakdown by confidence. The only optional key in the model — safe because §7.1 excludes it from the canonical graph, so its presence cannot affect byte-identity |
+| `stats` | object | no (artifact only, §7.3) | Counts, including breakdown by confidence. The only optional key in the model — safe because §7.1 excludes it from the canonical graph, so its presence cannot affect byte-identity |
 
 `dirty` flags the "map as it *would* be" case — pointing the tool at a working
 tree to see a change's effect before opening a pull request.
@@ -749,7 +752,7 @@ Provide a `--canonical` flag (or equivalent) that writes only canonical fields i
 canonical form. Anything depending on stability — layout, change detection,
 diffing — reads that.
 
-### 7.3 Two shapes, one validator
+### 7.3 Two shapes, one validator, explicit choice
 
 The §7 table marks `parsed_at`, `repos[].path` and `repos[].dirty` as required,
 yet the canonical graph omits them by definition, and fixtures are written in
@@ -758,14 +761,32 @@ canonical form. Both are valid, as different shapes of the same contract:
 | Shape | Contents | Where it appears |
 |---|---|---|
 | **`CanonicalGraph`** | Every field except the §7.1 volatile ones | Fixtures, `--canonical` output, everything that compares or diffs |
-| **`GraphArtifact`** | `CanonicalGraph` plus the volatile fields | `graph.json` as written by `parse` |
+| **`GraphArtifact`** | `CanonicalGraph` plus `parsed_at`, `repos[].path`, `repos[].dirty`, and optionally `stats` | `graph.json` as written by `parse` |
 
 In Zod terms `GraphArtifact` extends `CanonicalGraph`; there is one set of node,
-edge and schema schemas, not two. The validator accepts either shape and applies
-every invariant to the fields both share. "Required" in the §7 table means
-required *in the artifact*; the three volatile fields are simply not part of the
-canonical shape rather than being optional within it, so §2.5's rule against
-optional keys still holds.
+edge and schema schemas, not two. `stats` is artifact-only: it never appears in
+the canonical shape, optional or otherwise.
+
+**The caller names the shape. The validator never infers it.**
+
+```ts
+validate(graph, { shape: "canonical" | "artifact" })
+```
+
+| `shape` | Volatile fields (`parsed_at`, `repos[].path`, `repos[].dirty`) | `stats` |
+|---|---|---|
+| `canonical` | Must be **absent** | Must be absent |
+| `artifact` | Must be **present** | May be present |
+
+There is no default. An unlabelled call is a type error, not a convenience.
+Discriminating by presence would be guessing, and it would silently weaken
+invariant 12 for exactly these three fields: a real parse output that forgot
+`parsed_at` would pass as "canonical". Every other invariant applies identically
+to both shapes.
+
+"Required" in the §7 table means required *in the artifact*; the volatile fields
+are not part of the canonical shape rather than being optional within it, so
+§2.5's rule against optional keys still holds.
 
 ---
 
