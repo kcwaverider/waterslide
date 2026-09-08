@@ -114,3 +114,15 @@ export const DEFAULT_TIER_BY_KIND: Readonly<Record<NodeKind, Tier | null>> = {
 /** Graph model §3.4 / invariant 16 — endpoint kinds for which `skips_tiers` is always empty. */
 export const SKIPS_TIERS_EXCLUDED_KINDS: ReadonlySet<NodeKind> =
   new Set<NodeKind>(["external_service", "topic", "tombstone"]);
+
+/**
+ * Graph model §1 — the five fixed id scopes. The sixth scope form is a repo
+ * name from `repos[]`, so a repo must never be named after one of these.
+ */
+export const FIXED_ID_SCOPES: ReadonlySet<string> = new Set([
+  "svc",
+  "mongo",
+  "sql",
+  "topic",
+  "ext",
+]);

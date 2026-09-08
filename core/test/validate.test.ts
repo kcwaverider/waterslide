@@ -126,11 +126,15 @@ describe("malformed fixtures", () => {
     });
   }
 
-  it("every malformed fixture triggers a distinct error code or path, so no invariant is untested", () => {
-    const seen = new Set(
-      Object.values(expected).map((e) => `${e.code}@${e.path}`),
+  it("every malformed fixture is a distinct case, and every error code has one", () => {
+    const whys = new Set(Object.values(expected).map((e) => e.why));
+    expect(whys.size).toBe(Object.keys(expected).length);
+    const contents = new Set(
+      malformedFiles.map((f) =>
+        readFileSync(new URL(`malformed/${f}`, fixturesDir), "utf8"),
+      ),
     );
-    expect(seen.size).toBe(Object.keys(expected).length);
+    expect(contents.size).toBe(malformedFiles.length);
     const codes = new Set(Object.values(expected).map((e) => e.code));
     for (const code of [
       "E_NOT_OBJECT",
@@ -140,6 +144,10 @@ describe("malformed fixtures", () => {
       "E_VOLATILE_SHAPE",
       "E_ILLEGAL_ENUM",
       "E_TYPE",
+      "E_RANGE",
+      "E_CANONICAL_ORDER",
+      "E_CANONICAL_NFC",
+      "E_ID_FORMAT",
       "E_DUPLICATE_ID",
       "E_EDGE_ENDPOINT",
       "E_PARENT",
@@ -158,6 +166,125 @@ describe("malformed fixtures", () => {
         true,
       );
     }
+  });
+});
+
+describe("invariant 17: canonical order is enforced in canonical shape only", () => {
+  const base = readJson("valid/derived-ids.json") as CanonicalGraph;
+
+  it("rejects swapped edges as canonical but accepts them as artifact", () => {
+    const g = structuredClone(base);
+    const [a, b] = [g.edges[0], g.edges[1]];
+    if (!a || !b) throw new Error("fixture too small");
+    g.edges[0] = b;
+    g.edges[1] = a;
+    const canonical = validate(g, { shape: "canonical" });
+    expect(canonical.ok).toBe(false);
+    if (!canonical.ok)
+      expect(canonical.errors.map((e) => e.code)).toEqual([
+        "E_CANONICAL_ORDER",
+      ]);
+    expect(validate(toArtifact(g), { shape: "artifact" }).ok).toBe(true);
+  });
+
+  it("rejects unsorted scalar arrays and non-NFC strings as canonical", () => {
+    const g = structuredClone(base);
+    const n = g.nodes.find((x) => x.is_entry_point);
+    if (!n) throw new Error("no entry point");
+    n.tags = ["b", "a"];
+    n.label = n.label + " cafe\u0301";
+    const result = validate(g, { shape: "canonical" });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.map((e) => e.code).sort()).toEqual([
+      "E_CANONICAL_NFC",
+      "E_CANONICAL_ORDER",
+    ]);
+  });
+
+  it("does not object to the serializer's own concerns, key order, when parsed", () => {
+    const g = structuredClone(base);
+    const reordered = {
+      edges: g.edges,
+      schemas: g.schemas,
+      nodes: g.nodes,
+      repos: g.repos,
+      tier_config_hash: g.tier_config_hash,
+      schema_version: g.schema_version,
+    };
+    expect(validate(reordered, { shape: "canonical" }).ok).toBe(true);
+  });
+});
+
+describe("invariant 18: node id format", () => {
+  const base = readJson("valid/single-repo-minimal.json") as CanonicalGraph;
+
+  it("accepts all six scope forms in the valid fixtures", () => {
+    const scopes = new Set<string>();
+    for (const f of validFiles) {
+      for (const n of (readJson(`valid/${f}`) as CanonicalGraph).nodes) {
+        const scope = n.id.slice(0, n.id.indexOf(":"));
+        scopes.add(
+          ["svc", "mongo", "sql", "topic", "ext"].includes(scope)
+            ? scope
+            : "{repo}",
+        );
+      }
+    }
+    expect([...scopes].sort()).toEqual([
+      "ext",
+      "mongo",
+      "sql",
+      "svc",
+      "topic",
+      "{repo}",
+    ]);
+  });
+
+  it("rejects a mongo id without a dot, an ext id without a slash, and an id with no scope", () => {
+    for (const [bad, kind, tier] of [
+      ["mongo:notes", "collection", "store"],
+      ["ext:cohere", "external_service", "external"],
+      ["justaname", "service", "domain"],
+    ] as const) {
+      const g = structuredClone(base);
+      g.nodes.push({
+        id: bad,
+        kind,
+        label: "x",
+        tier,
+        parent: null,
+        source: null,
+        confidence: "certain",
+        confidence_reason: null,
+        is_entry_point: false,
+        entry_point_kind: null,
+        is_infrastructure: false,
+        tags: [],
+      });
+      g.nodes.sort((a, b) =>
+        Buffer.compare(Buffer.from(a.id), Buffer.from(b.id)),
+      );
+      const result = validate(g, { shape: "canonical" });
+      expect(result.ok).toBe(false);
+      if (!result.ok)
+        expect(result.errors.map((e) => e.code)).toEqual(["E_ID_FORMAT"]);
+    }
+  });
+
+  it("rejects a repo-scoped node whose source.repo differs from its scope", () => {
+    const g = structuredClone(base);
+    const n = g.nodes.find((x) => x.source !== null);
+    if (!n || !n.source) throw new Error("no sourced node");
+    n.source.repo = "other";
+    const result = validate(g, { shape: "canonical" });
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(
+        result.errors.some(
+          (e) => e.code === "E_ID_FORMAT" && e.message.includes("source.repo"),
+        ),
+      ).toBe(true);
   });
 });
 

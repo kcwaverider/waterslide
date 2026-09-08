@@ -1,5 +1,6 @@
 import type { z } from "zod";
-import { SKIPS_TIERS_EXCLUDED_KINDS } from "./model/enums.js";
+import { byteCompare } from "./canonical.js";
+import { FIXED_ID_SCOPES, SKIPS_TIERS_EXCLUDED_KINDS } from "./model/enums.js";
 import {
   CanonicalGraphSchema,
   GRAPH_SCHEMA_VERSION,
@@ -32,6 +33,10 @@ export type ValidationErrorCode =
   | "E_VOLATILE_SHAPE"
   | "E_ILLEGAL_ENUM"
   | "E_TYPE"
+  | "E_RANGE"
+  | "E_CANONICAL_ORDER"
+  | "E_CANONICAL_NFC"
+  | "E_ID_FORMAT"
   | "E_DUPLICATE_ID"
   | "E_EDGE_ENDPOINT"
   | "E_PARENT"
@@ -102,7 +107,11 @@ export function validate(
     return fail(parsed.error.issues.map((issue) => mapIssue(issue, shape)));
   }
 
-  const semantic = checkInvariants(parsed.data);
+  // Semantic phase. Runs only once the structural phase has passed: the checks
+  // below index by id and dereference fields, which is unsafe on a graph that
+  // failed to parse. A graph with both kinds of error therefore reports the
+  // structural ones first and the semantic ones on the next run (§7.3).
+  const semantic = checkInvariants(parsed.data, shape);
   if (semantic.length > 0) return fail(semantic);
 
   return shape === "canonical"
@@ -187,6 +196,10 @@ function mapIssue(issue: z.core.$ZodIssue, shape: GraphShape): ValidationError {
     };
   }
 
+  if (issue.code === "too_small" || issue.code === "too_big") {
+    return { code: "E_RANGE", path, message: issue.message };
+  }
+
   return { code: "E_TYPE", path, message: issue.message };
 }
 
@@ -196,6 +209,7 @@ function mapIssue(issue: z.core.$ZodIssue, shape: GraphShape): ValidationError {
 
 function checkInvariants(
   graph: CanonicalGraph | GraphArtifact,
+  shape: GraphShape,
 ): ValidationError[] {
   const errors: ValidationError[] = [];
   const err = (
@@ -205,6 +219,24 @@ function checkInvariants(
   ): void => {
     errors.push({ code, path, message });
   };
+
+  // 18. Node ids are `{scope}:{locator}` (graph model §1).
+  const repoNames = new Set(graph.repos.map((r) => r.name));
+  graph.repos.forEach((repo, i) => {
+    if (FIXED_ID_SCOPES.has(repo.name)) {
+      err(
+        "E_ID_FORMAT",
+        `$.repos[${String(i)}].name`,
+        `repo name "${repo.name}" collides with a fixed id scope; node ids would be ambiguous (graph model §1)`,
+      );
+    }
+  });
+  graph.nodes.forEach((node, i) =>
+    checkNodeId(node, repoNames, `$.nodes[${String(i)}]`, err),
+  );
+
+  // 17. Canonical order, canonical shape only (graph model §7.2).
+  if (shape === "canonical") checkCanonicalOrder(graph, err);
 
   // 1. Unique ids.
   const nodesById = indexUnique(graph.nodes, "nodes", err);
@@ -401,5 +433,197 @@ function checkReason(
       `${path}.confidence_reason`,
       `"${entity.id}" is ${entity.confidence} but has no confidence_reason; every non-certain entity explains itself (graph model §5)`,
     );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 18. Id format — graph model §1.
+// ---------------------------------------------------------------------------
+
+function checkNodeId(
+  node: Node,
+  repoNames: ReadonlySet<string>,
+  path: string,
+  err: (code: ValidationErrorCode, path: string, message: string) => void,
+): void {
+  const colon = node.id.indexOf(":");
+  if (colon <= 0 || colon === node.id.length - 1) {
+    err(
+      "E_ID_FORMAT",
+      `${path}.id`,
+      `node id "${node.id}" is not of the form {scope}:{locator} (graph model §1)`,
+    );
+    return;
+  }
+  const scope = node.id.slice(0, colon);
+  const locator = node.id.slice(colon + 1);
+
+  if (FIXED_ID_SCOPES.has(scope)) {
+    const separator =
+      scope === "mongo" || scope === "sql" ? "." : scope === "ext" ? "/" : null;
+    if (separator !== null) {
+      const parts = locator.split(separator);
+      if (parts.length < 2 || parts.some((p) => p.length === 0)) {
+        const form =
+          scope === "mongo"
+            ? "{db}.{collection}"
+            : scope === "sql"
+              ? "{schema}.{table}"
+              : "{vendor}/{surface}";
+        err(
+          "E_ID_FORMAT",
+          `${path}.id`,
+          `node id "${node.id}" has scope "${scope}" but its locator is not ${form} (graph model §1)`,
+        );
+      }
+    }
+    return;
+  }
+
+  if (!repoNames.has(scope)) {
+    err(
+      "E_ID_FORMAT",
+      `${path}.id`,
+      `node id "${node.id}" has scope "${scope}", which is neither one of ${[...FIXED_ID_SCOPES].join(", ")} nor a repo in repos[] (graph model §1)`,
+    );
+    return;
+  }
+
+  const hash = locator.indexOf("#");
+  const filePath = hash === -1 ? locator : locator.slice(0, hash);
+  if (
+    filePath.length === 0 ||
+    filePath.startsWith("/") ||
+    filePath.includes("\\") ||
+    (hash !== -1 && hash === locator.length - 1)
+  ) {
+    err(
+      "E_ID_FORMAT",
+      `${path}.id`,
+      `node id "${node.id}" must be {repo}:{path} or {repo}:{path}#{qualified_name}, with a relative forward-slash path (graph model §1)`,
+    );
+    return;
+  }
+  if (node.source !== null) {
+    if (node.source.repo !== scope) {
+      err(
+        "E_ID_FORMAT",
+        `${path}.id`,
+        `node id "${node.id}" is scoped to repo "${scope}" but source.repo is "${node.source.repo}" (graph model §1)`,
+      );
+    }
+    if (node.source.path !== filePath) {
+      err(
+        "E_ID_FORMAT",
+        `${path}.id`,
+        `node id "${node.id}" names path "${filePath}" but source.path is "${node.source.path}" (graph model §1)`,
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 17. Canonical order — graph model §7.2. Only what survives JSON.parse:
+// array order and string normalization. Whitespace and key order are the
+// serializer's business and are checked by byte diff.
+// ---------------------------------------------------------------------------
+
+function checkCanonicalOrder(
+  graph: CanonicalGraph | GraphArtifact,
+  err: (code: ValidationErrorCode, path: string, message: string) => void,
+): void {
+  const checkSorted = (
+    items: readonly string[],
+    path: string,
+    what: string,
+    strict: boolean,
+  ): void => {
+    for (let i = 1; i < items.length; i++) {
+      const prev = items[i - 1];
+      const cur = items[i];
+      if (prev === undefined || cur === undefined) continue;
+      const cmp = byteCompare(prev, cur);
+      if (cmp > 0 || (strict && cmp === 0)) {
+        err(
+          "E_CANONICAL_ORDER",
+          `${path}[${String(i)}]`,
+          `${what} is not in canonical order: "${cur}" must not follow "${prev}" (byte-wise ascending, graph model §7.2)`,
+        );
+        return;
+      }
+    }
+  };
+
+  checkSorted(
+    graph.repos.map((r) => r.name),
+    "$.repos",
+    "repos (by name)",
+    true,
+  );
+  checkSorted(
+    graph.nodes.map((n) => n.id),
+    "$.nodes",
+    "nodes (by id)",
+    true,
+  );
+  checkSorted(
+    graph.edges.map((e) => e.id),
+    "$.edges",
+    "edges (by id)",
+    true,
+  );
+  checkSorted(
+    graph.schemas.map((s) => s.id),
+    "$.schemas",
+    "schemas (by id)",
+    true,
+  );
+  graph.nodes.forEach((n, i) =>
+    checkSorted(n.tags, `$.nodes[${String(i)}].tags`, "tags", false),
+  );
+  graph.edges.forEach((e, i) =>
+    checkSorted(
+      e.skips_tiers,
+      `$.edges[${String(i)}].skips_tiers`,
+      "skips_tiers",
+      false,
+    ),
+  );
+  graph.schemas.forEach((s, i) =>
+    s.fields.forEach((f, j) =>
+      checkSorted(
+        f.classification,
+        `$.schemas[${String(i)}].fields[${String(j)}].classification`,
+        "classification",
+        false,
+      ),
+    ),
+  );
+
+  checkNfc(graph, "$", err);
+}
+
+function checkNfc(
+  value: unknown,
+  path: string,
+  err: (code: ValidationErrorCode, path: string, message: string) => void,
+): void {
+  if (typeof value === "string") {
+    if (value.normalize("NFC") !== value) {
+      err(
+        "E_CANONICAL_NFC",
+        path,
+        `string is not NFC-normalized (graph model §7.2): ${JSON.stringify(value)}`,
+      );
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((v, i) => checkNfc(v, `${path}[${String(i)}]`, err));
+    return;
+  }
+  if (typeof value === "object" && value !== null) {
+    for (const [k, v] of Object.entries(value))
+      checkNfc(v, `${path}.${k}`, err);
   }
 }

@@ -8,7 +8,10 @@ import {
 } from "./enums.js";
 
 /** Line numbers are 1-based everywhere in the model; zero and negatives are malformed. */
-export const LineNumber = z.int().positive();
+export const LineNumber = z.int().positive({
+  error:
+    "line numbers are 1-based: the first line of a file is 1, so 0 and negative values are malformed",
+});
 
 /** Graph model §7. Bump on breaking model changes. Mismatch must fail loudly. */
 export const GRAPH_SCHEMA_VERSION = 1;
