@@ -50,6 +50,9 @@ Format: `{scope}:{locator}`
 
 **Rules (normative):**
 
+- **Six scope prefixes exist:** `svc`, `{repo}`, `mongo`, `sql`, `topic`, `ext`.
+  The `{repo}` form covers two row kinds — code nodes and modules — since a module
+  is just a code node whose locator has no `#qualified_name`.
 - Identity is never derived from array index or parse order.
 - `qualified_name` includes the class for methods: `NoteService.update`.
 - Paths are relative to repo root, forward slashes, no leading slash.
@@ -71,7 +74,7 @@ Format: `{scope}:{locator}`
 | `source.repo` | string | if source | Repo name |
 | `source.path` | string | if source | Path from repo root |
 | `source.line_start` | int | if source | First line |
-| `source.line_end` | int | no | Last line, where known |
+| `source.line_end` | int \| null | if source | Last line. Null where not determinable |
 | `source.hash` | string | if source | Hash of the defining source span. Drives `modified` detection |
 | `confidence` | enum | yes | `certain` \| `inferred` \| `annotated`. See §5 |
 | `confidence_reason` | string \| null | yes | Required when confidence is not `certain` |
@@ -135,13 +138,68 @@ A useful side effect: if two things you think of as one concern don't share a
 parent and connect only by a long edge, that's the map telling you the code
 disagrees with your mental model.
 
+### 2.4 Two source shapes, not one
+
+An earlier draft said edge `source` had "the same shape as node source", which
+made `hash` required on edges and schemas. It isn't, and every example correctly
+omitted it. Two distinct shapes:
+
+**`SourceSpan`** — nodes only. A definition that can change.
+
+| Field | Type | Required |
+|---|---|---|
+| `repo` | string | yes |
+| `path` | string | yes |
+| `line_start` | int | yes |
+| `line_end` | int \| null | yes |
+| `hash` | string | yes |
+
+**`SourceLocation`** — edges and schemas. A place in a file.
+
+| Field | Type | Required |
+|---|---|---|
+| `repo` | string | yes |
+| `path` | string | yes |
+| `line_start` | int | yes |
+| `line_end` | int \| null | yes |
+
+`hash` exists on nodes because it drives `modified` detection against the
+baseline (persisted-files §1.5). An edge has no independent existence to be
+modified — it is derived from its endpoints, and the hash of the file its call
+site sits in is already carried by the `from` node. Adding one would create a
+second, redundant change signal that could disagree with the first.
+
+### 2.5 Nullable versus absent (normative)
+
+This decides `.nullable()` against `.optional()` in Zod and directly affects
+byte-identity, so it is stated once and applies to every entity in this document.
+
+**Every key in a field table whose Required column is `yes` or a condition is
+always present in the serialized output.** Where the table permits null, the
+value is `null` — the key is never omitted.
+
+| Required column reads | Meaning |
+|---|---|
+| `yes` | Key always present. Null allowed only if the type says `\| null` |
+| A condition, e.g. `if not certain`, `if source`, `if broken` | Key **always present**. Must be non-null when the condition holds; null otherwise |
+| `no` | Key may be absent entirely |
+
+A conditional entry is a constraint on the *value*, never a licence to drop the
+key. `confidence_reason` is present on every node, edge and schema — null when
+`certain`, non-null otherwise. Same for `entry_point_kind`, `broken_reason`,
+`line_end`, `condition.source_line`, `response_schema_id`, `ref_schema_id` and
+`branch_ordinal`.
+
+Where a JSON example in this document omits such a key, the example is wrong and
+the table wins. Examples are illustrative; tables are normative.
+
 ---
 
 ## 3. Edge
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `id` | string | yes | Stable across parses given identical endpoints and kind |
+| `id` | string | yes | Stable across parses given identical endpoints and kind; fork edges also key on `exclusive_group` and `branch_ordinal`. See §3.3 |
 | `from` | string | yes | Source node id |
 | `to` | string | yes | Target node id |
 | `kind` | enum | yes | See §3.1 |
@@ -153,10 +211,12 @@ disagrees with your mental model.
 | `condition` | object \| null | yes | Set when the edge fires conditionally. See §3.2 |
 | `exclusive_group` | string \| null | yes | Fork membership. Edges sharing a value are alternatives. See §3.2 |
 | `is_error_path` | bool | yes | Branch is an error/early-exit path. Drives default selection. See §3.2 |
-| `source` | object \| null | yes | Where the call site lives. Same shape as node `source` |
+| `source` | object \| null | yes | Call site **location** of the *first* occurrence. See §2.4 and §3.3 |
+| `source_count` | int | yes | Distinct call sites collapsed. **0 when `source` is null** — an annotated edge has no call site. See §3.3 |
+| `branch_ordinal` | int \| null | yes | Position within `exclusive_group`, source order, from 0. Non-null exactly when `exclusive_group` is. See §3.3 |
 | `is_broken` | bool | yes | Previously resolved, no longer does. See §5.1 |
 | `broken_reason` | string \| null | if broken | Explanation shown on the warning icon |
-| `skips_tiers` | string[] | yes | Bands bypassed. Empty for normal edges. See §3.3 |
+| `skips_tiers` | string[] | yes | Bands bypassed. Empty for normal edges. See §3.4 |
 
 ```jsonc
 // ILLUSTRATIVE ONLY
@@ -173,7 +233,9 @@ disagrees with your mental model.
   "condition": null,
   "exclusive_group": null,
   "is_error_path": false,
-  "source": { "repo": "tapistree", "path": "ios/Services/NoteService.swift", "line_start": 88 },
+  "source": { "repo": "tapistree", "path": "ios/Services/NoteService.swift", "line_start": 88, "line_end": null },
+  "source_count": 1,
+  "branch_ordinal": null,
   "is_broken": false,
   "broken_reason": null,
   "skips_tiers": []
@@ -206,7 +268,7 @@ without asking the user anything.
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `expr` | string | yes | The condition as written in source |
-| `source_line` | int | no | Where it appears |
+| `source_line` | int \| null | yes | Where it appears. Null when not determinable |
 
 Used for dispatch fan-out (a handler map keyed by a payload field) and threshold
 branches. Its job is **labelling**, not evaluation — the tool never executes
@@ -237,17 +299,19 @@ first edge under this **total ordering**, applied to every edge in the group:
 1. `is_error_path: false` sorts before `is_error_path: true`.
 2. Then ascending `source.line_start`.
 3. Then ascending `source.path`, for a group spanning files.
-4. Then ascending `edge.id`, as the final tie-breaker.
+4. Then ascending `branch_ordinal`, as the final tie-breaker (§3.3).
 
 **Every edge carrying a non-null `exclusive_group` MUST have a non-null
 `source`.** A branch exists at a place in a file; an edge with no source location
-cannot be part of a fork. The validator enforces this — see §10.
+cannot be part of a fork. The validator enforces this; the full list of validator
+invariants is in handoff §5.
 
 Steps 3 and 4 exist because steps 1 and 2 alone are not a total order. Two
 branches can share a line (a ternary, a one-line `guard ... else`), and
-`source.line_start` is not unique across files. Without a final tie-breaker the
-chosen branch would depend on array order, which depends on parse order, which
-breaks the determinism requirement.
+`source.line_start` is not unique across files. `branch_ordinal` is unique within
+a group by construction, so step 4 always terminates. Without it the chosen
+branch would depend on array order, which depends on parse order, which breaks
+the determinism requirement.
 
 Because the ordering is total, the choice is fully determined by the graph and
 nothing about it is persisted — it recomputes identically every parse. Overriding
@@ -263,12 +327,109 @@ choice is a legible default, not a claim about what would really happen.
 confidence (§5). An edge may be both `inferred` and conditional. Conditions render
 as a text label plus a fork marker at the branch point.
 
-### 3.3 `skips_tiers`
+### 3.3 Edge identity: one edge per relationship, not per call site
+
+`id` is derived as a hash of `from` + `to` + `kind`. That is deliberately not
+unique per call site, and the consequence is the rule:
+
+**Two call sites from A to B of the same kind are one edge, not two.**
+
+`NoteService` calling `repo.save()` on lines 12 and 47 produces a single
+`write` edge. The map's claim is *NoteService writes to notes*, which is true
+once regardless of how many statements do it. Drawing two identical arrows
+between the same pair of nodes adds no information and clutters the layout.
+
+| Field | Behaviour when collapsing |
+|---|---|
+| `source` | The occurrence with the lowest `line_start`, then lowest `path` |
+| `source_count` | Incremented per distinct call site |
+| `condition` | Null unless *every* occurrence shares the same condition |
+| `exclusive_group` | Never collapsed — see below |
+| `confidence` | `inferred` if any occurrence is `inferred`, else `certain`. See below |
+| `is_error_path` | True only if every occurrence is an error path |
+
+**Confidence merging is defined over parsed edges only.** `certain` and `inferred`
+are levels and merge as above — one uncertain call site makes the whole edge
+uncertain, which is the conservative direction. `annotated` is **not** a level
+(§5), it's a different origin, so it never participates:
+
+| Situation | Result |
+|---|---|
+| All occurrences parsed | Merge per the table above |
+| An annotated edge exists with no parsed equivalent | Kept as-is, `annotated` |
+| An annotated edge collides with a parsed edge of the same id | **The parsed edge wins.** Emit a `redundant_annotation` diagnostic |
+
+The last row is worth the diagnostic: it means someone hand-wrote an edge the
+parser can now see for itself, so the annotation is dead weight and should be
+deleted. Silently discarding it would leave a stale annotation nobody knows to
+remove.
+
+**Fork edges are keyed differently.** Edges with a non-null `exclusive_group` are
+alternatives at one branch point and must stay distinct, so they are keyed by
+`from` + `to` + `kind` + `exclusive_group` + `branch_ordinal`.
+
+`branch_ordinal` rather than a line number, because a line number is not unique
+within a group: `foo(1) if c else foo(2)` puts two alternatives on one line with
+identical endpoints and kind, and a line-keyed id would make them collide and the
+graph invalid.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `branch_ordinal` | int \| null | yes | Position of this alternative within its `exclusive_group`, in source order, from 0. Non-null exactly when `exclusive_group` is non-null |
+
+The pack assigns it while walking the branch — it already knows the order, so this
+costs nothing and avoids adding column tracking to every recognizer. It is
+derived from *source* order, not parse order, so the determinism rule in §1 is
+satisfied.
+
+`branch_ordinal` also replaces `edge.id` as the final tie-breaker in §3.2's
+default-selection ordering, which is both cheaper and more meaningful.
+
+**Accepted consequence:** because fork edge ids depend on `branch_ordinal`,
+reordering the limbs of an `if`/`else` changes those ids, and the baseline will
+report the old edges as removed and the new ones as new. That is a real
+false-positive and it is accepted: swapping branch order is a semantic change
+often enough that flagging it is defensible, and the alternative — line- or
+column-keyed ids — is worse for the far more common case of a block simply moving
+down a file.
+
+The argument against line-based ids stands for non-fork edges: moving a call from
+line 12 to line 47 must not change the id, or every refactor would light up the
+map with false breakage.
+
+**Validator rules:** edge ids unique within a graph; `source == null` if and only
+if `source_count == 0`; `branch_ordinal` non-null exactly when `exclusive_group`
+is non-null.
+
+### 3.4 `skips_tiers`
 
 Populated when an edge jumps more than one band — a `ui_view` writing straight to
-a collection, say. Suspicious by default, so it can be badged and counted with no
-extra config. Also the basis for a coupling metric: count edges crossing distant
-parts of the tree and watch whether that number grows.
+a collection, say. Also the basis for a coupling metric: count edges crossing
+distant parts of the tree and watch whether that number grows.
+
+**Computed only between the six ordered bands.** `ui`, `ui_logic`, `api`,
+`domain`, `data_access`, `store` have a depth relationship; nothing else does.
+An edge is skipped over entirely — `skips_tiers: []` — when either endpoint is:
+
+| Excluded endpoint kind | Why |
+|---|---|
+| `external_service` | `external` is not a depth layer (§6). Leaving the system isn't skipping a band, and edge *length* already carries that signal |
+| `topic` | A queue is transport, not depth. See below |
+| `tombstone` | It sits where the removed node sat; the edge is already flagged `is_broken` and doesn't need a second badge |
+
+The same holds for any endpoint whose `tier` is `external` by config regardless of
+`kind`: `external` is not one of the six ordered bands, so no depth relationship
+exists to compute. The validator checks both the kind list and the tier.
+
+**On topics specifically.** With `topic` defaulting to `store` (§6.1), an
+`endpoint` publishing an event would otherwise register as skipping `domain` and
+`data_access` — and "a route publishes an event" is an ordinary, healthy pattern,
+not coupling. Badging it would train people to ignore the badge, which costs more
+than the check is worth.
+
+The underlying reason is that a topic's tier is about *where it draws*, not how
+deep it is. It sits near the collections because data at rest belongs there
+visually. Depth is the wrong question to ask about it.
 
 ---
 
@@ -281,9 +442,9 @@ isn't duplicated across forty edges and a classification change is a single edit
 |---|---|---|---|
 | `id` | string | yes | Stable id |
 | `name` | string | yes | Type name as written in source |
-| `source` | object \| null | yes | Where the type is defined |
+| `source` | object \| null | yes | Definition **location**. See §2.4 — no `hash` |
 | `confidence` | enum | yes | Per §5 |
-| `confidence_reason` | string \| null | if not `certain` | Human-readable. Same invariant as nodes and edges, per §5 |
+| `confidence_reason` | string \| null | yes | Required non-null when confidence is not `certain`. Same invariant as nodes and edges, §5 |
 | `fields` | Field[] | yes | May be empty for opaque payloads |
 
 **Field:**
@@ -294,20 +455,21 @@ isn't duplicated across forty edges and a classification change is a single edit
 | `type` | string | yes | Type as written in source |
 | `optional` | bool | yes | Whether it may be absent |
 | `classification` | string[] | yes | What the field *is*. May be empty |
-| `ref_schema_id` | string \| null | no | Set when the field is itself a schema |
+| `ref_schema_id` | string \| null | yes | Set when the field is itself a schema |
 
 ```jsonc
 // ILLUSTRATIVE ONLY
 {
   "id": "sch_note_update_req",
   "name": "NoteUpdateRequest",
-  "source": { "repo": "tapistree", "path": "api/models/note.py", "line_start": 12 },
+  "source": { "repo": "tapistree", "path": "api/models/note.py", "line_start": 12, "line_end": null },
   "confidence": "certain",
+  "confidence_reason": null,
   "fields": [
-    { "name": "note_id", "type": "str",       "optional": false, "classification": ["identifier"] },
-    { "name": "body",    "type": "str",       "optional": false, "classification": ["free_text", "may_contain_pii"] },
-    { "name": "tags",    "type": "list[str]", "optional": true,  "classification": [] },
-    { "name": "author",  "type": "UserRef",   "optional": false, "classification": [], "ref_schema_id": "sch_user_ref" }
+    { "name": "note_id", "type": "str",       "optional": false, "classification": ["identifier"],                   "ref_schema_id": null },
+    { "name": "body",    "type": "str",       "optional": false, "classification": ["free_text", "may_contain_pii"], "ref_schema_id": null },
+    { "name": "tags",    "type": "list[str]", "optional": true,  "classification": [],                               "ref_schema_id": null },
+    { "name": "author",  "type": "UserRef",   "optional": false, "classification": [],                               "ref_schema_id": "sch_user_ref" }
   ]
 }
 ```
@@ -378,12 +540,21 @@ looks wrong on its own.
 
 #### Broken edges still need two endpoints
 
-A broken edge points at something that no longer exists, which collides with the
-graph's structural invariant that **every edge endpoint must resolve to a node**
-(handoff §5, validator). Both requirements are load-bearing, so the target is
-made to exist:
+**Not every broken edge needs a tombstone.** Three cases, and only the first one
+does:
 
-**When an edge becomes broken, mint a `tombstone` node for the missing target.**
+| What was removed | Target node | Tombstone? |
+|---|---|---|
+| The target node itself — a deleted endpoint, a renamed topic | Gone | **Yes** |
+| A field the target still exposes — a dropped response field | Still exists | No |
+| The reference resolved elsewhere — an ambiguity narrowed | Still exists | No |
+
+The rule is about the structural invariant, not about brokenness: **every edge
+endpoint must resolve to a node** (handoff §5, validator). When the target still
+exists, `is_broken` is simply a flag on an otherwise ordinary edge and nothing
+needs minting.
+
+**When the target node itself is gone, mint a `tombstone` for it.**
 
 | Field | Value |
 |---|---|
@@ -399,6 +570,8 @@ Consequences, all intended:
 
 - The validator needs no exception. Endpoint resolution stays absolute, which
   keeps it a cheap unconditional check rather than a conditional one.
+- The validator must **not** require that every broken edge points at a
+  tombstone. That would be wrong for the field-removal case above.
 - The map shows *where the thing used to be*, which is far more useful than an
   edge trailing off into space.
 - A tombstone is only ever minted from a baseline entry, so a fresh clone with no
@@ -444,6 +617,36 @@ Direct database access is the mirror image — an edge skipping bands vertically
 Tier assignment is declared in config, defaulted from `kind`. **Declared always
 wins.**
 
+### 6.1 Default tier by kind (normative)
+
+Used when no config glob matches. Config overrides any row.
+
+| `kind` | Default `tier` |
+|---|---|
+| `ui_view`, `ui_handler` | `ui` |
+| `client_service` | `ui_logic` |
+| `endpoint`, `middleware` | `api` |
+| `function`, `class`, `module`, `service` | `domain` |
+| `repository` | `data_access` |
+| `collection`, `table`, `topic` | `store` |
+| `external_service` | `external` |
+| `tombstone` | Whatever the baseline recorded for the node it replaces |
+
+Three of these deserve a note, because they were the ones the table was missing:
+
+- **`service`** spans every band by nature — it's a container, visible at the
+  coarsest zoom level, not a thing that sits at a depth. `domain` is a placeholder
+  that puts it mid-stack rather than a claim about where it belongs. Any real
+  monorepo should assign services by config glob.
+- **`module`** defaults to `domain` for the same reason, but in practice a path
+  glob almost always matches first — a module *is* a path.
+- **`topic`** is in `store` because a queue holds data between services. It isn't
+  a datastore, but of the seven bands it's the closest fit, and a topic sitting
+  next to the collections reads correctly on the map: data at rest.
+
+None of these three should be resolved by better defaults. They should be
+resolved by config, which is why declared always wins.
+
 ---
 
 ## 7. Graph metadata
@@ -458,7 +661,7 @@ wins.**
 | `repos[].commit` | string | yes | Hash, for reproducibility |
 | `repos[].dirty` | bool | yes | Uncommitted changes present |
 | `tier_config_hash` | string | yes | Invalidates layout when tiers change |
-| `stats` | object | no | Counts, including breakdown by confidence |
+| `stats` | object | no | Counts, including breakdown by confidence. The only optional key in the model — safe because §7.1 excludes it from the canonical graph, so its presence cannot affect byte-identity |
 
 `dirty` flags the "map as it *would* be" case — pointing the tool at a working
 tree to see a change's effect before opening a pull request.
@@ -476,20 +679,53 @@ as literally stated. Resolve it by defining two things rather than one:
 
 **Volatile fields, excluded from the canonical graph:**
 
-- `parsed_at`
-- `repos[].path` — a local checkout path, different on every machine
-- `repos[].dirty`
-- `stats`, if it ever carries timings
+| Excluded | Why |
+|---|---|
+| `parsed_at` | Changes every run by definition |
+| `repos[].path` | A local checkout path; differs per machine |
+| `repos[].dirty` | Working-tree state, not graph content |
+| `stats` | Derived counts, and a plausible home for timings later |
+
+`stats` is excluded **unconditionally**, not "if it ever carries timings." A field
+cannot be conditionally canonical — that would make the determinism check depend
+on the contents of the thing being checked. Everything in `stats` is derivable
+from the canonical graph anyway, so excluding it loses nothing.
 
 **The determinism requirement applies to the canonical graph, not the artifact.**
 Two runs over identical inputs must produce byte-identical canonical graphs.
 `parsed_at` differing is expected and is not a determinism failure.
 
-Implementation note: emit the canonical fields in a stable order and provide a
-`--canonical` flag (or equivalent) that writes only those fields, so the
-determinism check is a plain byte comparison rather than a structural diff.
-Anything relying on stability — layout, change detection, diffing — reads the
-canonical graph.
+### 7.2 Canonical serialization (normative)
+
+"Stable order" needs defining, or byte-identity isn't testable.
+
+| Rule | Definition |
+|---|---|
+| Top-level key order | `schema_version`, `tier_config_hash`, `repos`, `nodes`, `edges`, `schemas` |
+| `nodes` | Array, sorted ascending by `id`, byte-wise |
+| `edges` | Array, sorted ascending by `id`, byte-wise |
+| `schemas` | Array, sorted ascending by `id`, byte-wise |
+| `repos` | Array, sorted ascending by `name` |
+| Object key order | The order keys appear in this document's field tables |
+| Arrays of scalars (`skips_tiers`, `classification`, `tags`) | Sorted ascending |
+| `schemas[].fields` | **Declaration order from source.** Not sorted — field order is meaningful and reordering would hide a real change |
+| Indentation | Two spaces |
+| Line endings | `\n` |
+| Trailing newline | Present |
+| Unicode | NFC-normalized, UTF-8, no BOM |
+| Numbers | Integers only in the model; no float formatting question arises |
+
+Sorting is byte-wise on the UTF-8 encoding, not locale-aware — locale collation
+would make output machine-dependent, which is the failure this section exists to
+prevent.
+
+**Fixtures are written in canonical form.** That makes round-trip verification a
+plain `diff` of two files rather than a structural comparison, which is both
+cheaper and harder to get subtly wrong.
+
+Provide a `--canonical` flag (or equivalent) that writes only canonical fields in
+canonical form. Anything depending on stability — layout, change detection,
+diffing — reads that.
 
 ---
 
@@ -510,7 +746,8 @@ Authoritative list is the persisted-files spec §0. Summary:
 Gzip `graph.json` above a few MB.
 
 Note the split: files humans write are never rewritten by the tool, and layout is
-personal rather than shared. An earlier draft of this section had positions and
+personal **by default** — `layout.json` is an opt-in shared starting point,
+published by explicit action, never written automatically. An earlier draft of this section had positions and
 config sharing one committed file; see persisted-files spec §0 for why that was
 wrong.
 
@@ -525,7 +762,7 @@ Computed at render time:
   It must **not** be derived from the absence of a saved position; that coupled
   diff detection to layout storage and broke once layout became personal.
 - **Default branch selection** at each `exclusive_group`, per §3.2. Deterministic
-  from `is_error_path` and source line, so never persisted.
+  from `is_error_path`, source line and `branch_ordinal`, so never persisted.
 - **Aggregated edges** for zoomed-out views — forty calls to Mongo become one
   thick line, and the animation shows one object moving rather than forty.
 - **Reachable set** from an entry point — the "blast radius" driving flow mode.
@@ -555,7 +792,11 @@ Computed at render time:
   with an early return, a `raise`, and a returned error response all need
   recognising. Parser spec should treat this per-language.
 - Is a string enum enough for `tier`, or does it need a first-class entity?
-- Aggregated edge confidence: does one `inferred` child make the rolled-up edge
-  `inferred`, or does the majority win?
-- Edge `id` stability: derived by hashing `from` + `to` + `kind`, or persisted?
-  Matters if edges ever carry annotations of their own.
+- Aggregated edge confidence: **partly resolved.** For edges collapsed by §3.3
+  (multiple call sites, one relationship) one `inferred` makes the edge
+  `inferred`. Still open for *zoom* aggregation, where forty edges roll into one
+  thick line at service level — the conservative rule may be too noisy there.
+- ~~Edge `id` stability: derived by hashing `from` + `to` + `kind`, or
+  persisted?~~ **Resolved: derived, and deliberately not per-call-site.** Two
+  call sites of the same kind collapse to one edge. Fork edges are keyed
+  additionally by `exclusive_group` and `branch_ordinal`. See §3.3.
