@@ -76,7 +76,7 @@ solely to compute change state.
 |---|---|---|---|
 | `schema_version` | int | yes | Bump on breaking changes |
 | `captured_at` | ISO 8601 | yes | When the snapshot was taken |
-| `repos` | Repo[] | yes | Commit hash per repo at snapshot time |
+| `repos` | BaselineRepo[] | yes | `{ name, commit }` per repo at snapshot time. **Deliberately narrower** than graph model §7's `Repo`, and a separate type: the baseline never needs `path` or `dirty`, and keeping it distinct means widening it later is a baseline change, not a graph contract change |
 | `nodes` | object | yes | Map of node id → `{ baseline_hash, label, tier }` |
 | `edges` | string[] | yes | Edge ids present at snapshot time |
 

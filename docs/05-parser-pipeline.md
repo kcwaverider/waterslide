@@ -396,8 +396,9 @@ What the core computes once the graph is connected.
 | `parent` | Folder structure for the POC, per graph model §2.3 |
 | `skips_tiers` | Band distance between an edge's endpoints |
 | `is_infrastructure` | `config.yaml` declarations only. Never inferred |
-| `exclusive_group` | Branch grouping, per §6 |
+| `exclusive_group`, `branch_ordinal` | **Not derived.** Pack-supplied per branch, per §6 and §3.6 — core cannot know where a branch sits without parsing |
 | `is_error_path` | Pack-supplied per branch, per §6 |
+| `id` (edge) | `edgeId()` from graph model §3.3.1, called by core for edges that left the pack with an `UnresolvedRef` target; packs call the same function for edges resolved within a file |
 
 Tier assignment by path glob before kind matters for the monorepo case, where
 `api/` and `ios/` are the strongest available signal.

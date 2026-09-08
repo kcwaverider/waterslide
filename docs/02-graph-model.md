@@ -53,6 +53,13 @@ Format: `{scope}:{locator}`
 - **Six scope prefixes exist:** `svc`, `{repo}`, `mongo`, `sql`, `topic`, `ext`.
   The `{repo}` form covers two row kinds — code nodes and modules — since a module
   is just a code node whose locator has no `#qualified_name`.
+- **A repo must not be named `svc`, `mongo`, `sql`, `topic` or `ext`.** Its name
+  is an id scope, and those five are taken.
+- **The validator checks id format** (handoff §5, invariant 18): the scope is one
+  of the five fixed prefixes or a name in `repos[]`; `mongo`/`sql` locators contain
+  a `.`, `ext` locators a `/`; and a repo-scoped node with a `source` has
+  `source.repo` equal to its scope and `source.path` equal to the path part of its
+  locator.
 - Identity is never derived from array index or parse order.
 - `qualified_name` includes the class for methods: `NoteService.update`.
 - Paths are relative to repo root, forward slashes, no leading slash.
@@ -417,9 +424,12 @@ encoding, implemented once:
 Sixty-four bits is ample for graphs of thousands of edges and keeps ids readable
 in diffs. The full digest is not persisted anywhere.
 
-`core/` exports the single function that does this, and packs **must** call it
-rather than compute ids themselves — the same reason the Zod schemas live in
-`core/` (handoff §5.2). The validator checks uniqueness and resolution, not
+`core/` exports the single function that does this, and nobody computes an id
+any other way — the same reason the Zod schemas live in `core/` (handoff §5.2).
+**Whoever knows both endpoint ids calls it.** A pack does, for an edge it
+resolved within one file. Core does, after stage 4, for an edge whose `to` left
+the pack as an `UnresolvedRef` — a `PartialEdge` carries no `id` for exactly
+that reason. One implementation, two callers. The validator checks uniqueness and resolution, not
 derivation — so derivation is pinned separately: at least one valid fixture
 carries ids produced by the exported function, and a unit test asserts the
 function's output for a known input against a literal expected hash. Malformed
@@ -744,6 +754,18 @@ Sorting is byte-wise on the UTF-8 encoding, not locale-aware — locale collatio
 would make output machine-dependent, which is the failure this section exists to
 prevent.
 
+**Two kinds of rule, enforced in two places.** The table above mixes rules that
+survive `JSON.parse` with rules that don't, and only the first kind can be
+checked on a parsed graph:
+
+| Survives parsing | Rules | Enforced by |
+|---|---|---|
+| Yes | Array order of `repos`, `nodes`, `edges`, `schemas`; order of `skips_tiers`, `classification`, `tags`; NFC normalization of every string | The **validator**, canonical shape only — handoff §5, invariant 17. A caller who validates without round-tripping still gets a signal |
+| No | Top-level and object key order, indentation, line endings, trailing newline, string escaping | The **serializer**, checked by byte diff against the fixture files |
+
+`schemas[].fields` order is declaration order, which the validator cannot know,
+so it is neither sorted nor checked.
+
 **Fixtures are written in canonical form.** That makes round-trip verification a
 plain `diff` of two files rather than a structural comparison, which is both
 cheaper and harder to get subtly wrong.
@@ -782,7 +804,16 @@ There is no default. An unlabelled call is a type error, not a convenience.
 Discriminating by presence would be guessing, and it would silently weaken
 invariant 12 for exactly these three fields: a real parse output that forgot
 `parsed_at` would pass as "canonical". Every other invariant applies identically
-to both shapes.
+to both shapes, except invariant 17 (canonical order), which is canonical-only.
+
+**Errors are collected within a phase, not across phases.** Validation runs in
+two phases. The *structural* phase (Zod: presence, types, enums, shape) either
+passes or returns every structural error. The *semantic* phase (ids resolve,
+invariants 1–18) runs only after the structural phase passes, and returns every
+semantic error. A graph with both kinds of problem therefore reports the
+structural ones first and the semantic ones on the next run. This is
+deliberate: the semantic checks index nodes by id and dereference fields, which
+is unsafe on a graph that did not parse. Fix one wave, expect a second.
 
 "Required" in the §7 table means required *in the artifact*; the volatile fields
 are not part of the canonical shape rather than being optional within it, so

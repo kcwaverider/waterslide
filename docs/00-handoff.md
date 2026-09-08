@@ -224,6 +224,8 @@ against.
 | 14 | `branch_ordinal` non-null if and only if `exclusive_group` non-null |
 | 15 | `branch_ordinal` values are unique within each `exclusive_group` |
 | 16 | `skips_tiers` is empty when either endpoint is `external_service`, `topic` or `tombstone`, or has `tier: external` (graph model §3.4) |
+| 17 | **Canonical shape only.** `nodes`, `edges`, `schemas` sorted ascending by `id` byte-wise; `repos` by `name`; `skips_tiers`, `classification`, `tags` sorted ascending; every string NFC-normalized (graph model §7.2). Key order and whitespace are the serializer's, checked by byte diff |
+| 18 | Every node id is `{scope}:{locator}` with scope one of `svc`, `mongo`, `sql`, `topic`, `ext` or a name in `repos[]`; no repo is named after a fixed scope; a repo-scoped node with a `source` agrees with it on repo and path (graph model §1) |
 
 **Not an invariant:** a broken edge does *not* have to point at a tombstone.
 Tombstones cover a removed target *node*; a removed *field* breaks an edge whose
