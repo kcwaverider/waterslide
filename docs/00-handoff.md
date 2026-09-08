@@ -208,7 +208,7 @@ against.
 
 | # | Invariant |
 |---|---|
-| 1 | Node ids unique; edge ids unique; schema ids unique |
+| 1 | Node ids unique; edge ids unique; schema ids unique; repo names unique |
 | 2 | Every edge `from` and `to` resolves to a node in the graph |
 | 3 | Every `parent` resolves to a node in the graph |
 | 4 | Every **non-null** `schema_id`, `response_schema_id` and `ref_schema_id` resolves to a schema |
@@ -225,7 +225,9 @@ against.
 | 15 | `branch_ordinal` values are unique within each `exclusive_group` |
 | 16 | `skips_tiers` is empty when either endpoint is `external_service`, `topic` or `tombstone`, or has `tier: external` (graph model §3.4) |
 | 17 | **Canonical shape only.** `nodes`, `edges`, `schemas` sorted ascending by `id` byte-wise; `repos` by `name`; `skips_tiers`, `classification`, `tags` sorted ascending; every string NFC-normalized (graph model §7.2). Key order and whitespace are the serializer's, checked by byte diff |
-| 18 | Every node id is `{scope}:{locator}` with scope one of `svc`, `mongo`, `sql`, `topic`, `ext` or a name in `repos[]`; no repo is named after a fixed scope; a repo-scoped node with a `source` agrees with it on repo and path (graph model §1) |
+| 18 | Every node id is `{scope}:{locator}` with scope one of `svc`, `mongo`, `sql`, `topic`, `ext` or a name in `repos[]`; no repo is named after a fixed scope, empty, or containing `:`; a repo-scoped node with a `source` agrees with it on repo and path (graph model §1) |
+| 19 | Every `source.repo` on a node, edge or schema names a repo in `repos[]` (graph model §2.4) |
+| 20 | The `parent` chain is acyclic; no node is its own ancestor (graph model §2.3). Self-loop edges remain legal |
 
 **Not an invariant:** a broken edge does *not* have to point at a tombstone.
 Tombstones cover a removed target *node*; a removed *field* breaks an edge whose

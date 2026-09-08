@@ -54,7 +54,13 @@ Format: `{scope}:{locator}`
   The `{repo}` form covers two row kinds — code nodes and modules — since a module
   is just a code node whose locator has no `#qualified_name`.
 - **A repo must not be named `svc`, `mongo`, `sql`, `topic` or `ext`.** Its name
-  is an id scope, and those five are taken.
+  is an id scope, and those five are taken. A repo name is also non-empty and
+  contains no `:`, for the same reason, and is unique within `repos[]`
+  (handoff §5, invariant 1).
+- **Locators are non-empty.** For `mongo`/`sql`, both sides of the `.` are
+  non-empty; for `ext`, both sides of the `/`. For repo-scoped ids the path is
+  relative, uses forward slashes, has no leading slash and no backslash, and a
+  `#` is followed by a non-empty `qualified_name`.
 - **The validator checks id format** (handoff §5, invariant 18): the scope is one
   of the five fixed prefixes or a name in `repos[]`; `mongo`/`sql` locators contain
   a `.`, `ext` locators a `/`; and a repo-scoped node with a `source` has
@@ -145,6 +151,12 @@ A useful side effect: if two things you think of as one concern don't share a
 parent and connect only by a long edge, that's the map telling you the code
 disagrees with your mental model.
 
+**The parent chain is a tree.** No node is its own ancestor; a self-parent is
+the degenerate case. The validator rejects any cycle (handoff §5, invariant 20),
+because `parent` is the only aggregation mechanism and a cycle would make zoom
+non-terminating. Edges are unaffected: a self-loop edge — a recursive function —
+is legal and worth seeing.
+
 ### 2.4 Two source shapes, not one
 
 An earlier draft said edge `source` had "the same shape as node source", which
@@ -169,6 +181,11 @@ omitted it. Two distinct shapes:
 | `path` | string | yes |
 | `line_start` | int | yes |
 | `line_end` | int \| null | yes |
+
+**Both shapes reference a repo.** `repo` must name an entry in `repos[]`
+(handoff §5, invariant 19) — on every node, edge and schema that carries a
+source. It is the same class of dangling reference as an edge endpoint or a
+`schema_id`, and the validator treats it the same way.
 
 `hash` exists on nodes because it drives `modified` detection against the
 baseline (persisted-files §1.5). An edge has no independent existence to be

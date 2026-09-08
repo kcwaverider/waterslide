@@ -19,7 +19,7 @@ Six stages, strictly ordered. Each stage's output is the next stage's only input
 | 2 | **Hash** | No | Content hash per file. Cheap; drives stage 3 |
 | 3 | **Parse** | **Yes** | Per-file, by hash. The expensive stage |
 | 4 | **Resolve** | **No — never** | Match references across files and repos. See §2.2 |
-| 5 | **Derive** | No | Tiers, parents, `skips_tiers`, `exclusive_group` grouping |
+| 5 | **Derive** | No | Tiers, parents, `skips_tiers`, edge ids for resolved refs. Fork fields are pack-supplied (§5, §6) |
 | 6 | **Emit** | No | Write `graph.json`. **Nothing else** |
 
 **Stage 6 writes `graph.json` and only `graph.json`.** It does not touch
