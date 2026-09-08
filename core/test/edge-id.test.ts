@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { edgeId, edgeIdInput } from "../src/edge-id.js";
@@ -110,6 +111,59 @@ describe("edgeId (graph model §3.3.1)", () => {
         branch_ordinal: 1.5,
       }),
     ).toThrow(TypeError);
+  });
+
+  it("is provably e_ + sha256(edgeIdInput(key)).slice(0, 16), not coincidentally", () => {
+    const keys = [
+      { from: "a", to: "b", kind: "call" },
+      {
+        from: "tapistree:api/routers/notes.py#update_note",
+        to: "mongo:tapistree.notes",
+        kind: "write",
+      },
+      {
+        from: "x",
+        to: "y",
+        kind: "call",
+        exclusive_group: "g",
+        branch_ordinal: 3,
+      },
+      { from: "café", to: "naïve", kind: "http_request" },
+    ];
+    for (const key of keys) {
+      const expected =
+        "e_" +
+        createHash("sha256")
+          .update(edgeIdInput(key), "utf8")
+          .digest("hex")
+          .slice(0, 16);
+      expect(edgeId(key)).toBe(expected);
+    }
+  });
+
+  it("edgeIdInput rejects exactly the keys edgeId rejects", () => {
+    const bad = [
+      { from: "x", to: "y", kind: "call", exclusive_group: "g" },
+      { from: "x", to: "y", kind: "call", branch_ordinal: 0 },
+      {
+        from: "x",
+        to: "y",
+        kind: "call",
+        exclusive_group: "g",
+        branch_ordinal: -1,
+      },
+      {
+        from: "x",
+        to: "y",
+        kind: "call",
+        exclusive_group: "g",
+        branch_ordinal: 1.5,
+      },
+    ];
+    for (const key of bad) {
+      expect(() => edgeIdInput(key)).toThrow(TypeError);
+      expect(() => edgeId(key)).toThrow(TypeError);
+    }
   });
 
   it("has the documented output shape: e_ + 16 lowercase hex", () => {
