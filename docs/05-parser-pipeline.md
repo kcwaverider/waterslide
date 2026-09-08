@@ -196,8 +196,10 @@ Called once per file, given `(repo_name, path, content)`. Returns:
 Entry points are **not** a separate collection — they are the `is_entry_point`
 and `entry_point_kind` fields on a node, per graph model §2.
 
-> **Note on a change.** The interface was talked through as four returns. Writing
-> it down surfaced the fifth, `provides`, and it is not optional — see below.
+> **Five required returns:** `nodes`, `edges`, `schemas`, `provides` and
+> `diagnostics`. None is optional. `provides` was the one an earlier draft
+> lacked — see §3.4 for why it cannot be dropped. `diagnostics` is shaped by
+> graph model §10.
 
 ### 3.4 `provides`: why the fifth return exists
 
