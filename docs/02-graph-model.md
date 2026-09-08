@@ -803,8 +803,11 @@ validate(graph, { shape: "canonical" | "artifact" })
 There is no default. An unlabelled call is a type error, not a convenience.
 Discriminating by presence would be guessing, and it would silently weaken
 invariant 12 for exactly these three fields: a real parse output that forgot
-`parsed_at` would pass as "canonical". Every other invariant applies identically
-to both shapes, except invariant 17 (canonical order), which is canonical-only.
+`parsed_at` would pass as "canonical". Two invariants are shape-dependent:
+invariant 12 (key presence) requires the volatile fields in the artifact shape
+and forbids them in the canonical shape, and invariant 17 (canonical order)
+applies to the canonical shape only. Every other invariant applies identically
+to both.
 
 **Errors are collected within a phase, not across phases.** Validation runs in
 two phases. The *structural* phase (Zod: presence, types, enums, shape) either
