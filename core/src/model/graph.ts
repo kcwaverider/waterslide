@@ -7,6 +7,9 @@ import {
   TierSchema,
 } from "./enums.js";
 
+/** Line numbers are 1-based everywhere in the model; zero and negatives are malformed. */
+export const LineNumber = z.int().positive();
+
 /** Graph model §7. Bump on breaking model changes. Mismatch must fail loudly. */
 export const GRAPH_SCHEMA_VERSION = 1;
 
@@ -18,8 +21,8 @@ export const GRAPH_SCHEMA_VERSION = 1;
 export const SourceSpanSchema = z.strictObject({
   repo: z.string(),
   path: z.string(),
-  line_start: z.int(),
-  line_end: z.int().nullable(),
+  line_start: LineNumber,
+  line_end: LineNumber.nullable(),
   hash: z.string(),
 });
 export type SourceSpan = z.infer<typeof SourceSpanSchema>;
@@ -28,8 +31,8 @@ export type SourceSpan = z.infer<typeof SourceSpanSchema>;
 export const SourceLocationSchema = z.strictObject({
   repo: z.string(),
   path: z.string(),
-  line_start: z.int(),
-  line_end: z.int().nullable(),
+  line_start: LineNumber,
+  line_end: LineNumber.nullable(),
 });
 export type SourceLocation = z.infer<typeof SourceLocationSchema>;
 
@@ -59,7 +62,7 @@ export type Node = z.infer<typeof NodeSchema>;
 
 export const ConditionSchema = z.strictObject({
   expr: z.string(),
-  source_line: z.int().nullable(),
+  source_line: LineNumber.nullable(),
 });
 export type Condition = z.infer<typeof ConditionSchema>;
 

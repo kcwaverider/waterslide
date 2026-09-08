@@ -10,6 +10,7 @@ import {
 import {
   ConditionSchema,
   GRAPH_SCHEMA_VERSION,
+  LineNumber,
   NodeSchema,
   PayloadSchemaSchema,
   SourceLocationSchema,
@@ -69,7 +70,7 @@ export const UnresolvedRefSchema = z.strictObject({
   ref_kind: RefKindSchema,
   value: z.string(),
   hints: z.record(z.string(), z.unknown()).optional(),
-  source_line: z.int(),
+  source_line: LineNumber,
 });
 export type UnresolvedRef = z.infer<typeof UnresolvedRefSchema>;
 
@@ -114,7 +115,7 @@ export const DiagnosticSchema = z.strictObject({
   message: z.string(),
   repo: z.string().nullable(),
   path: z.string().nullable(),
-  line: z.int().nullable(),
+  line: LineNumber.nullable(),
   pack: z.string().nullable(),
 });
 export type Diagnostic = z.infer<typeof DiagnosticSchema>;

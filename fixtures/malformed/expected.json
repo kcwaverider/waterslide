@@ -94,6 +94,11 @@
     "path": "$",
     "why": "parsed_at present in a graph validated as canonical shape (graph model §7.3)"
   },
+  "line-start-zero.json": {
+    "code": "E_TYPE",
+    "path": "$.nodes[7].source.line_start",
+    "why": "line_start 0; line numbers are 1-based, so the model's positive lower bound rejects it"
+  },
   "unknown-key.json": {
     "code": "E_UNKNOWN_KEY",
     "path": "$.nodes[7]",

@@ -139,6 +139,7 @@ describe("malformed fixtures", () => {
       "E_UNKNOWN_KEY",
       "E_VOLATILE_SHAPE",
       "E_ILLEGAL_ENUM",
+      "E_TYPE",
       "E_DUPLICATE_ID",
       "E_EDGE_ENDPOINT",
       "E_PARENT",
