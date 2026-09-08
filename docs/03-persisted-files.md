@@ -77,26 +77,86 @@ solely to compute change state.
 | `schema_version` | int | yes | Bump on breaking changes |
 | `captured_at` | ISO 8601 | yes | When the snapshot was taken |
 | `repos` | Repo[] | yes | Commit hash per repo at snapshot time |
-| `nodes` | object | yes | Map of node id → `{ hash }` |
+| `nodes` | object | yes | Map of node id → `{ baseline_hash, label, tier }` |
 | `edges` | string[] | yes | Edge ids present at snapshot time |
+
+`label` and `tier` are stored so a tombstone node can be reconstructed when an
+edge breaks (graph model §5.1). Without them a tombstone would have no name and
+nowhere to sit.
+
+#### Every node needs a baseline hash, including source-less ones
+
+`modified` was originally defined against `source.hash`, but not every node has a
+source. A Mongo collection, an external service surface and a tombstone all carry
+`source: null`, so they could never be classified.
+
+**`baseline_hash` is defined for every node kind:**
+
+| Node has | `baseline_hash` is |
+|---|---|
+| `source` non-null | `source.hash` — the file content hash, as before |
+| `source: null` | Hash of the node's identity-bearing fields: `id`, `kind`, `label`, `tier` |
+
+A synthetic node is therefore `modified` when its label or tier changes — a
+collection that moves band because config changed, say — and `unchanged`
+otherwise. That is the correct behaviour: nothing about a collection can change
+except how the tool describes it.
 
 Derivation, replacing graph model §9:
 
-| State | Condition |
+| Condition | State |
 |---|---|
-| `new` | Node id absent from baseline |
-| `modified` | Present, but `source.hash` differs |
-| `unchanged` | Present, hash matches |
-| `removed` | In baseline, absent from current graph |
+| **No baseline file exists** | Every node `unchanged`. See below |
+| Node id absent from baseline | `new` |
+| Present, `baseline_hash` differs | `modified` |
+| Present, `baseline_hash` matches | `unchanged` |
+| In baseline, absent from current graph | `removed` |
+
+**The first row is a whole-graph short-circuit, evaluated before any per-node
+rule.** With no baseline there is nothing to compare against, so the per-node
+rules never run — which is why "absent from baseline" does not make everything
+`new` on a fresh clone. The distinction is between *no baseline* and *a baseline
+that doesn't contain this node*:
+
+| Situation | Result |
+|---|---|
+| No baseline file at all | Everything `unchanged`. The map is a starting point, not a diff |
+| Baseline exists, node absent from it | That node is `new` |
+
+Without the short-circuit, a fresh clone would render every node as new, which
+carries no information and makes the change encoding useless on first use.
 
 Edge ids in the baseline are what make `is_broken` detectable: an edge that was
 present and now isn't, where both endpoints still exist, is a severed link rather
 than a deletion.
 
 **Because the baseline is personal, change state means "new since *I* last
-looked"** — which is more useful than "new since anyone last parsed". A fresh
-clone has no baseline, so the first parse shows everything as `unchanged` rather
-than flooding the map with `new`.
+looked"** — which is more useful than "new since anyone last parsed".
+
+### 1.6 Parsing must never write the baseline
+
+**Correction to parser pipeline §0**, which listed stage 6 as "write
+`graph.json`, update `baseline.json`". It must write only `graph.json`.
+
+If every parse refreshed the baseline, the baseline would always equal the
+current graph and every node would be `unchanged` forever. Change state would be
+permanently empty. The whole feature would silently do nothing, which is the
+worst possible failure — it looks like a working map with no changes in it.
+
+**Capturing a baseline is a separate, explicit action.**
+
+| Trigger | Behaviour |
+|---|---|
+| `waterslide parse` | Reads the baseline. Never writes it |
+| `waterslide baseline` (or a UI "mark as seen" button) | Overwrites the baseline from the current graph |
+| No baseline file present | Parse proceeds; everything `unchanged` per the short-circuit above |
+
+The mental model is marking email as read. Reading changes nothing; you say when
+you're done.
+
+Consequence worth stating: the baseline can be arbitrarily old, and that's fine.
+"What's changed since I last looked" is exactly what you want when you last
+looked three weeks ago.
 
 The baseline updates on an explicit action, not on every parse. Otherwise
 re-parsing twice in a row silently erases the diff you were about to look at.
@@ -305,8 +365,8 @@ annotations get pruned as a side effect of using the tool, rather than as a chor
 
 - ~~Should `positions.json` be committed?~~ **Resolved: no.** Layout is personal;
   shared layout is opt-in via `layout.json`.
-- What action updates the baseline — a button, or automatically on commit? A
-  button is more predictable but easier to forget.
+- ~~What action updates the baseline — a button, or automatically on commit?~~
+  **Resolved: an explicit action, and never a side effect of parsing.** See §1.6.
 - ~~Does `expected_middleware` need per-route exemptions, or is a narrower glob
   always enough?~~ **Resolved: yes, inline in the rule**, with a mandatory reason.
   A narrower glob hides the decision; an exemption with a reason is reviewable in

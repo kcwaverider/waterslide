@@ -20,7 +20,22 @@ Six stages, strictly ordered. Each stage's output is the next stage's only input
 | 3 | **Parse** | **Yes** | Per-file, by hash. The expensive stage |
 | 4 | **Resolve** | **No — never** | Match references across files and repos. See §2.2 |
 | 5 | **Derive** | No | Tiers, parents, `skips_tiers`, `exclusive_group` grouping |
-| 6 | **Emit** | No | Write `graph.json`, update `baseline.json` |
+| 6 | **Emit** | No | Write `graph.json`. **Nothing else** |
+
+**Stage 6 writes `graph.json` and only `graph.json`.** It does not touch
+`baseline.json`. Capturing a baseline is a separate explicit action — see
+persisted-files spec §1.6 — because a parse that refreshed the baseline would
+make change state permanently empty.
+
+**Read-only side inputs.** "Each stage's output is the next stage's only input"
+describes the *flow of derived data*, not total isolation. Two committed or local
+files are read as side inputs and never written by the pipeline:
+
+| File | Read by | Used for |
+|---|---|---|
+| `config.yaml` | Stages 4, 5 | DI resolutions, tier globs, infrastructure markers, policy |
+| `annotations.yaml` | Stage 5 | Manual edges, classifications, notes |
+| `baseline.json` | Stage 5 | Change state, `is_broken`, tombstone reconstruction |
 
 The cacheable/never-cacheable split at stages 3 and 4 is the single most important
 structural fact in this document. Everything else follows from it.
@@ -198,13 +213,53 @@ exactly what the pack boundary exists to prevent. So the pack states it.
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `name` | string | yes | Qualified name others may use, e.g. `services.memory_service.display` |
+| `name` | string | yes | The name others may use, e.g. `services.memory_service.display` |
 | `node_id` | string | yes | The node it resolves to |
 | `visibility` | enum | yes | `public` \| `module` \| `private`. Narrows match scope |
+| `scope` | enum | yes | `global` \| `file`. See below |
+| `scope_path` | string \| null | if `scope: file` | The file within which the bare name is valid |
 
 One node may have several `provides` entries — a Python function is referable as
 `module.func` and, after `from module import func`, as a bare name within the
 importing file. Both are the pack's business to declare.
+
+#### Bare names must be file-scoped
+
+A qualified name is unambiguous anywhere. A bare name is not, and treating the
+two the same is a soundness bug rather than an inconvenience.
+
+Consider two files:
+
+```python
+# api/services/notes.py
+from memory_service import display     # → memory_service.display
+display(note)
+
+# api/services/reports.py
+from report_renderer import display    # → report_renderer.display
+display(report)
+```
+
+Both packs emit a `provides` entry for the bare name `display`, pointing at
+*different* nodes. If bare names were global, stage 4 would see two candidates
+for every bare `display()` call and — per §4.3 — emit edges to **both**. Every
+such call would sprout a false edge, marked `inferred`, with a reason that reads
+like a genuine ambiguity. The map would be wrong in a way that looks careful.
+
+**Rules:**
+
+| `name` shape | `scope` | Matched against |
+|---|---|---|
+| Qualified (contains a separator) | `global` | Any reference in any file |
+| Bare (no separator) | `file` | Only references originating in `scope_path` |
+
+- `scope_path` is the path of the file that *imported* the name, not the file that
+  defined it. The binding belongs to the importer.
+- Stage 4 must therefore retain each parse result's owning file and use it when
+  matching. Dropping it — treating the index as a flat name→node map — is the
+  specific mistake this section exists to prevent.
+- Two identical bare bindings in different files are not an ambiguity. They are
+  two unrelated facts that happen to share a spelling.
 
 ### 3.5 The resolution boundary
 
@@ -288,6 +343,11 @@ but may never upgrade it.
 
 Build one index across all parsed files: every `provides` entry, every route, every
 topic, every collection. Then walk every `UnresolvedRef` and match it.
+
+**The index is keyed by name *and* scope.** A `provides` entry with `scope: file`
+matches only references originating in its `scope_path` (§3.4). The index cannot
+be a flat name→node map, and the reference's own file must be carried into
+matching — this is the most likely place for a subtle wrong-edge bug to enter.
 
 | `ref_kind` | Matched against | Result confidence |
 |---|---|---|
@@ -494,6 +554,10 @@ it's incomplete.
 - Is `except` reliably `is_error_path: true`? A handler that retries and continues
   is arguably the happy path of a flaky call. Defaulting to true and letting the
   click reveal it seems right, but it will be wrong sometimes.
+- ~~Do bare-name `provides` entries need a scope?~~ **Resolved: yes, file-scoped.**
+  Global bare names would emit false edges to every same-named target. See §3.4.
+- ~~Does stage 6 write `baseline.json`?~~ **Resolved: no.** Parsing never writes
+  the baseline; see persisted-files spec §1.6.
 - Should the resolution index be persisted purely as a diffing aid? Not needed for
   correctness — the pass re-runs regardless — but it might make "what changed in
   resolution since last parse" cheap.

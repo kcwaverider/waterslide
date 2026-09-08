@@ -100,14 +100,22 @@ become more important for these users, not less.
 
 ### 2.2 Semantic zoom
 
-Zoom changes the semantic level — services, then modules, then functions — the
-way Google Maps swaps country names for cities for streets. You never ask for
-more detail; magnification triggers it.
+**Zoom is the only control that changes semantic level.** Magnification never
+does. Zoom moves between services, then modules, then functions — the way Google
+Maps swaps country names for cities for streets. You never ask for more detail
+explicitly; scrolling in produces it.
 
 **Trigger: target node size, not fixed thresholds.** Step to the next level when
 the average on-screen node exceeds a target pixel width; step back when it drops
 below. Adaptive, so it works at any magnification setting and adjusts to graph
 density instead of breaking on sparse or dense maps.
+
+**How the two interact.** Magnification sets the base size that node width is
+computed *from*, so it shifts where in the zoom range each level change happens —
+at high magnification you cross the target width sooner and reach function level
+at a lower zoom. It does not change the target width itself, and it cannot change
+level on its own: adjusting magnification without zooming re-renders the same
+level at a different size.
 
 Requirements:
 
@@ -153,6 +161,11 @@ real maps prove it necessary.
 | Logic | `function`, `class`, `service`, `module` |
 | Data | `repository`, `collection`, `table`, `topic` |
 | Boundary | `external_service` |
+| Absence | `tombstone` |
+
+`tombstone` renders desaturated grey with a dashed outline — a node that used to
+be here. It is always the target of a broken edge (graph model §5.1), so it
+appears next to the red warning icon rather than on its own.
 
 ### 3.2 Saturation — change state
 
@@ -301,11 +314,14 @@ agent got right. Business logic is where attention belongs.
 **The animation never asks a question.** It picks a branch, plays through, and
 leaves the fork visible so you can change your mind.
 
-At every `exclusive_group` (graph model §3.2) the default is:
+At every `exclusive_group` the default is the first branch under the total
+ordering defined in graph model §3.2 — non-error before error, then source line,
+then source path, then edge id. In practice that reads as the *happy path
+heuristic*: the first branch that doesn't dead-end.
 
-1. The first branch with `is_error_path: false`, by source line — the *happy path
-   heuristic*.
-2. If every branch is an error path, the lowest source line.
+The last two steps exist so the order is total. A ternary or a one-line
+`guard ... else` puts two branches on the same line, and lines aren't unique
+across files. Without them the active branch would depend on parse order.
 
 The heuristic works because of how people write code: the error case is a couple
 of lines and the real work continues below it. "The branch that doesn't dead-end"
@@ -372,7 +388,10 @@ to HIPAA re-colours; it never re-annotates.
 
 - ~~Conditional-edge dashes vs confidence dashes.~~ **Resolved:** line style is
   confidence only; conditions get a label and fork marker.
-- ~~Are 6 hue groups enough?~~ **Resolved:** yes for now. Shape or icon as a
+- ~~Does magnification change semantic level?~~ **Resolved:** no. Zoom is the
+  only control that does; magnification shifts where in the zoom range each
+  level change falls. See §2.2.
+- ~~Are 7 hue groups enough?~~ **Resolved:** yes for now. Shape or icon as a
   second channel is a future possibility, not day one.
 - ~~How does the animation resolve a fork?~~ **Resolved:** happy path heuristic,
   source order as tie-break, click to flip. No prompting, no input values, no

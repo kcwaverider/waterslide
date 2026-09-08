@@ -154,13 +154,16 @@ against.
 - The **language pack interface** per doc 05 §3 — all five returns, including
   `provides`.
 - `UnresolvedRef` shape, including `ref_kind`.
-- **Validator.** Given a `graph.json`: every edge endpoint resolves to a node,
+- **Validator.** Given a `graph.json`: every edge endpoint resolves to a node
+  (broken edges included — their targets are `tombstone` nodes, graph model §5.1),
   every `schema_id` reference resolves, every enum value is legal, every
-  non-`certain` entity carries a `confidence_reason`.
+  non-`certain` entity carries a `confidence_reason`, and every edge with a
+  non-null `exclusive_group` has a non-null `source` (graph model §3.2).
 - **Fixtures.** Valid graphs plus at least six deliberately malformed ones.
 
 **Done when:** hand-written fixtures round-trip byte-identically, and the
-validator rejects each malformed fixture with a specific message.
+validator rejects each malformed fixture with a specific message. Round-tripping
+compares canonical graphs, per graph model §7.1.
 
 ### 5.1 Why the fixtures come first
 
@@ -206,9 +209,12 @@ parsing.
 Done when all of the following hold:
 
 1. **It validates.** The M0 validator passes on both packs' output.
-2. **It's deterministic.** Two consecutive runs produce byte-identical files.
-   Then shuffle file discovery order and confirm it's *still* byte-identical.
-   Non-determinism here poisons change detection for the whole project.
+2. **It's deterministic.** Two consecutive runs produce a byte-identical
+   **canonical graph** — everything except the volatile fields listed in graph
+   model §7.1. `parsed_at` differing is expected and is not a failure; comparing
+   whole artifacts would fail every time by design. Then shuffle file discovery
+   order and confirm it's *still* byte-identical. Non-determinism here poisons
+   change detection for the whole project.
 3. **Entry points are complete.** Every FastAPI route appears as a node with
    `is_entry_point: true` and the right `entry_point_kind`. Verify against a
    manual count. Missing routes are the worst failure, because the map still
@@ -240,6 +246,11 @@ Done when all of the following hold:
   rebuilding the URL: base-URL constants, path interpolation, whatever helper
   wraps the request. Emit an `UnresolvedRef` with `ref_kind: http` and a usable
   `confidence_reason` rather than guessing a path.
+- **Bare-name scope.** `from x import y` then bare `y()` produces a `provides`
+  entry scoped to the *importing* file, not a global one (doc 05 §3.4). Two files
+  importing different functions under the same bare name must not collide. Get
+  this wrong and every such call sprouts a false edge that reads like a careful
+  ambiguity finding. Fixture it explicitly.
 - **`is_error_path` detection.** Per-language tables, doc 05 §6. Open question:
   an `except` that retries is arguably the happy path. Put uncertainty in
   `confidence_reason` rather than guessing confidently.
@@ -350,13 +361,17 @@ this one.
   never writes a committed hand-authored file.
 - Caching per doc 05 §2. **Stage 4 resolution never caches.** Wire it so this is
   structurally impossible, not merely avoided.
-- `baseline.json` and change-state computation.
-- CLI, invoked as `waterslide`: `parse`, `validate`, `dump`, and `view` (opens the
-  renderer; `view` may land with M4 if the renderer isn't ready).
+- `baseline.json` and change-state computation. **Parsing reads the baseline and
+  never writes it** — persisted-files §1.6. Capturing one is a separate command.
+- CLI, invoked as `waterslide`: `parse`, `validate`, `dump`, `baseline`, and
+  `view` (opens the renderer; `view` may land with M4 if the renderer isn't
+  ready).
 
 **Done when:** a warm parse of an unchanged tree is measurably faster than cold
-and byte-identical; touching one file changes only that file's nodes; renaming a
-symbol in file A correctly breaks the edge from unchanged file B.
+and canonically byte-identical; touching one file changes only that file's nodes;
+renaming a symbol in file A correctly breaks the edge from unchanged file B and
+mints a tombstone for the removed target; and running `parse` twice in a row does
+**not** clear change state.
 
 That last one is the whole reason resolution can't cache. Make it a test.
 

@@ -6,8 +6,13 @@ A static analysis engine plus a local web app that renders a codebase as an
 animated data flow map. It answers the question: *when this thing happens, what
 data moves where?*
 
-Everything the tool knows comes from **source code and configuration files**.
-Nothing is executed, nothing is instrumented, no running system is observed.
+Everything the tool knows comes from static inputs in the repos it is pointed at:
+**source code, project and framework configuration, its own `config.yaml` and
+`annotations.yaml`, and VCS metadata** (commit hash per repo, whether the working
+tree is dirty).
+
+Nothing is executed, nothing is instrumented, no running system is observed. That
+restriction is absolute and is the point — see *The hard line* below.
 
 The problem it solves: when most code is written by agents, you stop reading all
 of it. The map restores comprehension of the parts you didn't write, and shows

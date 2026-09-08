@@ -107,10 +107,16 @@ Format: `{scope}:{locator}`
 
 `ui_view`, `ui_handler`, `client_service`, `endpoint`, `function`, `class`,
 `repository`, `middleware`, `collection`, `table`, `topic`, `external_service`,
-`module`, `service`
+`module`, `service`, `tombstone`
 
 `kind` is what a node *is*, and drives hue. It is distinct from `tier`, which
 drives position — a `function` may sit in `domain` or in `data_access`.
+
+`tombstone` is the exception to everything else in this enum: it is the only kind
+minted from `baseline.json` rather than from source, it always has
+`source: null`, and it exists solely to give a broken edge a resolvable target.
+See §5.1. Fifteen values, six hue groups — `tombstone` shares the muted/grey
+group with nothing else, since it is the absence of a thing.
 
 ### 2.2 `entry_point_kind` enum
 
@@ -225,13 +231,27 @@ otherwise exits early rather than continuing deeper into the system. Detected
 from the shape of the branch body, not from naming. Sole purpose is deprioritising
 the branch during default selection.
 
-**Default selection.** Within an `exclusive_group`, the animation picks:
+**Default selection.** Within an `exclusive_group`, the animation picks the
+first edge under this **total ordering**, applied to every edge in the group:
 
-1. The first edge with `is_error_path: false`, ordered by `source.line_start`.
-2. Failing that (every branch is an error path), the lowest `source.line_start`.
+1. `is_error_path: false` sorts before `is_error_path: true`.
+2. Then ascending `source.line_start`.
+3. Then ascending `source.path`, for a group spanning files.
+4. Then ascending `edge.id`, as the final tie-breaker.
 
-Deterministic, so nothing about the choice is persisted — it recomputes
-identically every parse. Overriding it is a UI concern; see UI spec §7.5.
+**Every edge carrying a non-null `exclusive_group` MUST have a non-null
+`source`.** A branch exists at a place in a file; an edge with no source location
+cannot be part of a fork. The validator enforces this — see §10.
+
+Steps 3 and 4 exist because steps 1 and 2 alone are not a total order. Two
+branches can share a line (a ternary, a one-line `guard ... else`), and
+`source.line_start` is not unique across files. Without a final tie-breaker the
+chosen branch would depend on array order, which depends on parse order, which
+breaks the determinism requirement.
+
+Because the ordering is total, the choice is fully determined by the graph and
+nothing about it is persisted — it recomputes identically every parse. Overriding
+it is a UI concern; see UI spec §7.5.
 
 **What this cannot tell you.** If a threshold decides between two endpoints, the
 map shows both branches correctly even when the value feeding the comparison is
@@ -263,6 +283,7 @@ isn't duplicated across forty edges and a classification change is a single edit
 | `name` | string | yes | Type name as written in source |
 | `source` | object \| null | yes | Where the type is defined |
 | `confidence` | enum | yes | Per §5 |
+| `confidence_reason` | string \| null | if not `certain` | Human-readable. Same invariant as nodes and edges, per §5 |
 | `fields` | Field[] | yes | May be empty for opaque payloads |
 
 **Field:**
@@ -355,6 +376,39 @@ the `broken_reason`.
 This is the class of breakage that survives code review, because no single repo
 looks wrong on its own.
 
+#### Broken edges still need two endpoints
+
+A broken edge points at something that no longer exists, which collides with the
+graph's structural invariant that **every edge endpoint must resolve to a node**
+(handoff §5, validator). Both requirements are load-bearing, so the target is
+made to exist:
+
+**When an edge becomes broken, mint a `tombstone` node for the missing target.**
+
+| Field | Value |
+|---|---|
+| `id` | The id the target had in `baseline.json`, unchanged |
+| `kind` | `tombstone` |
+| `label` | The last known label, from the baseline |
+| `source` | `null` — the definition is gone |
+| `confidence` | `inferred` |
+| `confidence_reason` | e.g. `present in previous parse, absent now; edge from api/routers/notes.py still references it` |
+| `tier` | Whatever the baseline recorded, so it renders where it used to sit |
+
+Consequences, all intended:
+
+- The validator needs no exception. Endpoint resolution stays absolute, which
+  keeps it a cheap unconditional check rather than a conditional one.
+- The map shows *where the thing used to be*, which is far more useful than an
+  edge trailing off into space.
+- A tombstone is only ever minted from a baseline entry, so a fresh clone with no
+  baseline produces none. Nothing is invented.
+- Tombstones are transient. When the reference is fixed or removed, the next
+  parse simply doesn't mint one.
+
+`tombstone` is therefore a node kind, and is the only kind the parser mints from
+the baseline rather than from source.
+
 ---
 
 ## 6. Tiers (bands)
@@ -409,6 +463,34 @@ wins.**
 `dirty` flags the "map as it *would* be" case — pointing the tool at a working
 tree to see a change's effect before opening a pull request.
 
+### 7.1 Volatile metadata and the determinism requirement
+
+`parsed_at` changes on every run by definition, which would make the
+byte-identical determinism requirement (parser pipeline §0) impossible to satisfy
+as literally stated. Resolve it by defining two things rather than one:
+
+| Term | Contents |
+|---|---|
+| **The graph artifact** | The whole of `graph.json`, including `parsed_at` |
+| **The canonical graph** | Everything except the fields listed below |
+
+**Volatile fields, excluded from the canonical graph:**
+
+- `parsed_at`
+- `repos[].path` — a local checkout path, different on every machine
+- `repos[].dirty`
+- `stats`, if it ever carries timings
+
+**The determinism requirement applies to the canonical graph, not the artifact.**
+Two runs over identical inputs must produce byte-identical canonical graphs.
+`parsed_at` differing is expected and is not a determinism failure.
+
+Implementation note: emit the canonical fields in a stable order and provide a
+`--canonical` flag (or equivalent) that writes only those fields, so the
+determinism check is a plain byte comparison rather than a structural diff.
+Anything relying on stability — layout, change detection, diffing — reads the
+canonical graph.
+
 ---
 
 ## 8. Serialization
@@ -460,6 +542,15 @@ Computed at render time:
   **Resolved:** yes, but for a different reason than originally written. It is
   fork *labelling*, and the fork model needs `exclusive_group` alongside it to be
   useful at all. See §3.2.
+- ~~Does branch default selection have a deterministic tie-breaker?~~
+  **Resolved:** four-step total ordering, and `source` is now mandatory on any
+  edge in an `exclusive_group`. See §3.2.
+- ~~Does a required `parsed_at` break the byte-identical determinism gate?~~
+  **Resolved:** determinism applies to the *canonical graph*, which excludes
+  volatile fields. See §7.1.
+- ~~Can a broken edge point at a node that no longer exists, given the validator
+  requires every endpoint to resolve?~~ **Resolved:** tombstone nodes, minted
+  from the baseline. See §5.1.
 - How reliable is `is_error_path` detection across Swift and Python? A `guard`
   with an early return, a `raise`, and a returned error response all need
   recognising. Parser spec should treat this per-language.

@@ -19,9 +19,37 @@ authoritative on behaviour.
 
 ## 0. Policy is entirely opt-in
 
-**With an empty config, every policy check is inert and the tool works.** You get
-the full map, the animation, the egress *view*, all of it. Nothing about the core
-value proposition depends on writing a single rule.
+**With an empty config, every *declared* policy check is inert and the tool
+works.** You get the full map, the animation, the egress *view*, all of it.
+Nothing about the core value proposition depends on writing a single rule.
+
+### 0.1 Two categories, and only one is opt-in
+
+The original wording said "every policy check is inert" while §4 defaulted
+band-skipping to enabled and §3.2 emitted unclassified-field findings with no
+config at all. Both can't be true, so the distinction is made explicit:
+
+| Category | Requires config? | Members | Severity |
+|---|---|---|---|
+| **Declared policy checks** | **Yes.** Inert without a rule | `missing_middleware`, `egress` | `warn` or `error` |
+| **Derived diagnostics** | No. On by default | `band_skip`, `unclassified_egress_fields` | Always `info` |
+
+The line between them: a **declared check** compares the code against a rule a
+human wrote, and cannot exist without that rule. A **derived diagnostic** is an
+observation computed from the graph itself, requiring no intent to be stated.
+
+Derived diagnostics are constrained so they can be on by default without
+violating the spirit of opt-in:
+
+- **Always `info`.** They never assert something is wrong, only that it is worth
+  knowing. A rule you didn't write cannot produce a warning.
+- **Never gate anything.** Not now, and not when CI gating arrives.
+- **`rule_id: null`**, since no rule produced them.
+- **Individually disableable** via `diagnostics: { band_skip: false }` in
+  `config.yaml`, for anyone who wants true silence.
+
+`band_skip` is promotable to `warn` by declaring it as a rule (§4), at which point
+it becomes a declared check and behaves like one.
 
 This is a requirement, not a courtesy. A tool that demands configuration before
 it shows you anything doesn't get adopted, and the comprehension use case — the
@@ -51,8 +79,8 @@ add checks without new display code.
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `id` | string | yes | Stable per finding. Hash of `check` + `subject` + `rule_id` |
-| `check` | enum | yes | `missing_middleware` \| `egress` \| `band_skip` |
-| `rule_id` | string \| null | yes | Which declared rule produced it. Null for derived checks |
+| `check` | enum | yes | `missing_middleware` \| `egress` \| `band_skip` \| `unclassified_egress_fields` |
+| `rule_id` | string \| null | yes | Which declared rule produced it. Always null for derived diagnostics (§0.1) |
 | `subject` | string | yes | Node or edge id the finding is about |
 | `severity` | enum | yes | `info` \| `warn` \| `error` |
 | `message` | string | yes | Human-readable, specific. See below |
@@ -168,6 +196,16 @@ useless as the basis for one.
 Resolving doc 03's open question: exemptions live **inline in the rule**, keyed by
 node id, and a reason is mandatory.
 
+**An exemption must name the capability it waives.** A bare node-level exemption
+silently waives every capability in `require`, which is almost never what the
+stated reason justifies.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `node` | string | yes | Node id being exempted |
+| `capability` | string \| `"*"` | yes | Which capability is waived. `"*"` waives the whole rule |
+| `reason` | string | yes | Why. Becomes the message on the muted finding |
+
 ```yaml
 expected_middleware:
   - applies_to: { glob: "api/routers/**" }
@@ -175,10 +213,22 @@ expected_middleware:
     severity: warn
     exempt:
       - node: "tapistree:api/routers/health.py#healthz"
-        reason: "load balancer probe; must answer before auth is initialised"
+        capability: "*"
+        reason: "load balancer probe; must answer before any middleware initialises"
       - node: "tapistree:api/routers/webhooks.py#stripe_webhook"
+        capability: auth
         reason: "authenticated by signature verification, not session auth"
 ```
+
+The second entry is the case that motivated this. Its reason addresses auth and
+says nothing about logging — so under the original node-level scheme, a webhook
+handling payment callbacks would have silently stopped being checked for request
+logging. That is precisely the class of gap this whole check exists to catch, and
+the exemption mechanism was reintroducing it.
+
+`capability: "*"` is still available and legitimate — the health probe genuinely
+needs everything waived — but it now has to be written down, so "exempt from
+everything" is a visible choice in a diff rather than a default.
 
 Three reasons for inline over a separate exemptions file. It sits next to the rule
 it modifies, so you read both together. It's committed, so an exemption is
@@ -213,12 +263,29 @@ for fields whose classification is flagged under that regime.
 ### 3.2 Unclassified fields
 
 A field with no classification is **not** clean — it's unknown, and there's a real
-difference. Emit those as `info` findings, separately: "12 fields reaching external
-services have no classification."
+difference. A green egress report over a schema nobody has classified is the most
+dangerous possible output of this tool, because it looks like an answer.
 
-That number is a coverage metric, and it should be visible. A green egress report
-over a schema nobody has classified is the most dangerous possible output of this
-tool, because it looks like an answer.
+**One finding per edge, never an aggregate.** An earlier draft described a single
+`info` finding reading "12 fields reaching external services have no
+classification." That breaks the finding model in §1: `subject` must be a single
+node or edge id, and `id` is a hash of `check` + `subject` + `rule_id`. An
+aggregate spanning many edges has no valid subject, so it can't get a stable id
+and can't be attached to anything on the map.
+
+| Field | Value |
+|---|---|
+| `check` | `unclassified_egress_fields` |
+| `rule_id` | `null` — a derived diagnostic, per §0.1 |
+| `subject` | The edge id terminating at the external node |
+| `severity` | `info` |
+| `detail.vendor` | e.g. `cohere` |
+| `detail.unclassified` | `{ schema_id, field }[]` — the unclassified fields on *this* edge |
+
+The coverage number is then **derived by the UI** by summing across findings,
+which is where an aggregate belongs. The sidebar can say "12 fields across 4
+external calls have no classification" while every one of those findings is
+individually clickable and attached to a specific edge.
 
 ### 3.3 Switching regimes never re-annotates
 
@@ -243,24 +310,62 @@ investigation into a filter.
 
 ---
 
-## 4. Check: band-skipping
+## 4. Band-skipping
 
-Free, in the sense that `skips_tiers` is already populated during derivation
-(graph model §3.3) and needs no config.
+A **derived diagnostic** by default (§0.1), promotable to a declared check. Free
+either way, in the sense that `skips_tiers` is already populated during derivation
+(graph model §3.3).
+
+### 4.1 Default: derived diagnostic
 
 | Setting | Default |
 |---|---|
 | Enabled | Yes |
-| Severity | `info` |
+| Severity | `info`, and not configurable while it's a diagnostic |
 | Threshold | More than one band |
+| `rule_id` | `null` |
 
 A `ui_view` writing straight to a collection is the canonical case. Severity is
-`info` rather than `warn` because legitimate reasons exist and the tool has no way
-to know which is which — but the count over time is the useful signal. Rising
-band-skip count means coupling is increasing.
+`info` because legitimate reasons exist and the tool has no way to know which is
+which — but the count over time is the useful signal. Rising band-skip count means
+coupling is increasing.
 
-Configurable to `warn` for teams that want it enforced. Exemptions use the same
-inline mechanism as §2.4.
+Turn it off entirely:
+
+```yaml
+diagnostics:
+  band_skip: false
+```
+
+### 4.2 Promoted: declared check
+
+Declaring a rule makes it a real check, with a `rule_id`, a chosen severity, and
+exemptions. This is the only way to raise it above `info`.
+
+```yaml
+band_skip:
+  - rule_id: no-ui-to-store
+    applies_to: { glob: "ios/**" }
+    max_bands: 1
+    severity: warn
+    exempt:
+      - subject: "tapistree:ios/Views/DebugView.swift#dumpAll"
+        reason: "debug-only screen, not shipped in release builds"
+```
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `rule_id` | string | yes | Appears on the finding. Required so exemptions have something to attach to |
+| `applies_to` | Matcher | no | Path glob on the edge's **source** node. Omit for all edges |
+| `max_bands` | int | no | Default 1. Flag edges crossing more than this |
+| `severity` | enum | no | Default `warn` once declared |
+| `exempt` | Exemption[] | no | Keyed by `subject`, not `node` |
+
+**Exemptions key on `subject`, which for this check is an edge id.** That differs
+from `missing_middleware`, where the subject is a node — hence the different field
+name, so the two are not confused. It also resolves why derived findings can't be
+exempted directly: a finding with `rule_id: null` has no rule to hang an exemption
+on. Wanting to exempt a band-skip is the signal to promote it to a rule.
 
 ---
 

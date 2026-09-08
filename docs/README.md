@@ -38,8 +38,9 @@ once.
 ## Three things the docs assume you know
 
 **Static analysis only.** No runtime tracing, no instrumentation, no sampling.
-The tool reads source and nothing else. Everything it cannot see is listed in
-`01-scope.md`.
+The tool reads what's in the repo — source, configuration, annotations, and commit
+metadata — and never observes a running system. Everything it cannot see is listed
+in `01-scope.md`.
 
 **The graph is drawn once and fixed.** Animation moves objects along edges that
 already exist. It does not discover or reveal the graph. Several early design
