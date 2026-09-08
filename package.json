@@ -20,7 +20,9 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "npm run typecheck && npm run lint && npm test",
-    "prepare": "git config core.hooksPath .githooks"
+    "prepare": "git config core.hooksPath .githooks",
+    "build": "tsc -b",
+    "schema:emit": "tsc -b && node core/dist/scripts/emit-json-schema.js"
   },
   "devDependencies": {
     "@types/node": "^26.5.0",

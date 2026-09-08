@@ -6,3 +6,5 @@ package-lock.json
 fixtures/
 # Hand-written specs and prose are not reformatted by the tool.
 *.md
+# Generated from the Zod model by `npm run schema:emit`.
+core/schema/

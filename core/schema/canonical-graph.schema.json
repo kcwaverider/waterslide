@@ -1,0 +1,521 @@
+{
+  "title": "CanonicalGraph",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "number",
+      "const": 1
+    },
+    "tier_config_hash": {
+      "type": "string"
+    },
+    "repos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "commit": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "commit"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "ui_view",
+              "ui_handler",
+              "client_service",
+              "endpoint",
+              "function",
+              "class",
+              "repository",
+              "middleware",
+              "collection",
+              "table",
+              "topic",
+              "external_service",
+              "module",
+              "service",
+              "tombstone"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "tier": {
+            "type": "string",
+            "enum": [
+              "ui",
+              "ui_logic",
+              "api",
+              "domain",
+              "data_access",
+              "store",
+              "external"
+            ]
+          },
+          "parent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "repo": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "line_start": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "line_end": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "hash": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "repo",
+                  "path",
+                  "line_start",
+                  "line_end",
+                  "hash"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "certain",
+              "inferred",
+              "annotated"
+            ]
+          },
+          "confidence_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "is_entry_point": {
+            "type": "boolean"
+          },
+          "entry_point_kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "ui_handler",
+                  "http_route",
+                  "webhook",
+                  "queue_subscriber",
+                  "cron",
+                  "app_launch"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "is_infrastructure": {
+            "type": "boolean"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "label",
+          "tier",
+          "parent",
+          "source",
+          "confidence",
+          "confidence_reason",
+          "is_entry_point",
+          "entry_point_kind",
+          "is_infrastructure",
+          "tags"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "call",
+              "http_request",
+              "read",
+              "write",
+              "publish",
+              "subscribe",
+              "external_call"
+            ]
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "schema_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "response_schema_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "certain",
+              "inferred",
+              "annotated"
+            ]
+          },
+          "confidence_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "condition": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "expr": {
+                    "type": "string"
+                  },
+                  "source_line": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "expr",
+                  "source_line"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "exclusive_group": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "is_error_path": {
+            "type": "boolean"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "repo": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "line_start": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "line_end": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "repo",
+                  "path",
+                  "line_start",
+                  "line_end"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "branch_ordinal": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "is_broken": {
+            "type": "boolean"
+          },
+          "broken_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "skips_tiers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "ui",
+                "ui_logic",
+                "api",
+                "domain",
+                "data_access",
+                "store",
+                "external"
+              ]
+            }
+          }
+        },
+        "required": [
+          "id",
+          "from",
+          "to",
+          "kind",
+          "label",
+          "schema_id",
+          "response_schema_id",
+          "confidence",
+          "confidence_reason",
+          "condition",
+          "exclusive_group",
+          "is_error_path",
+          "source",
+          "source_count",
+          "branch_ordinal",
+          "is_broken",
+          "broken_reason",
+          "skips_tiers"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "schemas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "repo": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "line_start": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "line_end": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "repo",
+                  "path",
+                  "line_start",
+                  "line_end"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "certain",
+              "inferred",
+              "annotated"
+            ]
+          },
+          "confidence_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "optional": {
+                  "type": "boolean"
+                },
+                "classification": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "ref_schema_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "type",
+                "optional",
+                "classification",
+                "ref_schema_id"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "source",
+          "confidence",
+          "confidence_reason",
+          "fields"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "tier_config_hash",
+    "repos",
+    "nodes",
+    "edges",
+    "schemas"
+  ],
+  "additionalProperties": false
+}
