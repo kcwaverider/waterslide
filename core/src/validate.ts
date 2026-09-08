@@ -15,12 +15,15 @@ import {
 } from "./model/graph.js";
 
 /**
- * The validator — handoff §5, invariants 1–16, plus the loud version check
+ * The validator — handoff §5, invariants 1–20, plus the loud version check
  * (§5.2) and the explicit shape (graph model §7.3).
  *
  * The caller names the shape. There is no default: an unlabelled call is a type
  * error, because discriminating by presence would silently weaken invariant 12
  * for exactly the volatile fields.
+ *
+ * Errors are collected within a phase, not across phases (§7.3): a structural
+ * failure returns before the semantic phase runs.
  */
 
 export type GraphShape = "canonical" | "artifact";
@@ -37,6 +40,8 @@ export type ValidationErrorCode =
   | "E_CANONICAL_ORDER"
   | "E_CANONICAL_NFC"
   | "E_ID_FORMAT"
+  | "E_SOURCE_REPO"
+  | "E_PARENT_CYCLE"
   | "E_DUPLICATE_ID"
   | "E_EDGE_ENDPOINT"
   | "E_PARENT"
@@ -61,6 +66,12 @@ export interface ValidationError {
 export type ValidationResult<T> =
   | { readonly ok: true; readonly graph: T; readonly errors: readonly [] }
   | { readonly ok: false; readonly errors: readonly ValidationError[] };
+
+type Report = (
+  code: ValidationErrorCode,
+  path: string,
+  message: string,
+) => void;
 
 export function validate(
   input: unknown,
@@ -99,6 +110,7 @@ export function validate(
     ]);
   }
 
+  // Structural phase.
   const parsed =
     shape === "canonical"
       ? CanonicalGraphSchema.safeParse(input, { reportInput: true })
@@ -204,7 +216,7 @@ function mapIssue(issue: z.core.$ZodIssue, shape: GraphShape): ValidationError {
 }
 
 // ---------------------------------------------------------------------------
-// Semantic invariants — handoff §5, rows 1–4, 6–10, 13–16.
+// Semantic invariants — handoff §5, rows 1–4, 6–10, 13–20.
 // ---------------------------------------------------------------------------
 
 function checkInvariants(
@@ -212,36 +224,73 @@ function checkInvariants(
   shape: GraphShape,
 ): ValidationError[] {
   const errors: ValidationError[] = [];
-  const err = (
-    code: ValidationErrorCode,
-    path: string,
-    message: string,
-  ): void => {
+  const err: Report = (code, path, message) => {
     errors.push({ code, path, message });
   };
 
-  // 18. Node ids are `{scope}:{locator}` (graph model §1).
-  const repoNames = new Set(graph.repos.map((r) => r.name));
+  // 1 (repos) and 18 (repos). A repo name is an identity and an id scope.
+  const repoNames = new Set<string>();
   graph.repos.forEach((repo, i) => {
+    const p = `$.repos[${String(i)}].name`;
+    if (repoNames.has(repo.name)) {
+      err(
+        "E_DUPLICATE_ID",
+        p,
+        `duplicate repo name "${repo.name}"; node ids scoped to it would be ambiguous`,
+      );
+    } else {
+      repoNames.add(repo.name);
+    }
     if (FIXED_ID_SCOPES.has(repo.name)) {
       err(
         "E_ID_FORMAT",
-        `$.repos[${String(i)}].name`,
+        p,
         `repo name "${repo.name}" collides with a fixed id scope; node ids would be ambiguous (graph model §1)`,
+      );
+    } else if (repo.name.length === 0 || repo.name.includes(":")) {
+      err(
+        "E_ID_FORMAT",
+        p,
+        `repo name ${JSON.stringify(repo.name)} cannot be an id scope: it must be non-empty and contain no ":" (graph model §1)`,
       );
     }
   });
-  graph.nodes.forEach((node, i) =>
-    checkNodeId(node, repoNames, `$.nodes[${String(i)}]`, err),
-  );
-
-  // 17. Canonical order, canonical shape only (graph model §7.2).
-  if (shape === "canonical") checkCanonicalOrder(graph, err);
 
   // 1. Unique ids.
   const nodesById = indexUnique(graph.nodes, "nodes", err);
   indexUnique(graph.edges, "edges", err);
   const schemasById = indexUnique(graph.schemas, "schemas", err);
+
+  // 18. Node ids are `{scope}:{locator}` (graph model §1).
+  graph.nodes.forEach((node, i) =>
+    checkNodeId(node, repoNames, `$.nodes[${String(i)}]`, err),
+  );
+
+  // 19. Every source.repo names a repo in repos[] (graph model §2.4).
+  const checkSourceRepo = (
+    source: { repo: string } | null,
+    path: string,
+  ): void => {
+    if (source !== null && !repoNames.has(source.repo)) {
+      err(
+        "E_SOURCE_REPO",
+        `${path}.source.repo`,
+        `source.repo "${source.repo}" is not a repo in repos[] (graph model §2.4)`,
+      );
+    }
+  };
+  graph.nodes.forEach((n, i) =>
+    checkSourceRepo(n.source, `$.nodes[${String(i)}]`),
+  );
+  graph.edges.forEach((e, i) =>
+    checkSourceRepo(e.source, `$.edges[${String(i)}]`),
+  );
+  graph.schemas.forEach((sc, i) =>
+    checkSourceRepo(sc.source, `$.schemas[${String(i)}]`),
+  );
+
+  // 17. Canonical order, canonical shape only (graph model §7.2).
+  if (shape === "canonical") checkCanonicalOrder(graph, err);
 
   graph.nodes.forEach((node, i) => {
     const p = `$.nodes[${String(i)}]`;
@@ -255,7 +304,7 @@ function checkInvariants(
       );
     }
     // 6. Non-certain → reason.
-    checkReason(node, `${p}`, err);
+    checkReason(node, p, err);
     // 7. Entry point → kind.
     if (node.is_entry_point && node.entry_point_kind === null) {
       err(
@@ -271,6 +320,28 @@ function checkInvariants(
         `${p}.source`,
         `tombstone "${node.id}" must have source: null — its definition is gone (graph model §5.1)`,
       );
+    }
+  });
+
+  // 20. The parent chain is acyclic (graph model §2.3). A self-parent is the
+  // degenerate case; any cycle breaks zoom aggregation.
+  graph.nodes.forEach((node, i) => {
+    const chain: string[] = [node.id];
+    let cursor: Node | undefined = node;
+    while (cursor !== undefined && cursor.parent !== null) {
+      const next: Node | undefined = nodesById.get(cursor.parent);
+      if (next === undefined) break; // unresolved parents are invariant 3's report
+      if (next.id === node.id) {
+        err(
+          "E_PARENT_CYCLE",
+          `$.nodes[${String(i)}].parent`,
+          `parent chain of "${node.id}" cycles: ${[...chain, next.id].join(" → ")} (graph model §2.3)`,
+        );
+        break;
+      }
+      if (chain.includes(next.id)) break; // a cycle not containing this node is reported by its own members
+      chain.push(next.id);
+      cursor = next;
     }
   });
 
@@ -402,7 +473,7 @@ function checkInvariants(
 function indexUnique<T extends { id: string }>(
   items: readonly T[],
   collection: string,
-  err: (code: ValidationErrorCode, path: string, message: string) => void,
+  err: Report,
 ): Map<string, T> {
   const byId = new Map<string, T>();
   items.forEach((item, i) => {
@@ -425,7 +496,7 @@ function checkReason(
     "id" | "confidence" | "confidence_reason"
   >,
   path: string,
-  err: (code: ValidationErrorCode, path: string, message: string) => void,
+  err: Report,
 ): void {
   if (entity.confidence !== "certain" && entity.confidence_reason === null) {
     err(
@@ -444,7 +515,7 @@ function checkNodeId(
   node: Node,
   repoNames: ReadonlySet<string>,
   path: string,
-  err: (code: ValidationErrorCode, path: string, message: string) => void,
+  err: Report,
 ): void {
   const colon = node.id.indexOf(":");
   if (colon <= 0 || colon === node.id.length - 1) {
@@ -525,25 +596,24 @@ function checkNodeId(
 // ---------------------------------------------------------------------------
 // 17. Canonical order — graph model §7.2. Only what survives JSON.parse:
 // array order and string normalization. Whitespace and key order are the
-// serializer's business and are checked by byte diff.
+// serializer's business and are checked by byte diff. Id and name arrays are
+// checked non-decreasing: equal neighbours are invariant 1's report, not this one's.
 // ---------------------------------------------------------------------------
 
 function checkCanonicalOrder(
   graph: CanonicalGraph | GraphArtifact,
-  err: (code: ValidationErrorCode, path: string, message: string) => void,
+  err: Report,
 ): void {
   const checkSorted = (
     items: readonly string[],
     path: string,
     what: string,
-    strict: boolean,
   ): void => {
     for (let i = 1; i < items.length; i++) {
       const prev = items[i - 1];
       const cur = items[i];
       if (prev === undefined || cur === undefined) continue;
-      const cmp = byteCompare(prev, cur);
-      if (cmp > 0 || (strict && cmp === 0)) {
+      if (byteCompare(prev, cur) > 0) {
         err(
           "E_CANONICAL_ORDER",
           `${path}[${String(i)}]`,
@@ -558,35 +628,30 @@ function checkCanonicalOrder(
     graph.repos.map((r) => r.name),
     "$.repos",
     "repos (by name)",
-    true,
   );
   checkSorted(
     graph.nodes.map((n) => n.id),
     "$.nodes",
     "nodes (by id)",
-    true,
   );
   checkSorted(
     graph.edges.map((e) => e.id),
     "$.edges",
     "edges (by id)",
-    true,
   );
   checkSorted(
     graph.schemas.map((s) => s.id),
     "$.schemas",
     "schemas (by id)",
-    true,
   );
   graph.nodes.forEach((n, i) =>
-    checkSorted(n.tags, `$.nodes[${String(i)}].tags`, "tags", false),
+    checkSorted(n.tags, `$.nodes[${String(i)}].tags`, "tags"),
   );
   graph.edges.forEach((e, i) =>
     checkSorted(
       e.skips_tiers,
       `$.edges[${String(i)}].skips_tiers`,
       "skips_tiers",
-      false,
     ),
   );
   graph.schemas.forEach((s, i) =>
@@ -595,7 +660,6 @@ function checkCanonicalOrder(
         f.classification,
         `$.schemas[${String(i)}].fields[${String(j)}].classification`,
         "classification",
-        false,
       ),
     ),
   );
@@ -603,11 +667,7 @@ function checkCanonicalOrder(
   checkNfc(graph, "$", err);
 }
 
-function checkNfc(
-  value: unknown,
-  path: string,
-  err: (code: ValidationErrorCode, path: string, message: string) => void,
-): void {
+function checkNfc(value: unknown, path: string, err: Report): void {
   if (typeof value === "string") {
     if (value.normalize("NFC") !== value) {
       err(
