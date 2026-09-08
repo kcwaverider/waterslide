@@ -1,0 +1,10 @@
+#!/bin/sh
+# Handoff §4.2: the gate is this hook, not CI. Typecheck, lint, test — on every commit.
+set -e
+cd "$(git rev-parse --show-toplevel)"
+echo "pre-commit: typecheck"
+npm run --silent typecheck
+echo "pre-commit: lint"
+npm run --silent lint
+echo "pre-commit: test"
+npm run --silent test -- --reporter=dot

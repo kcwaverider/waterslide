@@ -1,0 +1,8 @@
+node_modules/
+dist/
+coverage/
+.waterslide/
+package-lock.json
+fixtures/
+# Hand-written specs and prose are not reformatted by the tool.
+*.md
