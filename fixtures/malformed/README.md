@@ -5,9 +5,14 @@ validator can be tested against known-bad input with a specific expected error.
 `expected.json` maps each file to the error code and JSON path the validator must
 report; the test in `core/test/validate.test.ts` asserts both.
 
-All but `not-an-object.json` are single mutations of `fixtures/valid/derived-ids.json`.
-Their edge ids are therefore not re-derived after mutation, which is fine: the
-validator checks uniqueness and resolution, not derivation (graph model §3.3.1).
+Most are a single mutation of `fixtures/valid/derived-ids.json`; the two
+`skips-tiers-into-*` files start from other valid fixtures, and a few carry a
+second edit whose only purpose is to keep every *other* invariant satisfied, so
+that exactly one rule fails (`fork-without-source.json` also zeroes
+`source_count`; `tombstone-with-source.json` also sets an inferred confidence;
+the id-scope files rename references and re-sort). Edge ids are not re-derived
+after mutation, which is fine: the validator checks uniqueness and resolution,
+not derivation (graph model §3.3.1).
 
 | File | Expected code | What is wrong |
 |---|---|---|
@@ -30,6 +35,16 @@ validator checks uniqueness and resolution, not derivation (graph model §3.3.1)
 | `skips-tiers-into-external.json` | `E_SKIPS_TIERS_EXCLUDED` | external_call edge with non-empty skips_tiers; external is not a depth (invariant 16) |
 | `wrong-schema-version.json` | `E_SCHEMA_VERSION` | schema_version 2 against a version 1 model; must fail loudly (handoff §5.2) |
 | `canonical-with-volatile.json` | `E_VOLATILE_SHAPE` | parsed_at present in a graph validated as canonical shape (graph model §7.3) |
-| `line-start-zero.json` | `E_TYPE` | line_start 0; line numbers are 1-based, so the model's positive lower bound rejects it |
+| `line-start-zero.json` | `E_RANGE` | line_start 0; line numbers are 1-based, so the model's positive lower bound rejects it |
+| `unsorted-edges.json` | `E_CANONICAL_ORDER` | edges[0] and edges[1] swapped; canonical shape requires byte-wise ascending id order (invariant 17) |
+| `unsorted-tags.json` | `E_CANONICAL_ORDER` | tags out of ascending order; scalar arrays are sorted in canonical shape (invariant 17) |
+| `non-nfc-string.json` | `E_CANONICAL_NFC` | label contains a decomposed (NFD) character; canonical shape requires NFC (invariant 17) |
+| `illegal-id-scope.json` | `E_ID_FORMAT` | node id scope 'widget' is neither a fixed scope nor a repo name; the edge to it is updated so only invariant 18 fires |
+| `id-path-mismatch.json` | `E_ID_FORMAT` | repo-scoped node whose source.path disagrees with the path in its id (invariant 18) |
+| `repo-named-after-scope.json` | `E_ID_FORMAT` | a repo named 'sql' collides with a fixed id scope (invariant 18); node ids and sources are renamed with it so nothing else fires |
+| `skips-tiers-into-topic.json` | `E_SKIPS_TIERS_EXCLUDED` | subscribe edge from a topic with non-empty skips_tiers; a topic is transport, not depth (invariant 16) |
+| `skips-tiers-into-tombstone.json` | `E_SKIPS_TIERS_EXCLUDED` | broken edge into a tombstone with non-empty skips_tiers; the edge is already flagged is_broken (invariant 16) |
+| `skips-tiers-external-tier.json` | `E_SKIPS_TIERS_EXCLUDED` | target is a repository placed in tier external by config, not an external_service; external is not a depth whatever the kind (invariant 16) |
+| `wrong-type.json` | `E_TYPE` | is_entry_point is the string "yes" instead of a boolean |
 | `unknown-key.json` | `E_UNKNOWN_KEY` | node carries a key the model does not define |
 | `not-an-object.json` | `E_NOT_OBJECT` | a JSON array, not a graph object |

@@ -95,9 +95,59 @@
     "why": "parsed_at present in a graph validated as canonical shape (graph model §7.3)"
   },
   "line-start-zero.json": {
-    "code": "E_TYPE",
+    "code": "E_RANGE",
     "path": "$.nodes[7].source.line_start",
     "why": "line_start 0; line numbers are 1-based, so the model's positive lower bound rejects it"
+  },
+  "unsorted-edges.json": {
+    "code": "E_CANONICAL_ORDER",
+    "path": "$.edges[1]",
+    "why": "edges[0] and edges[1] swapped; canonical shape requires byte-wise ascending id order (invariant 17)"
+  },
+  "unsorted-tags.json": {
+    "code": "E_CANONICAL_ORDER",
+    "path": "$.nodes[7].tags[1]",
+    "why": "tags out of ascending order; scalar arrays are sorted in canonical shape (invariant 17)"
+  },
+  "non-nfc-string.json": {
+    "code": "E_CANONICAL_NFC",
+    "path": "$.nodes[7].label",
+    "why": "label contains a decomposed (NFD) character; canonical shape requires NFC (invariant 17)"
+  },
+  "illegal-id-scope.json": {
+    "code": "E_ID_FORMAT",
+    "path": "$.nodes[10].id",
+    "why": "node id scope 'widget' is neither a fixed scope nor a repo name; the edge to it is updated so only invariant 18 fires"
+  },
+  "id-path-mismatch.json": {
+    "code": "E_ID_FORMAT",
+    "path": "$.nodes[7].id",
+    "why": "repo-scoped node whose source.path disagrees with the path in its id (invariant 18)"
+  },
+  "repo-named-after-scope.json": {
+    "code": "E_ID_FORMAT",
+    "path": "$.repos[0].name",
+    "why": "a repo named 'sql' collides with a fixed id scope (invariant 18); node ids and sources are renamed with it so nothing else fires"
+  },
+  "skips-tiers-into-topic.json": {
+    "code": "E_SKIPS_TIERS_EXCLUDED",
+    "path": "$.edges[1].skips_tiers",
+    "why": "subscribe edge from a topic with non-empty skips_tiers; a topic is transport, not depth (invariant 16)"
+  },
+  "skips-tiers-into-tombstone.json": {
+    "code": "E_SKIPS_TIERS_EXCLUDED",
+    "path": "$.edges[0].skips_tiers",
+    "why": "broken edge into a tombstone with non-empty skips_tiers; the edge is already flagged is_broken (invariant 16)"
+  },
+  "skips-tiers-external-tier.json": {
+    "code": "E_SKIPS_TIERS_EXCLUDED",
+    "path": "$.edges[0].skips_tiers",
+    "why": "target is a repository placed in tier external by config, not an external_service; external is not a depth whatever the kind (invariant 16)"
+  },
+  "wrong-type.json": {
+    "code": "E_TYPE",
+    "path": "$.nodes[7].is_entry_point",
+    "why": "is_entry_point is the string \"yes\" instead of a boolean"
   },
   "unknown-key.json": {
     "code": "E_UNKNOWN_KEY",

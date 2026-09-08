@@ -1,0 +1,194 @@
+{
+  "schema_version": 1,
+  "tier_config_hash": "sha256:e3b0c44298fc1c14",
+  "repos": [
+    {
+      "name": "tapistree",
+      "commit": "0123456789abcdef0123456789abcdef01234567"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "tapistree:api/routers/notes.py",
+      "kind": "module",
+      "label": "notes router",
+      "tier": "api",
+      "parent": null,
+      "source": {
+        "repo": "tapistree",
+        "path": "api/routers/notes.py",
+        "line_start": 1,
+        "line_end": 90,
+        "hash": "sha256:74c95604043427f0"
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "tapistree:api/routers/notes.py#archive_note",
+      "kind": "endpoint",
+      "label": "POST /notes/{id}/archive",
+      "tier": "api",
+      "parent": "tapistree:api/routers/notes.py",
+      "source": {
+        "repo": "tapistree",
+        "path": "api/routers/notes.py",
+        "line_start": 60,
+        "line_end": 72,
+        "hash": "sha256:0eb3e36bfb24dcd9"
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": true,
+      "entry_point_kind": "http_route",
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "tapistree:api/services/archive_service.py#ArchiveService.archive",
+      "kind": "tombstone",
+      "label": "ArchiveService.archive",
+      "tier": "domain",
+      "parent": null,
+      "source": null,
+      "confidence": "inferred",
+      "confidence_reason": "present in previous parse, absent now; edge from api/routers/notes.py still references it",
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "tapistree:api/services/note_service.py",
+      "kind": "module",
+      "label": "note_service",
+      "tier": "domain",
+      "parent": null,
+      "source": {
+        "repo": "tapistree",
+        "path": "api/services/note_service.py",
+        "line_start": 1,
+        "line_end": 140,
+        "hash": "sha256:348c658682ae8701"
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "tapistree:api/services/note_service.py#NoteService.summary",
+      "kind": "function",
+      "label": "NoteService.summary",
+      "tier": "domain",
+      "parent": "tapistree:api/services/note_service.py",
+      "source": {
+        "repo": "tapistree",
+        "path": "api/services/note_service.py",
+        "line_start": 70,
+        "line_end": 88,
+        "hash": "sha256:761b7ad8ad439b28"
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_c8665fc33c44b5bc",
+      "from": "tapistree:api/routers/notes.py#archive_note",
+      "to": "tapistree:api/services/archive_service.py#ArchiveService.archive",
+      "kind": "call",
+      "label": "archive",
+      "schema_id": null,
+      "response_schema_id": null,
+      "confidence": "certain",
+      "confidence_reason": null,
+      "condition": null,
+      "exclusive_group": null,
+      "is_error_path": false,
+      "source": {
+        "repo": "tapistree",
+        "path": "api/routers/notes.py",
+        "line_start": 68,
+        "line_end": null
+      },
+      "source_count": 1,
+      "branch_ordinal": null,
+      "is_broken": true,
+      "broken_reason": "target ArchiveService.archive was removed; api/routers/notes.py line 68 still calls it",
+      "skips_tiers": [
+        "domain"
+      ]
+    },
+    {
+      "id": "e_d13b8f9fc01135f8",
+      "from": "tapistree:api/routers/notes.py#archive_note",
+      "to": "tapistree:api/services/note_service.py#NoteService.summary",
+      "kind": "call",
+      "label": "summary",
+      "schema_id": null,
+      "response_schema_id": "sch_summary",
+      "confidence": "certain",
+      "confidence_reason": null,
+      "condition": null,
+      "exclusive_group": null,
+      "is_error_path": false,
+      "source": {
+        "repo": "tapistree",
+        "path": "api/routers/notes.py",
+        "line_start": 70,
+        "line_end": null
+      },
+      "source_count": 1,
+      "branch_ordinal": null,
+      "is_broken": true,
+      "broken_reason": "response field 'excerpt' read by the caller no longer exists on NoteSummary",
+      "skips_tiers": []
+    }
+  ],
+  "schemas": [
+    {
+      "id": "sch_summary",
+      "name": "NoteSummary",
+      "source": {
+        "repo": "tapistree",
+        "path": "api/models/note.py",
+        "line_start": 30,
+        "line_end": 34
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "fields": [
+        {
+          "name": "note_id",
+          "type": "str",
+          "optional": false,
+          "classification": [
+            "identifier"
+          ],
+          "ref_schema_id": null
+        },
+        {
+          "name": "title",
+          "type": "str",
+          "optional": false,
+          "classification": [
+            "free_text"
+          ],
+          "ref_schema_id": null
+        }
+      ]
+    }
+  ]
+}

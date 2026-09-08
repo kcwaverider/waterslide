@@ -13,7 +13,7 @@
       "kind": "module",
       "label": "queries",
       "tier": "data_access",
-      "parent": null,
+      "parent": "svc:ledger-api",
       "source": {
         "repo": "ledger",
         "path": "app/queries.py",
@@ -53,7 +53,7 @@
       "kind": "module",
       "label": "routes",
       "tier": "api",
-      "parent": null,
+      "parent": "svc:ledger-api",
       "source": {
         "repo": "ledger",
         "path": "app/routes.py",
@@ -101,9 +101,62 @@
       "entry_point_kind": null,
       "is_infrastructure": false,
       "tags": []
+    },
+    {
+      "id": "sql:public.audit_log",
+      "kind": "table",
+      "label": "audit_log",
+      "tier": "store",
+      "parent": null,
+      "source": null,
+      "confidence": "inferred",
+      "confidence_reason": "inferred table 'audit_log' from SQLAlchemy model AuditLog",
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "svc:ledger-api",
+      "kind": "service",
+      "label": "ledger-api",
+      "tier": "domain",
+      "parent": null,
+      "source": null,
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
     }
   ],
   "edges": [
+    {
+      "id": "e_03fc3d1fea9c0e3d",
+      "from": "ledger:app/queries.py#load_entries",
+      "to": "sql:public.audit_log",
+      "kind": "write",
+      "label": "insert",
+      "schema_id": null,
+      "response_schema_id": null,
+      "confidence": "inferred",
+      "confidence_reason": "inferred table 'audit_log' from SQLAlchemy model AuditLog",
+      "condition": null,
+      "exclusive_group": null,
+      "is_error_path": false,
+      "source": {
+        "repo": "ledger",
+        "path": "app/queries.py",
+        "line_start": 13,
+        "line_end": null
+      },
+      "source_count": 1,
+      "branch_ordinal": null,
+      "is_broken": false,
+      "broken_reason": null,
+      "skips_tiers": []
+    },
     {
       "id": "e_d1fded81d067ea7b",
       "from": "ledger:app/queries.py#load_entries",
