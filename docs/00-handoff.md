@@ -433,6 +433,18 @@ review to post, act on it, then push again. One review per round. Review
 configuration lives in a file at the repo root and must be present on the
 feature branch to apply to that branch's PR.
 
+### 8.4 Editing formatted files
+
+Prettier rewraps long lines on `--write`, so the text on disk is not the text
+that was typed. Three edits in M0 failed because a patch anchored on the typed
+form, and each recovery rewrote a whole file — riskier than the patch it
+replaced.
+
+**Read the exact on-disk region immediately before composing an edit.** Run
+`prettier --write` on the file first so the text is stable, anchor on a single
+distinctive line rather than a multi-line block that may rewrap, and when a match
+fails, re-read and re-anchor rather than rewriting the file.
+
 ---
 
 ## 9. Remaining milestones
