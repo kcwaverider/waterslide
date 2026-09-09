@@ -8,6 +8,7 @@ import {
 import {
   assignTiers,
   fillParents,
+  markInfrastructure,
   nodeIdPath,
 } from "../src/pipeline/derive.js";
 
@@ -109,6 +110,96 @@ describe("stage 5: tiers (graph model §6)", () => {
     expect(nodeIdPath("mongo:db.c")).toBeNull();
     expect(nodeIdPath("unknown:symbol:x")).toBeNull();
     expect(nodeIdPath("nocolon")).toBeNull();
+  });
+});
+
+describe("stage 5: infrastructure (persisted-files §3.2, policy §5)", () => {
+  const span = (path: string, repo = "r"): Node["sources"][number] => ({
+    repo,
+    path,
+    line_start: 1,
+    line_end: null,
+    hash: "sha256:0",
+  });
+
+  it("marks a node when ANY span matches a glob, and never a node with no sources", () => {
+    const nodes = [
+      node("r:api/middleware/auth.py#check", {
+        sources: [span("api/middleware/auth.py")],
+      }),
+      // A definition split across files: one span is under the glob.
+      node("r:api/deps/auth.py#Auth", {
+        kind: "class",
+        sources: [span("api/deps/auth_impl.py"), span("api/deps/auth.py")],
+      }),
+      node("r:api/routers/notes.py#f", {
+        sources: [span("api/routers/notes.py")],
+      }),
+      // Synthetic: no path to match, whatever its kind.
+      node("mongo:db.users", { kind: "collection", tier: "store" }),
+      node("unknown:symbol:api.middleware.x", { kind: "unknown" }),
+      node("ext:stripe", { kind: "external_service", tier: "external" }),
+    ];
+    const out = markInfrastructure(nodes, {
+      infrastructure: [
+        { glob: "api/middleware/**" },
+        { glob: "api/deps/auth.py" },
+      ],
+    });
+    expect(out.map((n) => n.is_infrastructure)).toEqual([
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+    ]);
+    expect(out).not.toBe(nodes);
+    expect(nodes.every((n) => !n.is_infrastructure)).toBe(true); // input untouched
+  });
+
+  it("excludes no kind: a collection with a declaring span is eligible (UI §5.3, the hub problem)", () => {
+    const out = markInfrastructure(
+      [
+        node("r:models/user.py#User", {
+          kind: "collection",
+          tier: "store",
+          sources: [span("models/user.py")],
+        }),
+      ],
+      { infrastructure: [{ glob: "models/user.py" }] },
+    );
+    expect(out[0]?.is_infrastructure).toBe(true);
+  });
+
+  it("matches repo-relative paths in every repo, dotfiles included, and only whole path segments", () => {
+    const out = markInfrastructure(
+      [
+        node("a:lib/log.py#l", { sources: [span("lib/log.py", "a")] }),
+        node("b:lib/log.py#l", { sources: [span("lib/log.py", "b")] }),
+        node("a:lib/.hidden/x.py#h", { sources: [span("lib/.hidden/x.py")] }),
+        node("a:library/x.py#y", { sources: [span("library/x.py")] }),
+      ],
+      { infrastructure: [{ glob: "lib/**" }] },
+    );
+    expect(out.map((n) => n.is_infrastructure)).toEqual([
+      true,
+      true,
+      true,
+      false,
+    ]);
+  });
+
+  it("with no markers, or an empty list, returns copies with every node as the pack left it", () => {
+    const nodes = [
+      node("r:a.py#f", { sources: [span("a.py")] }),
+      node("r:b.py#g", { sources: [span("b.py")], is_infrastructure: true }),
+    ];
+    for (const config of [{}, { infrastructure: [] }]) {
+      const out = markInfrastructure(nodes, config);
+      expect(out.map((n) => n.is_infrastructure)).toEqual([false, true]);
+      expect(out[0]).not.toBe(nodes[0]);
+    }
   });
 });
 

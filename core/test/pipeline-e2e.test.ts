@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { serializeCanonical } from "../src/canonical.js";
 import type { CanonicalGraph } from "../src/model/graph.js";
 import { MemoryParseCache } from "../src/pipeline/cache.js";
+import type { WaterslideConfig } from "../src/pipeline/config.js";
 import { collapseEdges, finalizeEdges } from "../src/pipeline/derive-edges.js";
 import { discover } from "../src/pipeline/discover.js";
 import { parseSources, type Corpus } from "../src/pipeline/index.js";
@@ -70,11 +71,13 @@ function assemble(corpus: Corpus): CanonicalGraph {
 
 async function build(
   cache = new MemoryParseCache(),
+  config: WaterslideConfig = {},
 ): Promise<{ graph: CanonicalGraph; bytes: string; corpus: Corpus }> {
   const corpus = await parseSources({
     repos: repos(),
     packs: [makeToyPack({ compose: true })],
     cache,
+    config,
   });
   const graph = assemble(corpus);
   return { graph, bytes: serializeCanonical(graph), corpus };
@@ -118,6 +121,58 @@ describe("stages 1–5 end to end", () => {
     expect(
       graph.nodes.find((n) => n.id === "server:api/notes.toy")?.parent,
     ).toBe("svc:toy-server");
+  });
+
+  it("applies infrastructure markers on a warm run without touching the cache, and changes the canonical bytes", async () => {
+    const cache = new MemoryParseCache();
+    const cold = await build(cache);
+    expect(cold.corpus.stats.parsed).toBe(3);
+    expect(cold.graph.nodes.every((n) => !n.is_infrastructure)).toBe(true);
+
+    // The marker is stage-5 config: every file still comes from the cache
+    // (parser §2.1 keys on what changes parsing, and this does not), and the
+    // marks are applied to the cached output all the same.
+    const config: WaterslideConfig = {
+      infrastructure: [{ glob: "api/store.*" }],
+    };
+    const marked = await build(cache, config);
+    expect(marked.corpus.stats.parsed).toBe(0);
+    expect(marked.corpus.stats.cache_hits).toBe(3);
+    const infra = marked.graph.nodes
+      .filter((n) => n.is_infrastructure)
+      .map((n) => n.id);
+    expect(infra).toEqual([
+      "server:api/store.toy",
+      "server:api/store.toy#find_all",
+      "server:api/store.toy#save",
+    ]);
+    // Never inferred and never leaking: the caller of the store, the client
+    // repo, compose's service nodes and resolution's unknown node all stay false.
+    for (const id of [
+      "server:api/notes.toy#create",
+      "client:App/Sync.toy#sync",
+      "svc:toy-server",
+      "unknown:symbol:api.store.purge",
+    ]) {
+      expect(
+        marked.graph.nodes.find((n) => n.id === id)?.is_infrastructure,
+      ).toBe(false);
+    }
+    // Config changes the graph, so the bytes change — and nothing else does.
+    expect(marked.bytes).not.toBe(cold.bytes);
+    expect(marked.graph.tier_config_hash).toBe(cold.graph.tier_config_hash);
+    expect(marked.graph.nodes.length).toBe(cold.graph.nodes.length);
+    expect(marked.graph.edges).toEqual(cold.graph.edges);
+    expect(validate(JSON.parse(marked.bytes), { shape: "canonical" }).ok).toBe(
+      true,
+    );
+    // Same flags, same bytes: warm against the same cache, and cold again.
+    expect((await build(cache, config)).bytes).toBe(marked.bytes);
+    expect((await build(new MemoryParseCache(), config)).bytes).toBe(
+      marked.bytes,
+    );
+    // Dropping the flag drops the marks; the cache was never poisoned.
+    expect((await build(cache)).bytes).toBe(cold.bytes);
   });
 
   it("is byte-identical across a warm run and across shuffled discovery order", async () => {

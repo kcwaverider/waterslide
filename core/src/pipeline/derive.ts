@@ -4,8 +4,9 @@ import type { Node } from "../model/graph.js";
 import type { WaterslideConfig } from "./config.js";
 
 /**
- * Stage 5, the parts that need only nodes: tiers and parents. `skips_tiers`
- * and edge ids need resolved edges and live with stage 4's consumer.
+ * Stage 5, the parts that need only nodes: tiers, infrastructure and parents.
+ * `skips_tiers` and edge ids need resolved edges and live with stage 4's
+ * consumer.
  */
 
 /** For a repo-scoped id, the declaring path; null for fixed-scope ids. */
@@ -41,6 +42,30 @@ export function assignTiers(
     if (path === null) return { ...node };
     const hit = matchers.find((m) => m.match(path));
     return hit === undefined ? { ...node } : { ...node, tier: hit.tier };
+  });
+}
+
+/**
+ * Persisted-files §3.2, policy §5: `is_infrastructure` is set by a declared
+ * glob and never inferred. A glob is matched against every span's
+ * repo-relative path, so a definition split across files is still one node
+ * and matches if ANY of its spans does. A node with no sources — everything
+ * resolution mints: collections, external services, unknowns — can never
+ * match. No kind is excluded on purpose: UI §5.3 names the user collection as
+ * the canonical hub this flag exists for, so a pack that one day emits a
+ * collection with a declaring span must stay eligible. With no markers every
+ * node keeps the pack's value, which is always false.
+ */
+export function markInfrastructure(
+  nodes: readonly Node[],
+  config: WaterslideConfig,
+): Node[] {
+  const markers = config.infrastructure ?? [];
+  if (markers.length === 0) return nodes.map((n) => ({ ...n }));
+  const matchers = markers.map((m) => picomatch(m.glob, { dot: true }));
+  return nodes.map((node) => {
+    const hit = node.sources.some((s) => matchers.some((m) => m(s.path)));
+    return hit ? { ...node, is_infrastructure: true } : { ...node };
   });
 }
 
