@@ -374,17 +374,33 @@ describe("compose: cross-file prefix composition (decision items 1 and 2)", () =
     expect(patch.provides.map((p) => p.name)).toContain("GET /a/b/y");
   });
 
-  it("finds Depends inside Annotated[...]", async () => {
+  it("finds Depends inside Annotated[...] however Annotated is spelled", async () => {
     const pack = await getPack();
-    const r = pack.parse(
+    for (const [imp, spelling] of [
+      ["from typing import Annotated", "Annotated"],
+      ["import typing", "typing.Annotated"],
+      ["import typing as t", "t.Annotated"],
+      ["from typing import Annotated as A", "A"],
+      ["from typing_extensions import Annotated", "Annotated"],
+    ] as const) {
+      const r = pack.parse(
+        "r",
+        "app.py",
+        `${imp}\nfrom fastapi import APIRouter, Depends\nfrom auth import get_db\nrouter = APIRouter()\n\n@router.get('/x')\ndef x(db: ${spelling}[str, Depends(get_db)]):\n    return db\n`,
+      );
+      const dep = r.edges.find((e) => e.label === "Depends");
+      expect(
+        typeof dep?.to === "string" ? dep.to : dep?.to.value,
+        spelling,
+      ).toBe("auth.get_db");
+    }
+    // Not Annotated at all: a list type with a call inside is not a dependency.
+    const other = pack.parse(
       "r",
       "app.py",
-      "from typing import Annotated\nfrom fastapi import APIRouter, Depends\nfrom auth import get_db\nrouter = APIRouter()\n\n@router.get('/x')\ndef x(db: Annotated[str, Depends(get_db)]):\n    return db\n",
+      "from fastapi import APIRouter, Depends\nfrom auth import get_db\nrouter = APIRouter()\n\n@router.get('/x')\ndef x(db: Foo[str, Depends(get_db)]):\n    return db\n",
     );
-    const dep = r.edges.find((e) => e.label === "Depends");
-    expect(typeof dep?.to === "string" ? dep.to : dep?.to.value).toBe(
-      "auth.get_db",
-    );
+    expect(other.edges.filter((e) => e.label === "Depends")).toEqual([]);
   });
 
   it("turns a malformed options block into a diagnostic rather than a throw", async () => {

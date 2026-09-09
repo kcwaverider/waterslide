@@ -349,9 +349,12 @@ function emitDepends(model: FileModel, em: Emitter): void {
     for (const p of params?.namedChildren ?? []) {
       const value = p.childForFieldName("value");
       if (value) emitDependsCall(model, em, def, value, scope);
-      // `Annotated[T, Depends(x)]`: the dependency sits in the type, not the default.
+      // `Annotated[T, Depends(x)]`: the dependency sits in the type, not the
+      // default. The generic's root is resolved through the import table, so
+      // `typing.Annotated`, `t.Annotated` and `from typing import Annotated as A`
+      // all count; a bare unbound `Annotated` (star import) counts too.
       const type = p.childForFieldName("type");
-      if (type && /^Annotated\[/.test(type.text)) {
+      if (type && isAnnotated(type, model, scope, def)) {
         for (const call of type.descendantsOfType("call"))
           emitDependsCall(model, em, def, call, scope);
       }
@@ -367,6 +370,40 @@ function emitDepends(model: FileModel, em: Emitter): void {
       }
     }
   }
+}
+
+const ANNOTATED = new Set([
+  "typing.Annotated",
+  "typing_extensions.Annotated",
+  "Annotated",
+]);
+
+function isAnnotated(
+  type: Node,
+  model: FileModel,
+  scope: ReturnType<FileModel["scopeFor"]>,
+  def: Definition,
+): boolean {
+  // Bare `Annotated[...]` parses as generic_type; dotted `typing.Annotated[...]`
+  // parses as a subscript over an attribute. Same meaning, two shapes.
+  const generic = type.namedChildren[0];
+  if (!generic) return false;
+  const head =
+    generic.type === "generic_type"
+      ? generic.namedChildren[0]
+      : generic.type === "subscript"
+        ? generic.childForFieldName("value")
+        : null;
+  const chain = head ? attributeChain(head) : null;
+  if (!chain) return false;
+  const resolved = model.resolveChain(chain, scope, def);
+  const value =
+    resolved.kind === "symbol"
+      ? resolved.value
+      : resolved.kind === "unbound"
+        ? resolved.value
+        : null;
+  return value !== null && ANNOTATED.has(value);
 }
 
 function emitDependsCall(
