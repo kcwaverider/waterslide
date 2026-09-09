@@ -1,7 +1,16 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { CanonicalGraph } from "@waterslide/core";
-import { BAND_ORDER, layoutGraph } from "../src/layout.js";
+import {
+  BAND_ORDER,
+  LAYOUT,
+  MAX_LINE_CHARS,
+  bezierPoint,
+  forkPoints,
+  layoutGraph,
+  nodeSize,
+  wrapLabel,
+} from "../src/layout.js";
 import { buildViewerHtml, stripModuleSyntax } from "../src/index.js";
 
 const validDir = new URL("../../fixtures/valid/", import.meta.url);
@@ -62,15 +71,356 @@ describe("layered layout (UI §1)", () => {
     expect(b).toBe(a);
   });
 
-  it("orders a band by barycenter: a node's children sit under it", () => {
-    const g = load("derived-ids.json");
+  it("orders a band alphabetically by label along the parent chain, so the picture only moves when the code does", () => {
+    const g = load("band-skip.json");
     const layout = layoutGraph(g);
+    for (const band of BAND_ORDER) {
+      const row = layout.nodes
+        .filter((n) => !n.external && n.node.tier === band)
+        .sort((a, b) => a.x - b.x);
+      const labelOf = new Map(g.nodes.map((n) => [n.id, n.label] as const));
+      const chain = (id: string): string[] => {
+        const out: string[] = [];
+        let cur: string | null = id;
+        while (cur !== null) {
+          out.unshift(labelOf.get(cur) ?? cur);
+          cur = g.nodes.find((n) => n.id === cur)?.parent ?? null;
+        }
+        return out;
+      };
+      for (let i = 1; i < row.length; i++) {
+        const a = chain((row[i - 1] as { node: { id: string } }).node.id);
+        const b = chain((row[i] as { node: { id: string } }).node.id);
+        const key = (c: string[]): string => c.join("\u0000");
+        expect(key(a) <= key(b) || a.length < b.length).toBe(true);
+      }
+    }
+    // A new cross-band edge moves nothing: the order does not look at edges.
+    const extra = {
+      nodes: g.nodes,
+      edges: [
+        ...g.edges,
+        {
+          ...(g.edges[0] as CanonicalGraph["edges"][number]),
+          id: "e_added",
+          from: "tapistree:api/routers/notes.py#update_note",
+          to: "mongo:tapistree.notes",
+          kind: "write" as const,
+          condition: null,
+          exclusive_group: null,
+          branch_ordinal: null,
+        },
+      ],
+    };
+    const moved = layoutGraph(extra);
+    for (const ln of layout.nodes) {
+      const after = moved.nodes.find((n) => n.node.id === ln.node.id);
+      expect(after?.x).toBe(ln.x);
+    }
+  });
+});
+
+describe('labels (scope §"Who reads the map")', () => {
+  it("renders the whole label: nothing that fits two lines is ever cut", () => {
+    for (const f of fixtures)
+      for (const ln of layoutGraph(load(f)).nodes) {
+        expect(ln.lines.join(" ").replace(/\s+/g, "")).toBe(
+          ln.node.label.replace(/\s+/g, ""),
+        );
+        expect(ln.lines.length).toBeLessThanOrEqual(2);
+        for (const line of ln.lines)
+          expect(line.length).toBeLessThanOrEqual(MAX_LINE_CHARS);
+      }
+  });
+
+  it("the unknown node's label is legible on the map, not only on hover", () => {
+    const layout = layoutGraph(load("unknown-dangling-refs.json"));
+    const unknown = layout.nodes.find((n) => n.node.kind === "unknown");
+    expect(unknown?.lines).toEqual(["unresolved http /notes/{id}/archive"]);
+  });
+
+  it("wraps at a word or path boundary, two lines at most, ellipsis only past that", () => {
+    expect(wrapLabel("short", 10)).toEqual(["short"]);
+    expect(wrapLabel("unresolved http /notes/{id}/archive", 20)).toEqual([
+      "unresolved http",
+      "/notes/{id}/archive",
+    ]);
+    expect(wrapLabel("NoteRepository.save.something", 16)).toEqual([
+      "NoteRepository.",
+      "save.something",
+    ]);
+    expect(wrapLabel("abcdefghijklmnopqrstuvwxyz", 10)).toEqual([
+      "abcdefghij",
+      "klmnopqrs…",
+    ]);
+    expect(wrapLabel("a b c d e f g h i j k l m n o p q r s", 6)).toEqual([
+      "a b c",
+      "d e f…",
+    ]);
+  });
+
+  it("falls back to a hard cut before ellipsising a label that fits two lines", () => {
+    const label = "src/AVeryLongCamelCaseIdentifierNameGoesHere";
+    const lines = wrapLabel(label, 41);
+    expect(lines).toHaveLength(2);
+    expect(lines.join("")).toBe(label);
+    expect(lines.some((l) => l.endsWith("…"))).toBe(false);
+  });
+
+  it("sizes a node to its label within the min and max widths", () => {
+    expect(nodeSize("x").w).toBe(LAYOUT.minNodeW);
+    const long = nodeSize("unresolved symbol memory_service.forget");
+    expect(long.w).toBeGreaterThan(LAYOUT.minNodeW);
+    expect(long.w).toBeLessThanOrEqual(LAYOUT.maxNodeW);
+    expect(long.h).toBe(LAYOUT.nodeH1);
+    expect(nodeSize("a".repeat(60)).h).toBe(LAYOUT.nodeH2);
+  });
+});
+
+describe("the two rough edges the core track named", () => {
+  it("orders the external column by the depth of what it connects to", () => {
+    // Three externals called from ui, store and api respectively: the column
+    // must run ui-caller, api-caller, store-caller, whatever the ids say.
+    const g = load("derived-ids.json");
+    const mk = (
+      id: string,
+      tier: "ui" | "api" | "store",
+      kind: "ui_view" | "endpoint" | "collection",
+    ): CanonicalGraph["nodes"][number] => ({
+      ...(g.nodes[0] as CanonicalGraph["nodes"][number]),
+      id,
+      kind,
+      label: id,
+      tier,
+      parent: null,
+      sources: [],
+    });
+    const ext = (id: string): CanonicalGraph["nodes"][number] => ({
+      ...mk(id, "api", "endpoint"),
+      kind: "external_service",
+      tier: "external",
+    });
+    const edge = (
+      from: string,
+      to: string,
+    ): CanonicalGraph["edges"][number] => ({
+      ...(g.edges[0] as CanonicalGraph["edges"][number]),
+      id: `e_${from}_${to}`,
+      from,
+      to,
+      kind: "external_call",
+      condition: null,
+      exclusive_group: null,
+      branch_ordinal: null,
+    });
+    const nodes = [
+      mk("n:view", "ui", "ui_view"),
+      mk("n:route", "api", "endpoint"),
+      mk("n:coll", "store", "collection"),
+      ext("ext:a-from-store"),
+      ext("ext:b-from-ui"),
+      ext("ext:c-from-api"),
+    ];
+    const edges = [
+      edge("n:coll", "ext:a-from-store"),
+      edge("n:view", "ext:b-from-ui"),
+      edge("n:route", "ext:c-from-api"),
+    ];
+    const layout = layoutGraph({ nodes, edges });
+    const column = layout.nodes
+      .filter((n) => n.external)
+      .sort((p, q) => p.y - q.y)
+      .map((n) => n.node.id);
+    expect(column).toEqual([
+      "ext:b-from-ui",
+      "ext:c-from-api",
+      "ext:a-from-store",
+    ]);
+  });
+
+  it("keeps same-band edges inside their band: forward over the top, backward under the bottom", () => {
+    for (const f of fixtures) {
+      const layout = layoutGraph(load(f));
+      const at = new Map(layout.nodes.map((n) => [n.node.id, n] as const));
+      for (const le of layout.edges) {
+        const a = at.get(le.edge.from);
+        const b = at.get(le.edge.to);
+        if (a === undefined || b === undefined || a === b) continue;
+        if (a.external || b.external || a.y !== b.y) continue;
+        const band = layout.bands[BAND_ORDER.indexOf(a.node.tier)];
+        expect(band).toBeDefined();
+        if (band === undefined) continue;
+        const peak = bezierPoint(le, 0.5);
+        expect(peak.y).toBeGreaterThan(band.y);
+        expect(peak.y).toBeLessThan(band.y + band.h);
+        const forward = b.x >= a.x;
+        expect(peak.y < a.y).toBe(forward);
+        expect(peak.y > a.y + a.h).toBe(!forward);
+      }
+    }
+  });
+});
+
+describe("sibling adjacency (UI §1.4)", () => {
+  it("keeps nodes that share a parent contiguous within a band, in every fixture", () => {
+    for (const f of fixtures) {
+      const layout = layoutGraph(load(f));
+      for (const band of BAND_ORDER) {
+        const row = layout.nodes
+          .filter((n) => !n.external && n.node.tier === band)
+          .sort((a, b) => a.x - b.x);
+        const seen = new Set<string>();
+        let last: string | null = null;
+        for (const n of row) {
+          const p = n.node.parent ?? `root:${n.node.id}`;
+          if (p !== last) {
+            expect(seen.has(p), `${f}: ${p} split in band ${band}`).toBe(false);
+            seen.add(p);
+            last = p;
+          }
+        }
+      }
+    }
+  });
+
+  it("a parent drawn in the same band sits beside its children", () => {
+    const layout = layoutGraph(load("derived-ids.json"));
     const x = (id: string): number =>
       layout.nodes.find((n) => n.node.id === id)?.x ?? Number.NaN;
-    // The endpoint calls NoteService.update, which calls NoteRepository.save: a vertical chain.
-    const route = x("tapistree:api/routers/notes.py#update_note");
-    const svc = x("tapistree:api/services/note_service.py#NoteService.update");
-    expect(Math.abs(route - svc)).toBeLessThan(400);
+    const file = "tapistree:api/services/note_service.py";
+    const fns = layout.nodes
+      .filter((n) => n.node.parent === file)
+      .map((n) => n.x);
+    const lo = Math.min(...fns, x(file));
+    const hi = Math.max(...fns, x(file));
+    const between = layout.nodes.filter(
+      (n) =>
+        !n.external &&
+        n.node.tier === "domain" &&
+        n.x >= lo &&
+        n.x <= hi &&
+        n.node.parent !== file &&
+        n.node.id !== file,
+    );
+    expect(between).toEqual([]);
+  });
+
+  it("keeps families apart when two parents share a label", () => {
+    const g = load("derived-ids.json");
+    const base = g.nodes[0] as CanonicalGraph["nodes"][number];
+    const mk = (
+      id: string,
+      label: string,
+      parent: string | null,
+    ): CanonicalGraph["nodes"][number] => ({
+      ...base,
+      id,
+      kind: "function",
+      tier: "domain",
+      label,
+      parent,
+      sources: [],
+    });
+    const nodes = [
+      mk("r:a/svc", "svc", null),
+      mk("r:b/svc", "svc", null),
+      mk("r:a/svc#a", "a", "r:a/svc"),
+      mk("r:a/svc#c", "c", "r:a/svc"),
+      mk("r:b/svc#b", "b", "r:b/svc"),
+      mk("r:b/svc#d", "d", "r:b/svc"),
+    ];
+    const layout = layoutGraph({ nodes, edges: [] });
+    const row = layout.nodes
+      .filter((n) => !n.external)
+      .sort((a, b) => a.x - b.x)
+      .map((n) => n.node.parent ?? `root:${n.node.id}`);
+    const runs: string[] = [];
+    for (const p of row) if (runs[runs.length - 1] !== p) runs.push(p);
+    expect(new Set(runs).size).toBe(runs.length);
+  });
+
+  it("marks same-band edges and only those", () => {
+    for (const f of fixtures) {
+      const layout = layoutGraph(load(f));
+      const at = new Map(layout.nodes.map((n) => [n.node.id, n] as const));
+      for (const le of layout.edges) {
+        const a = at.get(le.edge.from);
+        const b = at.get(le.edge.to);
+        const expected =
+          a !== undefined &&
+          b !== undefined &&
+          a !== b &&
+          !a.external &&
+          !b.external &&
+          a.node.tier === b.node.tier;
+        expect(le.sameBand).toBe(expected);
+      }
+    }
+  });
+});
+
+describe("edge geometry and fork points (UI §3.3)", () => {
+  it("every edge's control points match its path and its midpoint is t = 0.5", () => {
+    for (const f of fixtures)
+      for (const le of layoutGraph(load(f)).edges) {
+        const [a, b, c, d] = le.p;
+        expect(le.d).toBe(
+          `M ${String(a.x)} ${String(a.y)} C ${String(b.x)} ${String(b.y)}, ${String(c.x)} ${String(c.y)}, ${String(d.x)} ${String(d.y)}`,
+        );
+        const mid = bezierPoint(le, 0.5);
+        expect(mid.x).toBeCloseTo(le.mx);
+        expect(mid.y).toBeCloseTo(le.my);
+        expect(bezierPoint(le, 0)).toEqual(a);
+        expect(bezierPoint(le, 1)).toEqual(d);
+      }
+  });
+
+  it("every branch of a fork carries a marker at its root; branches sharing an exit share one", () => {
+    const layout = layoutGraph(load("derived-ids.json"));
+    const forks = forkPoints(layout.edges);
+    const branches = layout.edges.filter(
+      (le) => le.edge.exclusive_group !== null,
+    );
+    expect(branches).toHaveLength(2);
+    const exits = new Set(
+      branches.map((le) => `${String(le.p[0].x)},${String(le.p[0].y)}`),
+    );
+    expect(forks).toHaveLength(exits.size);
+    expect(forks.flatMap((f) => f.edges)).toHaveLength(2);
+    for (const f of forks) {
+      expect(
+        f.edges.every(
+          (le) => le.edge.exclusive_group === branches[0]?.edge.exclusive_group,
+        ),
+      ).toBe(true);
+      expect(`${String(f.x)},${String(f.y)}`).toBe(
+        `${String(f.edges[0]?.p[0].x)},${String(f.edges[0]?.p[0].y)}`,
+      );
+    }
+    expect(
+      forks.flatMap((f) => f.edges.map((le) => le.edge.condition?.expr)).sort(),
+    ).toEqual(["else", "if note.is_valid()"]);
+  });
+
+  it("is deterministic: fork points do not depend on input order", () => {
+    const g = load("shared-branch-ordinal.json");
+    const a = forkPoints(layoutGraph(g).edges);
+    const b = forkPoints(
+      layoutGraph({
+        nodes: [...g.nodes].reverse(),
+        edges: [...g.edges].reverse(),
+      }).edges,
+    );
+    expect(JSON.stringify(b)).toBe(JSON.stringify(a));
+    expect(
+      a.flatMap((f) => f.edges.map((le) => le.edge.branch_ordinal)),
+    ).toEqual([0, 0]);
+  });
+
+  it("no exclusive_group, no fork marker", () => {
+    expect(forkPoints(layoutGraph(load("annotated-edge.json")).edges)).toEqual(
+      [],
+    );
   });
 });
 
@@ -82,6 +432,7 @@ describe("viewer page", () => {
     expect(html).toContain('<script id="graph" type="application/json">');
     expect(html).toContain("tapistree:api/routers/notes.py#update_note");
     expect(html).toContain("function layoutGraph(");
+    expect(html).toContain("function nodeStyle(");
     expect(html).toContain("function renderGraph(");
     expect(html).toContain("mountViewer();");
     expect(html).toMatch(/d3.*v7/);
@@ -118,11 +469,43 @@ describe("viewer page", () => {
     expect(html).not.toContain("</script><b>");
   });
 
-  it("stripModuleSyntax removes only module syntax", () => {
+  it("stripModuleSyntax removes only module syntax, multi-line imports included", () => {
     expect(
       stripModuleSyntax(
-        'import type { A } from "x";\nexport function f() {}\nexport const k = 1;\nconst z = "import x";\n',
+        'import type { A } from "x";\nimport {\n  a,\n  type B,\n} from "./y.js";\nexport function f() {}\nexport const k = 1;\nconst z = "import x";\nexport { k };\n',
       ),
     ).toBe('function f() {}\nconst k = 1;\nconst z = "import x";\n');
+  });
+
+  it("serialises the change-state map in byte order, so insertion order never changes the page bytes", () => {
+    const graph = readFileSync(new URL("derived-ids.json", validDir), "utf8");
+    const a = buildViewerHtml(graph, {
+      changeState: { "z:last": "new", "a:first": "modified", "m:mid": "new" },
+    });
+    const b = buildViewerHtml(graph, {
+      changeState: { "m:mid": "new", "a:first": "modified", "z:last": "new" },
+    });
+    expect(a).toBe(b);
+    expect(a.indexOf('"a:first"')).toBeLessThan(a.indexOf('"m:mid"'));
+  });
+
+  it("embeds the change-state map beside the graph, empty by default (the M3 seam)", () => {
+    const graph = readFileSync(new URL("derived-ids.json", validDir), "utf8");
+    expect(buildViewerHtml(graph)).toContain(
+      '<script id="change-state" type="application/json">{}</script>',
+    );
+    const html = buildViewerHtml(graph, {
+      changeState: { "ext:cohere/embed": "modified", "<x>": "new" },
+    });
+    const start = html.indexOf('<script id="change-state"');
+    const body = html.slice(
+      html.indexOf(">", start) + 1,
+      html.indexOf("</script>", start),
+    );
+    expect(body).not.toContain("<");
+    expect(JSON.parse(body)).toEqual({
+      "ext:cohere/embed": "modified",
+      "<x>": "new",
+    });
   });
 });
