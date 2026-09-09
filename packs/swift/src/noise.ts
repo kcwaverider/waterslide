@@ -29,9 +29,15 @@ let table: NoiseTable | null = null;
 function noise(): NoiseTable {
   if (table === null) {
     const path = join(packRoot(), "data", "noise.json");
-    const parsed = NoiseTableSchema.safeParse(
-      JSON.parse(readFileSync(path, "utf8")),
-    );
+    let raw: unknown;
+    try {
+      raw = JSON.parse(readFileSync(path, "utf8"));
+    } catch (err) {
+      throw new Error(
+        `swift pack: ${path} is not readable as JSON: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    const parsed = NoiseTableSchema.safeParse(raw);
     if (!parsed.success) {
       throw new Error(
         `swift pack: ${path} does not match the noise table schema: ${parsed.error.issues
