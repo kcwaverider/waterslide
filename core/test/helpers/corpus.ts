@@ -121,6 +121,7 @@ export function corpus(parts: {
       repathed: 0,
       repath_fallbacks: 0,
     },
+    discovery: { excluded_by_glob: 0 },
   };
 }
 

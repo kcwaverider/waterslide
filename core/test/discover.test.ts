@@ -4,6 +4,7 @@ import {
   assertRepoList,
   captureRepoState,
   discover,
+  discoverWithStats,
 } from "../src/pipeline/discover.js";
 import { TmpTree } from "./helpers/tmp-tree.js";
 
@@ -64,6 +65,61 @@ describe("stage 1: discovery (parser §1)", () => {
       { extensions: EXT },
     );
     expect(files.map((f) => f.path)).toEqual(["services/notes.toy"]);
+  });
+
+  it("counts what the repo's own globs excluded, and not what the built-ins did", async () => {
+    // Nothing excluded by the user: an explicit zero.
+    const none = await discoverWithStats(
+      [{ name: "api", path: `${tree.root}/api` }],
+      { extensions: EXT },
+    );
+    expect(none.stats.excluded_by_glob).toBe(0);
+    expect(none.files.map((f) => f.path)).toEqual([
+      "routers/notes.toy",
+      "services/notes.toy",
+    ]);
+    // A directory-form exclude: the file under it is counted, not pruned
+    // away silently. node_modules, tests, dotdirs, build and generated files
+    // are built-in exclusions and never enter the count.
+    const one = await discoverWithStats(
+      [{ name: "api", path: `${tree.root}/api`, exclude: ["routers/**"] }],
+      { extensions: EXT },
+    );
+    expect(one.stats.excluded_by_glob).toBe(1);
+    expect(one.files.map((f) => f.path)).toEqual(["services/notes.toy"]);
+    // A file rejected by `include` is excluded by glob too, and a file that
+    // both fails include and matches exclude is counted once.
+    const both = await discoverWithStats(
+      [
+        {
+          name: "api",
+          path: `${tree.root}/api`,
+          include: ["services/**"],
+          exclude: ["services/**", "routers/**"],
+        },
+      ],
+      { extensions: EXT },
+    );
+    expect(both.stats.excluded_by_glob).toBe(2);
+    expect(both.files).toEqual([]);
+    // Unclaimed files are never counted: README.md is not code.
+    const md = await discoverWithStats(
+      [{ name: "api", path: `${tree.root}/api`, exclude: ["**"] }],
+      { extensions: EXT },
+    );
+    expect(md.stats.excluded_by_glob).toBe(2);
+    // Two repos accumulate; a glob in one repo says nothing about the other.
+    const two = await discoverWithStats(
+      [
+        { name: "api", path: `${tree.root}/api`, exclude: ["**"] },
+        { name: "ios", path: `${tree.root}/ios` },
+      ],
+      { extensions: EXT },
+    );
+    expect(two.stats.excluded_by_glob).toBe(2);
+    expect(two.files.map((f) => `${f.repo}:${f.path}`)).toEqual([
+      "ios:Sources/App.toy",
+    ]);
   });
 
   it("is independent of filesystem order: two walks agree", async () => {
@@ -142,6 +198,30 @@ describe("walk pruning", () => {
         extensions: EXT,
       });
       expect(files.map((f) => f.path)).toEqual(["a.toy"]);
+    } finally {
+      t.dispose();
+    }
+  });
+
+  it("walks (but never parses) a directory the repo's own glob excludes, so its files are counted", async () => {
+    const t = new TmpTree();
+    try {
+      t.write("api/a.toy", "def a\n");
+      t.write("api/infra/stacks/__init__.toy", "");
+      t.write("api/infra/stacks/deep/er/stack.toy", "def s\n");
+      t.write("api/infra/app.toy", "def app\n");
+      const r = await discoverWithStats(
+        [
+          {
+            name: "api",
+            path: `${t.root}/api`,
+            exclude: ["infra/stacks/**", "infra/app.toy"],
+          },
+        ],
+        { extensions: EXT },
+      );
+      expect(r.files.map((f) => f.path)).toEqual(["a.toy"]);
+      expect(r.stats.excluded_by_glob).toBe(3);
     } finally {
       t.dispose();
     }
