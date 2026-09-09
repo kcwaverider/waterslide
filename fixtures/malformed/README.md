@@ -68,4 +68,8 @@ coincidence of index is not worth breaking either fixture to avoid.
 | `unknown-key.json` | `E_UNKNOWN_KEY` | node carries a key the model does not define |
 | `not-an-object.json` | `E_NOT_OBJECT` | a JSON array, not a graph object |
 | `repo-named-unknown.json` | `E_ID_FORMAT` | a repo named 'unknown' collides with the fixed scope minted for dangling references (invariant 18); built from `unknown-dangling-refs.json` |
-| `unknown-illegal-ref-kind.json` | `E_ID_FORMAT` | an `unknown:` id whose ref_kind 'grpc' is not an UnresolvedRef kind; the locator must be `{ref_kind}/{value}` (invariant 18); built from `unknown-dangling-refs.json` |
+| `unknown-illegal-ref-kind.json` | `E_ID_FORMAT` | an `unknown:` id whose ref_kind 'grpc' is not an UnresolvedRef kind; the locator must be `{ref_kind}:{encoded_value}` (invariant 18); built from `unknown-dangling-refs.json` |
+| `unknown-unencoded-value.json` | `E_ID_FORMAT` | an `unknown:` id whose value carries a literal `/`; `:` `/` `%` and control characters must be percent-encoded (invariant 18) |
+| `unknown-with-source.json` | `E_UNKNOWN_NODE` | an unknown node carrying a defining span; sources must be empty (invariant 24) |
+| `unknown-certain.json` | `E_UNKNOWN_NODE` | an unknown node claiming confidence certain; always inferred (invariant 24) |
+| `unknown-without-reason.json` | `E_UNKNOWN_NODE` | an unknown node with confidence_reason null (invariant 24) |

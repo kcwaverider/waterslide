@@ -101,20 +101,6 @@
       "tags": []
     },
     {
-      "id": "unknown:grpc:memory_service.forget",
-      "kind": "unknown",
-      "label": "unresolved symbol memory_service.forget",
-      "tier": "domain",
-      "parent": null,
-      "sources": [],
-      "confidence": "inferred",
-      "confidence_reason": "unresolved symbol reference 'memory_service.forget' from api/services/note_service.py:70 matched no provide",
-      "is_entry_point": false,
-      "entry_point_kind": null,
-      "is_infrastructure": false,
-      "tags": []
-    },
-    {
       "id": "unknown:http:%2Fnotes%2F{id}%2Farchive",
       "kind": "unknown",
       "label": "unresolved http /notes/{id}/archive",
@@ -127,13 +113,27 @@
       "entry_point_kind": null,
       "is_infrastructure": false,
       "tags": []
+    },
+    {
+      "id": "unknown:symbol:memory/service.forget",
+      "kind": "unknown",
+      "label": "unresolved symbol memory_service.forget",
+      "tier": "domain",
+      "parent": null,
+      "sources": [],
+      "confidence": "inferred",
+      "confidence_reason": "unresolved symbol reference 'memory_service.forget' from api/services/note_service.py:70 matched no provide",
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
     }
   ],
   "edges": [
     {
       "id": "e_47cae39172a24a2c",
       "from": "tapistree:api/services/note_service.py#NoteService.archive",
-      "to": "unknown:grpc:memory_service.forget",
+      "to": "unknown:symbol:memory/service.forget",
       "kind": "call",
       "label": "forget",
       "schema_id": null,

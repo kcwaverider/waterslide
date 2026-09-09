@@ -47,7 +47,7 @@ Format: `{scope}:{locator}`
 | SQL table | `sql:{schema}.{table}` | `sql:public.orders` |
 | Queue topic | `topic:{name}` | `topic:note.indexed` |
 | External service | `ext:{vendor}/{surface}` | `ext:cohere/embed` |
-| Unknown target | `unknown:{ref_kind}/{value}` | `unknown:symbol/memory_service.forget` |
+| Unknown target | `unknown:{ref_kind}:{encoded_value}` | `unknown:http:%2Fnotes%2F{id}` |
 
 **Rules (normative):**
 
@@ -63,15 +63,21 @@ Format: `{scope}:{locator}`
   one span's `path` is the path in the id. The validator checks both (invariant
   18).
 - **Locators are non-empty.** For `mongo`/`sql`, both sides of the `.` are
-  non-empty; for `ext`, both sides of the `/`. For `unknown`, the part before the
-  first `/` is an `UnresolvedRef.ref_kind` (parser §3.6) and the part after it is
-  the ref's `value` verbatim, NFC-normalized, non-empty — so the id is
-  deterministic from the ref alone and an `http` value keeps its own slashes. For repo-scoped ids the path is
+  non-empty; for `ext`, both sides of the `/`. For `unknown`, the locator is
+  `{ref_kind}:{encoded_value}`: an `UnresolvedRef.ref_kind` (parser §3.6), a
+  colon, then the ref's `value` NFC-normalized and then percent-encoded —
+  `:`, `/`, `%` and every code point below U+0020 become `%XX` with uppercase
+  hex, everything else stays literal. `/notes/{id}` becomes
+  `unknown:http:%2Fnotes%2F{id}`. The encoding is canonical, so one value has
+  one id and the id splits back into (scope, ref_kind, value) unambiguously;
+  `core/` exports the encoder and decoder. Ugly on purpose: ids are addresses,
+  and `label` carries the readable form. For repo-scoped ids the path is
   relative, uses forward slashes, has no leading slash and no backslash, and a
   `#` is followed by a non-empty `qualified_name`.
 - **The validator checks id format** (handoff §5, invariant 18): the scope is one
   of the six fixed prefixes or a name in `repos[]`; `mongo`/`sql` locators contain
-  a `.`, `ext` locators a `/`, `unknown` locators a legal `ref_kind` then `/`; and for a repo-scoped node with `sources`, every
+  a `.`, `ext` locators a `/`, `unknown` locators a legal `ref_kind`, a `:` and a
+  canonically encoded value; and for a repo-scoped node with `sources`, every
   span's `repo` is the id's scope and at least one span's `path` is the path part
   of the locator.
 - Identity is never derived from array index or parse order.
@@ -147,10 +153,12 @@ group only with `unknown`, since both are the absence of a thing.
 `unknown` is the synthetic target of a dangling edge (parser §4.2): a reference
 that matched nothing, drawn rather than dropped. It is minted by core, never by
 a pack; always has `sources: []`, `confidence: inferred` and a reason naming the
-reference and where it originated; and takes the tier of the referencing edge's
-`from` node — the shallowest in band order when several edges reference it — so
-it draws beside its caller. Like a tombstone it is transient: the next parse
-simply does not mint one once the reference resolves.
+reference and where it originated (invariant 24, the twin of 22); and takes the
+tier of the referencing edge's `from` node — the shallowest in band order when
+several edges reference it — so it draws beside its caller. Its `label` is the
+decoded value with its kind, `unresolved http /notes/{id}`, which is what a
+reader sees. Like a tombstone it is transient: the next parse simply does not
+mint one once the reference resolves.
 
 ### 2.2 `entry_point_kind` enum
 

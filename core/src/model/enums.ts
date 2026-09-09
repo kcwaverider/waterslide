@@ -140,9 +140,10 @@ export const SKIPS_TIERS_EXCLUDED_KINDS: ReadonlySet<NodeKind> =
  * Graph model §1 — the six fixed id scopes. The seventh scope form is a repo
  * name from `repos[]`, so a repo must never be named after one of these.
  *
- * `unknown:{ref_kind}/{value}` is the synthetic target of a dangling edge
- * (parser §4.2): `ref_kind` is the UnresolvedRef's kind and `value` its value
- * verbatim, NFC-normalized, so the id is deterministic from the ref alone.
+ * `unknown:{ref_kind}:{encoded_value}` is the synthetic target of a dangling
+ * edge (parser §4.2): `ref_kind` is the UnresolvedRef's kind and the value its
+ * value, NFC-normalized then percent-encoded (see unknown-id.ts), so the id is
+ * deterministic from the ref alone and splits back unambiguously.
  */
 export const FIXED_ID_SCOPES: ReadonlySet<string> = new Set([
   "svc",

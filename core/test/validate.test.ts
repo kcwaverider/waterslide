@@ -248,6 +248,7 @@ describe("malformed fixtures", () => {
       E_BRANCH_ORDINAL: true,
       E_BRANCH_ORDINAL_DUPLICATE: true,
       E_SKIPS_TIERS_EXCLUDED: true,
+      E_UNKNOWN_NODE: true,
     };
     const codes = new Set(Object.values(expected).map((e) => e.code));
     for (const code of Object.keys(COVERED)) {
@@ -338,13 +339,13 @@ describe("invariant 18: node id format", () => {
     ]);
   });
 
-  it("accepts unknown:{ref_kind}/{value} for every ref_kind, with slashes in the value", () => {
+  it("accepts unknown:{ref_kind}:{encoded_value} for every ref_kind", () => {
     for (const id of [
-      "unknown:symbol/memory_service.display",
-      "unknown:http//notes/{id}",
-      "unknown:topic/note.indexed",
-      "unknown:datastore/notes",
-      "unknown:external/cohere/embed",
+      "unknown:symbol:memory_service.display",
+      "unknown:http:%2Fnotes%2F{id}",
+      "unknown:topic:note.indexed",
+      "unknown:datastore:notes",
+      "unknown:external:cohere%2Fembed",
     ]) {
       const g = load("single-repo-minimal.json");
       g.nodes.push({
@@ -366,8 +367,16 @@ describe("invariant 18: node id format", () => {
     }
   });
 
-  it("rejects an unknown id with an illegal ref_kind, an empty value, or no separator", () => {
-    for (const id of ["unknown:grpc/x", "unknown:symbol/", "unknown:symbol"]) {
+  it("rejects an unknown id with an illegal ref_kind, an empty value, no separator, or an unencoded value", () => {
+    for (const id of [
+      "unknown:grpc:x",
+      "unknown:symbol:",
+      "unknown:symbol",
+      "unknown:http:/notes",
+      "unknown:symbol:a:b",
+      "unknown:symbol:%2f",
+      "unknown:symbol:%41",
+    ]) {
       const g = load("single-repo-minimal.json");
       g.nodes.push({
         id,

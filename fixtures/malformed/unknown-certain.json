@@ -101,7 +101,21 @@
       "tags": []
     },
     {
-      "id": "unknown:grpc:memory_service.forget",
+      "id": "unknown:http:%2Fnotes%2F{id}%2Farchive",
+      "kind": "unknown",
+      "label": "unresolved http /notes/{id}/archive",
+      "tier": "ui_logic",
+      "parent": null,
+      "sources": [],
+      "confidence": "certain",
+      "confidence_reason": "unresolved http reference 'POST /notes/{id}/archive' from Sources/Services/NoteService.swift:104 matched no route",
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "unknown:symbol:memory_service.forget",
       "kind": "unknown",
       "label": "unresolved symbol memory_service.forget",
       "tier": "domain",
@@ -113,27 +127,13 @@
       "entry_point_kind": null,
       "is_infrastructure": false,
       "tags": []
-    },
-    {
-      "id": "unknown:http:%2Fnotes%2F{id}%2Farchive",
-      "kind": "unknown",
-      "label": "unresolved http /notes/{id}/archive",
-      "tier": "ui_logic",
-      "parent": null,
-      "sources": [],
-      "confidence": "inferred",
-      "confidence_reason": "unresolved http reference 'POST /notes/{id}/archive' from Sources/Services/NoteService.swift:104 matched no route",
-      "is_entry_point": false,
-      "entry_point_kind": null,
-      "is_infrastructure": false,
-      "tags": []
     }
   ],
   "edges": [
     {
       "id": "e_47cae39172a24a2c",
       "from": "tapistree:api/services/note_service.py#NoteService.archive",
-      "to": "unknown:grpc:memory_service.forget",
+      "to": "unknown:symbol:memory_service.forget",
       "kind": "call",
       "label": "forget",
       "schema_id": null,
