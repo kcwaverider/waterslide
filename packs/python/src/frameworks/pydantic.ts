@@ -170,6 +170,13 @@ function classificationOf(right: Node | null): string[] {
   return [...new Set(labels)].sort();
 }
 
+/**
+ * KNOWN LIMITATION: regex over the field's type text, the wrong mechanism for
+ * the same reason as `annotationChain` in language/analyze.ts — a dotted or
+ * aliased `Optional`/`List`/`Dict` is not unwrapped and the field loses its
+ * `ref_schema_id`. Graceful (a missing link, never a wrong one). The fix is the
+ * same: resolve the wrapper's head Node through the import table.
+ */
 function refSchemaId(
   typeText: string,
   models: Map<string, string>,

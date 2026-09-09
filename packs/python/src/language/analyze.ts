@@ -1191,7 +1191,20 @@ function isFirstParameter(def: Definition, name: string): boolean {
   return first !== undefined && parameterName(first).name === name;
 }
 
-/** `Optional[Foo]`, `list[Foo]`, `Foo | None`, `"Foo"` → ["Foo"]; `a.Foo` → ["a","Foo"]. */
+/**
+ * `Optional[Foo]`, `list[Foo]`, `Foo | None`, `"Foo"` → ["Foo"]; `a.Foo` → ["a","Foo"].
+ *
+ * KNOWN LIMITATION: this is regex over annotation text, which is the wrong
+ * mechanism — `typing.Optional[Foo]`, `import typing as t; t.Optional[Foo]` and
+ * `from typing import Optional as Opt` all fall through to null. The miss is
+ * graceful (an untyped receiver, never a wrong edge), which is why it stands:
+ * tapistree has 424 bare generics and no dotted or aliased ones (2026-09-09).
+ * The fix is node-based resolution: carry the `type` Node instead of its text
+ * and resolve the wrapper's head through the import table, accepting both the
+ * `generic_type` and the `subscript`-over-`attribute` shapes, as `isAnnotated`
+ * in frameworks/fastapi/index.ts already does. Do it when typing handling is
+ * next touched, not before.
+ */
 export function annotationChain(annotation: string): string[] | null {
   let t = annotation.trim().replace(/^["']|["']$/g, "");
   for (;;) {
