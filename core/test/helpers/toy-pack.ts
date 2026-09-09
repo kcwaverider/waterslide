@@ -157,7 +157,7 @@ function parseToy(
       kind: "function",
       label: d.name,
       tier: "domain",
-      parent: null, // left for core's fillParents on purpose
+      parent: null, // left for core's completeHierarchy on purpose
       sources: [
         {
           repo,

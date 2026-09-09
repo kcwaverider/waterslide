@@ -1,5 +1,6 @@
 import picomatch from "picomatch";
-import { FIXED_ID_SCOPES } from "../model/enums.js";
+import { byteCompare } from "../canonical.js";
+import { DEFAULT_TIER_BY_KIND, FIXED_ID_SCOPES } from "../model/enums.js";
 import type { Node } from "../model/graph.js";
 import type { WaterslideConfig } from "./config.js";
 
@@ -70,20 +71,118 @@ export function markInfrastructure(
 }
 
 /**
- * Graph model §2.3: the hierarchy derives from folder structure for the POC.
- * The pack sets `parent` where it knows it; core fills a null parent on a
- * `{repo}:{path}#name` node with its module node `{repo}:{path}` when that
- * node exists. Core mints no folder or service nodes.
+ * Graph model §2.3: `parent` is the sole zoom mechanism and the hierarchy
+ * derives from folder structure for the POC, so the chain runs function →
+ * module → directory … → repo. The pack sets `parent` where it knows it and
+ * core fills only null parents:
+ *
+ * - a `{repo}:{path}#name` node gets its module node `{repo}:{path}` when
+ *   that node exists;
+ * - a module with no parent gets the nearest minted directory above it;
+ * - each directory level between a module and the repo root is minted as a
+ *   `module` node `{repo}:{dir}` (§1: a directory is a path, so the module id
+ *   form covers it) with empty `sources` (§2.4, synthetic), the §6.1 default
+ *   tier, and the directory name as label;
+ * - the repo root is `svc:{repo}`, kind `service`, `parent: null` — §1 says a
+ *   locator is non-empty, so `{repo}:` is not an id, and §1's Service row is
+ *   the top of §2.3's chain. It is minted only when no pack already did.
+ *
+ * A directory whose only child is a single directory adds a rung and no
+ * information, so it is not minted and its child attaches to the nearest kept
+ * ancestor: `iOS/Tapistree/Tapistree` hangs off the repo, not off `iOS`.
+ *
+ * Minted nodes are derived from the set of module ids alone and the result is
+ * re-sorted byte-wise by id, so discovery order cannot reach the output. The
+ * chain is a tree by construction: every parent set here is a strict prefix
+ * of the child's path or the repo root.
  */
-export function fillParents(nodes: readonly Node[]): Node[] {
+export function completeHierarchy(nodes: readonly Node[]): Node[] {
   const ids = new Set(nodes.map((n) => n.id));
-  return nodes.map((node) => {
-    if (node.parent !== null) return { ...node };
+  const out: Node[] = nodes.map((n) => ({ ...n }));
+
+  // Modules that need a parent, and the directory tree they imply. A key is
+  // `${repo}:${dir}` ("" for the repo root) — a repo name has no `:` (§1), so
+  // the first colon splits it back; a value maps each child name to whether
+  // it is a directory.
+  const orphans: { node: Node; repo: string; path: string }[] = [];
+  const children = new Map<string, Map<string, boolean>>();
+  const key = (repo: string, dir: string): string => `${repo}:${dir}`;
+  for (const node of out) {
+    if (node.parent !== null || node.id.includes("#")) continue;
+    const path = nodeIdPath(node.id);
+    if (path === null) continue;
+    const repo = node.id.slice(0, node.id.indexOf(":"));
+    orphans.push({ node, repo, path });
+    const segments = path.split("/");
+    for (let i = 0; i < segments.length; i++) {
+      const k = key(repo, segments.slice(0, i).join("/"));
+      let kids = children.get(k);
+      if (kids === undefined) children.set(k, (kids = new Map()));
+      const name = segments[i] as string;
+      // A name seen as both a directory and a file (`a/b` and `a/b/c.py`)
+      // counts as a directory: it has something under it.
+      kids.set(name, (kids.get(name) ?? false) || i < segments.length - 1);
+    }
+  }
+
+  const kept = (repo: string, dir: string): boolean => {
+    if (dir === "") return true;
+    const kids = children.get(key(repo, dir));
+    if (kids === undefined) return false;
+    return !(kids.size === 1 && kids.values().next().value === true);
+  };
+  const parentFor = (repo: string, path: string): string => {
+    let dir = path;
+    for (;;) {
+      const slash = dir.lastIndexOf("/");
+      dir = slash === -1 ? "" : dir.slice(0, slash);
+      if (dir === "") return `svc:${repo}`;
+      if (kept(repo, dir)) return `${repo}:${dir}`;
+    }
+  };
+  const mint = (
+    id: string,
+    kind: "module" | "service",
+    label: string,
+    parent: string | null,
+  ): void => {
+    if (ids.has(id)) return;
+    ids.add(id);
+    out.push({
+      id,
+      kind,
+      label,
+      tier: DEFAULT_TIER_BY_KIND[kind] ?? "domain",
+      parent,
+      sources: [],
+      confidence: "certain",
+      confidence_reason: null,
+      is_entry_point: false,
+      entry_point_kind: null,
+      is_infrastructure: false,
+      tags: [],
+    });
+  };
+
+  for (const k of children.keys()) {
+    const colon = k.indexOf(":");
+    const repo = k.slice(0, colon);
+    const dir = k.slice(colon + 1);
+    if (dir === "") mint(`svc:${repo}`, "service", repo, null);
+    else if (kept(repo, dir)) {
+      const label = dir.slice(dir.lastIndexOf("/") + 1);
+      mint(`${repo}:${dir}`, "module", label, parentFor(repo, dir));
+    }
+  }
+  for (const o of orphans) o.node.parent = parentFor(o.repo, o.path);
+
+  for (const node of out) {
+    if (node.parent !== null) continue;
     const hash = node.id.indexOf("#");
-    if (hash === -1 || nodeIdPath(node.id) === null) return { ...node };
+    if (hash === -1 || nodeIdPath(node.id) === null) continue;
     const moduleId = node.id.slice(0, hash);
-    return ids.has(moduleId) && moduleId !== node.id
-      ? { ...node, parent: moduleId }
-      : { ...node };
-  });
+    if (ids.has(moduleId) && moduleId !== node.id) node.parent = moduleId;
+  }
+
+  return out.sort((a, b) => byteCompare(a.id, b.id));
 }
