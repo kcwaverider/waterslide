@@ -142,7 +142,7 @@
   "id-path-mismatch.json": {
     "code": "E_ID_FORMAT",
     "path": "$.nodes[7].id",
-    "why": "repo-scoped node whose source.path disagrees with the path in its id (invariant 18)"
+    "why": "repo-scoped node none of whose sources[].path is the path in its id (invariant 18)"
   },
   "repo-named-after-scope.json": {
     "code": "E_ID_FORMAT",

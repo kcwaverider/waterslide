@@ -366,7 +366,7 @@ describe("invariant 18: node id format", () => {
     }
   });
 
-  it("rejects a repo-scoped node whose source.repo differs from its scope", () => {
+  it("rejects a repo-scoped node whose sources[].repo differs from its scope", () => {
     const g = load("single-repo-minimal.json");
     const n = g.nodes.find((x) => x.sources.length > 0);
     const span = n?.sources[0];
@@ -414,7 +414,7 @@ describe("repos[] identity (invariants 1, 18, 19)", () => {
       ).toBe(true);
   });
 
-  it("rejects a source.repo that is not in repos[] on nodes, edges and schemas", () => {
+  it("rejects a repo not in repos[] on node spans, edge sources and schema sources", () => {
     for (const coll of ["nodes", "edges", "schemas"] as const) {
       const g = load("derived-ids.json");
       if (coll === "nodes") {
