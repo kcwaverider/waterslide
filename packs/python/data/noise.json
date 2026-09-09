@@ -1,0 +1,77 @@
+{
+  "$comment": "Calls that exist but tell a reader nothing (A10 item 1). Every rule here drops SILENTLY: no diagnostic, because a count of 'you called a string method' trains people to ignore the channel real gaps need. Applied only to a call the resolver could NOT already resolve to an in-file node; an in-file method named `format` still draws. Each list states what it could wrongly drop. Logging is deliberately absent: `utils.logger.logger` is emitted as an alias of `logging.getLogger()`, and dropping stdlib-rooted results after prefix-alias resolution is core's job (A11).",
+  "library_modules": {
+    "$comment": "Third-party helper libraries: constructors, validators, hashers, codecs, drivers. Same mechanism as data/stdlib-modules.json, one level out. Vendors in data/vendors.json are recognised first and are not affected. Could wrongly drop: an in-repo package that shares a name with a listed library — checked against tapistree's source roots (none collide) and asserted by the tapistree gate.",
+    "names": [
+      "aiohttp",
+      "bcrypt",
+      "bson",
+      "dotenv",
+      "fastapi",
+      "httpx",
+      "jose",
+      "mangum",
+      "motor",
+      "numpy",
+      "pydantic",
+      "pymongo",
+      "requests",
+      "starlette"
+    ]
+  },
+  "value_methods": {
+    "$comment": "Methods of builtin values (str, bytes, list, dict, set, datetime) that no domain class plausibly defines. Dropped when they are the last segment of an unresolved reference. Deliberately EXCLUDED because a repository or service class plausibly defines them: get, update, add, remove, pop, clear, copy, find, read, write, close, send, run. Could wrongly drop: an in-repo method named e.g. `format`, `items` or `split` reached through a receiver the pack could not type.",
+    "names": [
+      "append",
+      "capitalize",
+      "casefold",
+      "count",
+      "decode",
+      "encode",
+      "endswith",
+      "extend",
+      "format",
+      "fromhex",
+      "fromkeys",
+      "hex",
+      "index",
+      "insert",
+      "isalpha",
+      "isdigit",
+      "isoformat",
+      "items",
+      "join",
+      "keys",
+      "lower",
+      "lstrip",
+      "replace",
+      "reverse",
+      "rsplit",
+      "rstrip",
+      "setdefault",
+      "sort",
+      "split",
+      "splitlines",
+      "startswith",
+      "strftime",
+      "strip",
+      "title",
+      "upper",
+      "values"
+    ]
+  },
+  "model_methods": {
+    "$comment": "Methods every Pydantic model inherits from its library base. Dropped when the segment before them is a CapWords type name (`models.memory.MemoryDB.dict`). Could wrongly drop: a user class that defines its own `dict()` or `json()`, which shadows a builtin name.",
+    "names": [
+      "copy",
+      "dict",
+      "json",
+      "model_copy",
+      "model_dump",
+      "model_dump_json",
+      "model_validate",
+      "parse_obj",
+      "schema"
+    ]
+  }
+}

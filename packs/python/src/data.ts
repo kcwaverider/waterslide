@@ -80,12 +80,25 @@ export const BuiltinsSchema = z.strictObject({
   names: z.array(z.string()),
 });
 
+export const NoiseTableSchema = z.strictObject({
+  $comment: z.string().optional(),
+  library_modules: BuiltinsSchema,
+  value_methods: BuiltinsSchema,
+  model_methods: BuiltinsSchema,
+});
+export interface NoiseTable {
+  readonly libraryModules: ReadonlySet<string>;
+  readonly valueMethods: ReadonlySet<string>;
+  readonly modelMethods: ReadonlySet<string>;
+}
+
 export interface PackData {
   readonly errorPaths: ErrorPathTable;
   readonly vendors: VendorTable;
   readonly mongo: MongoTable;
   readonly builtins: ReadonlySet<string>;
   readonly stdlibModules: ReadonlySet<string>;
+  readonly noise: NoiseTable;
 }
 
 function loadJson<T>(file: string, schema: z.ZodType<T>): T {
@@ -112,6 +125,14 @@ export function loadPackData(): PackData {
     stdlibModules: new Set(
       loadJson("stdlib-modules.json", BuiltinsSchema).names,
     ),
+    noise: (() => {
+      const t = loadJson("noise.json", NoiseTableSchema);
+      return {
+        libraryModules: new Set(t.library_modules.names),
+        valueMethods: new Set(t.value_methods.names),
+        modelMethods: new Set(t.model_methods.names),
+      };
+    })(),
   };
   return cached;
 }

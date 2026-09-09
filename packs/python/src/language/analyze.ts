@@ -1021,6 +1021,16 @@ function resolveChainImpl(
             uncertainty: null,
           };
       }
+      if (
+        binding.value?.callee.kind === "in_file" &&
+        rest.length > 0 &&
+        returnsBuiltinValue(binding.value.callee.def, scope, file, data)
+      ) {
+        return {
+          kind: "builtin_value",
+          reason: `${rootName} holds the result of ${binding.value.callee.def.qualifiedName}(), annotated ${binding.value.callee.def.returnType ?? ""}, a builtin value`,
+        };
+      }
       const factory = binding.value
         ? calleeQualified(binding.value.callee, file)
         : null;
@@ -1082,6 +1092,43 @@ function resolveChainImpl(
       };
     }
   }
+}
+
+/**
+ * A return annotation that names a builtin or standard-library value —
+ * `-> dict`, `-> List[str]`, `-> Optional[str]`, `-> datetime` — so a call on
+ * the result (`names.get(...)`) is a value operation, not an edge (A10 item 1,
+ * the evidence-based rule: no name table involved).
+ */
+function returnsBuiltinValue(
+  def: Definition,
+  scope: Scope,
+  file: FileContext,
+  data: PackData,
+): boolean {
+  if (def.kind !== "function" || def.returnType === null) return false;
+  let t = def.returnType.trim().replace(/^["']|["']$/g, "");
+  for (;;) {
+    const m = /^(Optional|Annotated)\[(.*)\]$/s.exec(t);
+    if (!m) break;
+    t = (m[2] as string).split(",")[0]?.trim() ?? "";
+  }
+  t = t.replace(/\s*\|\s*None$/, "").replace(/^None\s*\|\s*/, "");
+  if (
+    /^(List|list|Sequence|Iterable|Set|set|Dict|dict|Tuple|tuple|FrozenSet|frozenset|Mapping|deque)\b/.test(
+      t,
+    )
+  )
+    return true;
+  if (/^[A-Za-z_]\w*$/.test(t) && data.builtins.has(t))
+    return lookup(scope, t) === null;
+  if (t === "None") return true;
+  const chain = annotationChain(def.returnType);
+  const resolved = chain ? resolveTypeChain(chain, scope, file) : null;
+  return (
+    resolved !== null &&
+    data.stdlibModules.has(resolved.split(".")[0] as string)
+  );
 }
 
 /** The qualified name of a callee, for naming what a call returned. */
@@ -1152,6 +1199,15 @@ function resolveCallResultImpl(
       root,
       rest: attrs,
       uncertainty: null,
+    };
+  }
+  if (
+    inner.kind === "in_file" &&
+    returnsBuiltinValue(inner.def, scope, file, data)
+  ) {
+    return {
+      kind: "builtin_value",
+      reason: `${inner.def.qualifiedName}() is annotated ${inner.def.returnType ?? ""}, a builtin value`,
     };
   }
   const factory = calleeQualified(inner, file);
