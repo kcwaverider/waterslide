@@ -6,9 +6,9 @@
 > `01-scope.md`. Where a row needs something the model does not have, that row
 > is road map, and it stays road map until a human moves it.
 
-A catalog of the observations waterslide makes legible. Written for two purposes:
-as a check that the graph model already supports each one, and as the answer to
-"why not just use a sequence diagram."
+A catalog of the observations waterslide makes legible. Written for two
+purposes: as a check that the graph model already supports each one, and as the
+answer to "why not just use a sequence diagram."
 
 **None of these are new features.** Every row is derivable from the model as
 specced. Where a row needs something the model doesn't have, it says so and it's
@@ -17,8 +17,8 @@ road map — not a licence to add fields.
 ## Two columns worth reading carefully
 
 - **Flagged** — the tool emits a finding or badge. Small list, all in `06`
-- **Reader-observed** — the tool draws it accurately and a person notices. Most
-  of this document, and per scope §*the hard line* that's deliberate
+- **Reader-observed** — the tool draws it accurately and a person notices.
+  Most of this document, and per scope §*the hard line* that's deliberate
 
 ---
 
