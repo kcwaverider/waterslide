@@ -47,10 +47,23 @@ export type { NodeUpdate, PackPatch } from "@waterslide/core";
 /** The key under which the per-file pass stores its state on the module node. */
 export const PACK_DATA_KEY = "swift";
 
-/** Read the per-file state back out of the module node's `pack_data`. */
+/**
+ * Read the per-file state back.
+ *
+ * TODO(core four-item contract PR: PerFileResult.pack_data, NodeUpdate.kind,
+ * invariant 15, package exports): migrate the state to
+ * `PerFileResult.pack_data` when it lands and stop writing it on the module
+ * node. The file-level slot is cached with the parse output and recomputed by
+ * rePath, so compose sees it on a warm run; module-node pack_data is stripped
+ * after compose and never cached, and it presumes a module node exists. Until
+ * then the module node is the interim carrier; a file-level slot is read
+ * first if one is present.
+ */
 export function stateOf(r: PerFileResult): SwiftFileState | null {
+  const fileLevel = (r as { pack_data?: Record<string, unknown> | null })
+    .pack_data?.[PACK_DATA_KEY];
   const module = r.result.nodes.find((n) => n.id === moduleId(r.repo, r.path));
-  const raw = module?.pack_data?.[PACK_DATA_KEY];
+  const raw = fileLevel ?? module?.pack_data?.[PACK_DATA_KEY];
   if (raw === undefined || raw === null) return null;
   const parsed = SwiftFileStateSchema.safeParse(raw);
   return parsed.success ? parsed.data : null;

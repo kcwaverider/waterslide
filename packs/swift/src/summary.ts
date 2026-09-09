@@ -18,6 +18,46 @@ export function formatSummary(
   report: ComposeReport | null,
 ): string {
   const lines: string[] = [];
+  // What is MISSING comes first: a hole in a 190-entry-point map is invisible
+  // unless the count is the first thing a reader sees (review, second pass).
+  const missing = merged.diagnostics.filter(
+    (d) => d.code === "syntax_error" || d.code === "recognizer_failure",
+  );
+  const flattened = missing.filter((d) =>
+    d.message.startsWith("grammar recovery flattened"),
+  );
+  const skipped = missing.filter((d) =>
+    /contains a syntax error and was skipped/.test(d.message),
+  );
+  const limbViolations = merged.diagnostics.filter(
+    (d) => d.code === "branch_ordinal_limb_mismatch",
+  );
+  if (missing.length > 0 || limbViolations.length > 0) {
+    lines.push("!! MISSING FROM THE MAP");
+    const fileSummaries = missing.filter((d) =>
+      /^\d+ syntax error\(s\)/.test(d.message),
+    );
+    const other =
+      missing.length - flattened.length - skipped.length - fileSummaries.length;
+    lines.push(
+      `   ${String(flattened.length)} type(s) lost to grammar recovery, ${String(skipped.length)} declaration(s) skipped for syntax errors, ${String(fileSummaries.length)} file(s) with syntax errors${other > 0 ? `, ${String(other)} other parse failure(s)` : ""}`,
+    );
+    for (const d of [...flattened, ...skipped])
+      lines.push(
+        `   ${d.path ?? "?"}:${String(d.line ?? 0)}  ${d.message.split(";")[0] ?? d.message}`,
+      );
+    if (limbViolations.length > 0) {
+      lines.push(
+        `   ${String(limbViolations.length)} branch_ordinal_limb_mismatch (numbering bug): ${limbViolations[0]?.path ?? ""}:${String(limbViolations[0]?.line ?? 0)} ${limbViolations[0]?.message ?? ""}`,
+      );
+    }
+    lines.push("");
+  } else {
+    lines.push(
+      "nothing missing: no syntax errors, no flattened types, no ordinal/limb mismatches",
+    );
+    lines.push("");
+  }
   const nodesByKind = new Map<string, number>();
   let entryPoints = 0;
   for (const n of merged.nodes) {

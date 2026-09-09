@@ -272,6 +272,19 @@ async function main(): Promise<void> {
     console.log(formatSummary(assembled.merged, assembled.report));
     console.log("");
   }
+  const limbViolations = assembled.merged.diagnostics.filter(
+    (d) => d.code === "branch_ordinal_limb_mismatch",
+  );
+  if (limbViolations.length > 0) {
+    console.log(
+      `same-limb check: FAILED, ${String(limbViolations.length)} (exclusive_group, branch_ordinal) pair(s) drawn from more than one limb`,
+    );
+    process.exitCode = 1;
+  } else {
+    console.log(
+      `same-limb check: OK (${String(pending.length)} shared ordinal(s), every one from a single limb)`,
+    );
+  }
   if (real.length === 0) {
     console.log(
       `validator: OK (${String(assembled.graph.nodes.length)} nodes, ${String(assembled.graph.edges.length)} edges, ${String(assembled.graph.schemas.length)} schemas) in ${String(Date.now() - started)} ms`,

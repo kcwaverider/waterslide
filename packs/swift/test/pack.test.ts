@@ -326,6 +326,29 @@ describe("branch detection and the error-path table (§6)", () => {
     expect(doLimb.every((e) => !e.is_error_path)).toBe(true);
   });
 
+  it("never shares an ordinal across limbs: same (group, ordinal) implies same condition and no mismatch diagnostic", async () => {
+    const r = await pack.parse("k", "Kitchen.swift", kitchen, {});
+    expect(
+      r.diagnostics.some((d) => d.code === "branch_ordinal_limb_mismatch"),
+    ).toBe(false);
+    const byPair = new Map<string, Set<string>>();
+    for (const e of r.edges) {
+      if (e.exclusive_group === null) continue;
+      const key = `${e.exclusive_group} ${String(e.branch_ordinal)}`;
+      const s = byPair.get(key) ?? new Set<string>();
+      s.add(JSON.stringify(e.condition));
+      byPair.set(key, s);
+    }
+    expect(byPair.size).toBeGreaterThan(0);
+    for (const s of byPair.values()) expect(s.size).toBe(1);
+    // The shared case exists in the fixture: two edges in upload's do limb.
+    expect(
+      [...byPair.keys()].some((k) =>
+        k.endsWith("NoteService.upload/branch[0] 0"),
+      ),
+    ).toBe(true);
+  });
+
   it("produces no group for a branch point whose edges sit in one limb only", async () => {
     const r = await pack.parse("k", "Kitchen.swift", kitchen, {});
     const reload = r.edges.find((e) =>

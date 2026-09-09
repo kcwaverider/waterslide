@@ -9,7 +9,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Node } from "web-tree-sitter";
-import type { CallSite, FileContext, Owner } from "../context.js";
+import {
+  diag,
+  type CallSite,
+  type FileContext,
+  type Owner,
+} from "../context.js";
 import { packRoot } from "../parser.js";
 import { childrenOfType, contains, lineStart } from "../tree.js";
 
@@ -310,8 +315,19 @@ function isErrorPath(constructs: Set<string>): {
   return { value: from.length > 0, from };
 }
 
-/** Assign fork fields to every call site of every owner. */
+/** Diagnostic code for the property the dropped uniqueness clause approximated. */
+export const SAME_LIMB_VIOLATION = "branch_ordinal_limb_mismatch";
+
+/**
+ * Assign fork fields to every call site of every owner.
+ *
+ * Invariant checked at emit time (review, second pass): within an
+ * exclusive_group, every edge sharing a branch_ordinal originates from the
+ * same limb. A violation is a numbering bug in this file and is reported as an
+ * error diagnostic naming the group, ordinal and the two limbs.
+ */
 export function assignBranches(ctx: FileContext): void {
+  const limbsByOrdinal = new Map<string, { limb: Limb; line: number }>();
   for (const owner of ctx.owners) {
     if (owner.body === null) continue;
     const sites = ctx.sites.filter((s) => s.owner === owner);
@@ -358,6 +374,19 @@ export function assignBranches(ctx: FileContext): void {
       if (g !== null) {
         edge.exclusive_group = `${owner.node_id}/branch[${String(g.k)}]`;
         edge.branch_ordinal = g.ordinal;
+        const key = `${edge.exclusive_group} ${String(g.ordinal)}`;
+        const seen = limbsByOrdinal.get(key);
+        if (seen === undefined) {
+          limbsByOrdinal.set(key, { limb: g.limb, line: lineStart(site.call) });
+        } else if (seen.limb !== g.limb) {
+          diag(
+            ctx,
+            "error",
+            SAME_LIMB_VIOLATION,
+            `edges at lines ${String(seen.line)} and ${String(lineStart(site.call))} share ${edge.exclusive_group} ordinal ${String(g.ordinal)} but come from different limbs (\`${seen.limb.condition}\` vs \`${g.limb.condition}\`)`,
+            lineStart(site.call),
+          );
+        }
       }
       const ep = isErrorPath(constructsIn(chosen.limb, chosen.bp, owner));
       edge.is_error_path = ep.value;
