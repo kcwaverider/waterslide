@@ -1,0 +1,690 @@
+/**
+ * Swift language recognizer: declarations (parser §7 "Types and functions",
+ * "Import table", plus typealias and extensions per §3.5).
+ *
+ * Produces type and function nodes, the module node, provides, Codable
+ * schemas, and the type/function facts compose needs. Same-file extensions
+ * are merged here; cross-file extensions are recorded as facts for compose.
+ */
+import {
+  DEFAULT_TIER_BY_KIND,
+  type Field,
+  type NodeKind,
+  type PayloadSchema,
+  type SourceSpan,
+} from "@waterslide/core";
+import type { Node } from "web-tree-sitter";
+import {
+  diag,
+  hasErrorInside,
+  type FileContext,
+  type Owner,
+  type Param,
+  type PropertyDecl,
+  type TypeDecl,
+} from "../context.js";
+import { basename, codeId, schemaId, spanHash, visibilityOf } from "../ids.js";
+import type { FunctionFact, PropertyFact } from "../state.js";
+import {
+  TYPE_NODE_KINDS,
+  anyChildrenOfType,
+  childrenOfType,
+  fieldChildren,
+  firstChildOfType,
+  isCapitalized,
+  lineEnd,
+  lineStart,
+  typeRef,
+  type TypeRef,
+} from "../tree.js";
+
+const DECLARATION_KEYWORDS = ["class", "struct", "enum", "actor", "extension"];
+const CODABLE = new Set(["Codable", "Decodable", "Encodable"]);
+const VIEW_LIKE = new Set(["View", "ViewModifier", "Scene", "Widget"]);
+
+export function span(ctx: FileContext, n: Node): SourceSpan {
+  return {
+    repo: ctx.repo,
+    path: ctx.path,
+    line_start: lineStart(n),
+    line_end: lineEnd(n),
+    hash: spanHash(n.text),
+  };
+}
+
+function modifierTexts(decl: Node): string[] {
+  const mods = firstChildOfType(decl, "modifiers");
+  if (mods === null) return [];
+  return mods.children.filter((c): c is Node => c !== null).map((c) => c.text);
+}
+
+export function visibilityModifier(decl: Node): string | null {
+  const mods = firstChildOfType(decl, "modifiers");
+  if (mods === null) return null;
+  for (const c of childrenOfType(mods, "visibility_modifier")) {
+    if (!c.text.includes("(")) return c.text;
+  }
+  return null;
+}
+
+function isStatic(decl: Node): boolean {
+  return modifierTexts(decl).some((t) => t === "static" || t === "class");
+}
+
+function hasAttribute(decl: Node, name: string): boolean {
+  const mods = firstChildOfType(decl, "modifiers");
+  if (mods === null) return false;
+  return childrenOfType(mods, "attribute").some(
+    (a) => a.text === `@${name}` || a.text.startsWith(`@${name}(`),
+  );
+}
+
+function conformancesOf(decl: Node): string[] {
+  const out: string[] = [];
+  for (const spec of childrenOfType(decl, "inheritance_specifier")) {
+    const t =
+      spec.childForFieldName("inherits_from") ?? spec.namedChildren[0] ?? null;
+    if (t !== null) out.push(typeRef(t).base);
+  }
+  return out;
+}
+
+function returnTypeOf(decl: Node): TypeRef | null {
+  // Both the name and the return type sit under the `name` field; the return
+  // type is the child whose node kind is a type.
+  for (const c of fieldChildren(decl, "name")) {
+    if (TYPE_NODE_KINDS.has(c.type)) return typeRef(c);
+  }
+  return null;
+}
+
+function paramsOf(decl: Node): Param[] {
+  const out: Param[] = [];
+  for (const p of childrenOfType(decl, "parameter")) {
+    const external = p.childForFieldName("external_name");
+    const named = fieldChildren(p, "name");
+    const idents = named.filter((c) => c.type === "simple_identifier");
+    const types = named.filter((c) => TYPE_NODE_KINDS.has(c.type));
+    const internal = idents[0]?.text ?? "_";
+    const type = types[0] ?? null;
+    // `_ name:` has no label; `label name:` has one; `name:` labels itself.
+    const label =
+      external !== null
+        ? external.text === "_"
+          ? null
+          : external.text
+        : internal;
+    out.push({
+      label,
+      name: internal,
+      type: type === null ? null : typeRef(type),
+    });
+  }
+  return out;
+}
+
+function propertyDecls(decl: Node): PropertyDecl[] {
+  const out: PropertyDecl[] = [];
+  const annotation = firstChildOfType(decl, "type_annotation");
+  const type = annotation === null ? null : typeRef(annotation);
+  const init = decl.childForFieldName("value");
+  const computed = decl.childForFieldName("computed_value");
+  const staticProp = isStatic(decl);
+  for (const pattern of fieldChildren(decl, "name")) {
+    for (const id of pattern.descendantsOfType("simple_identifier")) {
+      out.push({
+        name: id.text,
+        type,
+        is_static: staticProp,
+        is_stored: computed === null,
+        init,
+        decl,
+      });
+    }
+  }
+  return out;
+}
+
+function newType(
+  ctx: FileContext,
+  decl: Node,
+  qualified: string,
+  kind: TypeDecl["declaration_kind"],
+  extensionTarget: string | null,
+): TypeDecl {
+  const conformances = conformancesOf(decl);
+  return {
+    qualified,
+    node_id: codeId(ctx.repo, ctx.path, qualified),
+    decl,
+    body: decl.childForFieldName("body"),
+    declaration_kind: kind,
+    conformances,
+    extension_target: extensionTarget,
+    merged_into: null,
+    properties: [],
+    members: new Map(),
+    has_explicit_init: false,
+    is_view: conformances.some((c) => VIEW_LIKE.has(c)),
+    is_app: conformances.includes("App"),
+    is_codable: conformances.some((c) => CODABLE.has(c)),
+    fact: null,
+    ext_fact: null,
+  };
+}
+
+interface RawOwner {
+  decl: Node;
+  form: "function" | "init" | "computed";
+  member: string;
+  type: TypeDecl | null;
+  prefix: string;
+}
+
+function skipWithSyntaxError(ctx: FileContext, n: Node): boolean {
+  if (!hasErrorInside(ctx, n)) return false;
+  diag(
+    ctx,
+    "error",
+    "syntax_error",
+    `declaration at line ${String(lineStart(n))} contains a syntax error and was skipped`,
+    lineStart(n),
+  );
+  return true;
+}
+
+/** First pass: find every declaration, tracking nesting for qualified names. */
+export function collectDeclarations(ctx: FileContext): void {
+  const raw: RawOwner[] = [];
+  // Pre-count functions per (prefix, member) so a nested declaration inside an
+  // overloaded function can be named after the disambiguated function.
+  const overloadCounts = new Map<string, number>();
+  const overloadSeen = new Map<string, number>();
+  const disambiguated = new Map<number, string>();
+  const precount = (n: Node, prefix: string): void => {
+    if (n.type === "class_declaration" || n.type === "protocol_declaration") {
+      const keyword =
+        n.type === "protocol_declaration"
+          ? "protocol"
+          : (anyChildrenOfType(n, DECLARATION_KEYWORDS)[0]?.text ?? "class");
+      const name = n.childForFieldName("name")?.text ?? "<anonymous>";
+      const q =
+        keyword === "extension"
+          ? name
+          : prefix === ""
+            ? name
+            : `${prefix}.${name}`;
+      const body = n.childForFieldName("body");
+      if (body !== null)
+        for (const c of body.namedChildren) if (c !== null) precount(c, q);
+      return;
+    }
+    if (n.type === "function_declaration" || n.type === "init_declaration") {
+      const member =
+        n.type === "init_declaration"
+          ? "init"
+          : (n.childForFieldName("name")?.text ?? "<anonymous>");
+      const key = `${prefix} ${member}`;
+      overloadCounts.set(key, (overloadCounts.get(key) ?? 0) + 1);
+      const body = n.childForFieldName("body");
+      if (body !== null)
+        precount(body, prefix === "" ? member : `${prefix}.${member}`);
+      return;
+    }
+    if (n.type === "property_declaration") {
+      const computed = n.childForFieldName("computed_value");
+      const names = fieldChildren(n, "name").flatMap((p) =>
+        p.descendantsOfType("simple_identifier").map((i) => i.text),
+      );
+      if (computed !== null && names.length === 1)
+        precount(computed, `${prefix}.${names[0] ?? ""}`);
+      return;
+    }
+    for (const c of n.namedChildren) if (c !== null) precount(c, prefix);
+  };
+  precount(ctx.root, "");
+  /** The name a function is known by, decided at first sight using the pre-count. */
+  const functionName = (n: Node, prefix: string, member: string): string => {
+    const key = `${prefix} ${member}`;
+    const base = prefix === "" ? member : `${prefix}.${member}`;
+    if ((overloadCounts.get(key) ?? 0) <= 1) return base;
+    const labels = paramsOf(n)
+      .map((p) => `${p.label ?? "_"}:`)
+      .join("");
+    const labelled = `${base}(${labels})`;
+    const k = overloadSeen.get(labelled) ?? 0;
+    overloadSeen.set(labelled, k + 1);
+    return `${labelled}[${String(k)}]`;
+  };
+
+  const collectMembers = (decl: Node, t: TypeDecl, qualified: string): void => {
+    const body = decl.childForFieldName("body");
+    if (body === null) return;
+    for (const m of body.namedChildren) {
+      if (m === null) continue;
+      if (m.type === "property_declaration") {
+        if (hasErrorInside(ctx, m)) continue;
+        const props = propertyDecls(m);
+        t.properties.push(...props);
+        const computed = m.childForFieldName("computed_value");
+        const only = props[0];
+        if (computed !== null && props.length === 1 && only !== undefined) {
+          raw.push({
+            decl: m,
+            form: "computed",
+            member: only.name,
+            type: t,
+            prefix: qualified,
+          });
+          walk(computed, `${qualified}.${only.name}`, null);
+        }
+        continue;
+      }
+      walk(m, qualified, t);
+    }
+  };
+
+  const walk = (n: Node, prefix: string, type: TypeDecl | null): void => {
+    if (n.type === "class_declaration" || n.type === "protocol_declaration") {
+      // An error inside one member skips that member, not the type (§9: emit
+      // what was understood). Only a header that failed to parse is absent.
+      const keyword =
+        n.type === "protocol_declaration"
+          ? "protocol"
+          : (anyChildrenOfType(n, DECLARATION_KEYWORDS)[0]?.text ?? "class");
+      const nameNode = n.childForFieldName("name");
+      const name = nameNode === null ? "<anonymous>" : nameNode.text;
+      if (keyword === "extension") {
+        const t = newType(ctx, n, name, "extension", name);
+        ctx.extensions.push(t);
+        collectMembers(n, t, name);
+        return;
+      }
+      const qualified = prefix === "" ? name : `${prefix}.${name}`;
+      const t = newType(
+        ctx,
+        n,
+        qualified,
+        keyword as TypeDecl["declaration_kind"],
+        null,
+      );
+      ctx.types.push(t);
+      ctx.declared.set(qualified, t);
+      collectMembers(n, t, qualified);
+      return;
+    }
+    if (n.type === "function_declaration" || n.type === "init_declaration") {
+      if (skipWithSyntaxError(ctx, n)) return;
+      const member =
+        n.type === "init_declaration"
+          ? "init"
+          : (n.childForFieldName("name")?.text ?? "<anonymous>");
+      raw.push({
+        decl: n,
+        form: n.type === "init_declaration" ? "init" : "function",
+        member,
+        type,
+        prefix,
+      });
+      const qualified = functionName(n, prefix, member);
+      disambiguated.set(n.id, qualified);
+      if (type !== null && n.type === "init_declaration") {
+        type.has_explicit_init = true;
+      }
+      const body = n.childForFieldName("body");
+      if (body !== null) {
+        walk(body, qualified, null);
+      }
+      return;
+    }
+    for (const c of n.namedChildren) {
+      if (c !== null) walk(c, prefix, type);
+    }
+  };
+
+  walk(ctx.root, "", null);
+
+  const qualifiedFor = new Map<RawOwner, string>();
+  for (const r of raw) {
+    const known = disambiguated.get(r.decl.id);
+    if (known !== undefined) {
+      qualifiedFor.set(r, known);
+      continue;
+    }
+    // Computed properties cannot be overloaded; their name is the plain form.
+    qualifiedFor.set(r, r.prefix === "" ? r.member : `${r.prefix}.${r.member}`);
+  }
+
+  for (const r of raw) {
+    const qualified = qualifiedFor.get(r) ?? r.member;
+    const body =
+      r.form === "computed"
+        ? r.decl.childForFieldName("computed_value")
+        : r.decl.childForFieldName("body");
+    let returnType: TypeRef | null;
+    if (r.form === "computed") {
+      const ann = firstChildOfType(r.decl, "type_annotation");
+      returnType = ann === null ? null : typeRef(ann);
+    } else {
+      returnType = returnTypeOf(r.decl);
+    }
+    const owner: Owner = {
+      node_id: codeId(ctx.repo, ctx.path, qualified),
+      qualified,
+      member: r.member,
+      form: r.form,
+      decl: r.decl,
+      body,
+      owner_type: r.type,
+      is_static: isStatic(r.decl),
+      params: r.form === "computed" ? [] : paramsOf(r.decl),
+      return_type: returnType,
+      fact: null,
+    };
+    ctx.owners.push(owner);
+    ctx.ownersByNode.set(r.decl.id, owner);
+    if (r.type !== null) {
+      const list = r.type.members.get(r.member);
+      if (list === undefined) r.type.members.set(r.member, [owner]);
+      else list.push(owner);
+    }
+  }
+
+  // Same-file extensions merge into the declared type.
+  for (const ext of ctx.extensions) {
+    const target = ctx.declared.get(ext.extension_target ?? "");
+    if (target === undefined) continue;
+    ext.merged_into = target;
+    target.properties.push(...ext.properties);
+    if (ext.conformances.some((c) => CODABLE.has(c))) target.is_codable = true;
+    for (const [name, owners] of ext.members) {
+      const list = target.members.get(name);
+      if (list === undefined) target.members.set(name, [...owners]);
+      else list.push(...owners);
+      for (const o of owners) o.owner_type = target;
+    }
+  }
+}
+
+function kindOfType(t: TypeDecl): NodeKind {
+  return t.is_view ? "ui_view" : "class";
+}
+
+/** `= Foo()` or `= Foo.shared` names Foo; literals name their stdlib type. */
+function inferredInitType(init: Node | null): string | null {
+  if (init === null) return null;
+  switch (init.type) {
+    case "line_string_literal":
+    case "multi_line_string_literal":
+      return "String";
+    case "integer_literal":
+      return "Int";
+    case "real_literal":
+      return "Double";
+    case "boolean_literal":
+      return "Bool";
+    case "call_expression": {
+      const callee = init.namedChildren[0];
+      if (
+        callee !== null &&
+        callee !== undefined &&
+        callee.type === "simple_identifier" &&
+        isCapitalized(callee.text)
+      ) {
+        return callee.text;
+      }
+      return null;
+    }
+    case "navigation_expression": {
+      const target = init.childForFieldName("target");
+      const suffix = init.childForFieldName("suffix");
+      if (
+        target !== null &&
+        suffix !== null &&
+        target.type === "simple_identifier" &&
+        isCapitalized(target.text) &&
+        suffix.text === ".shared"
+      ) {
+        return target.text;
+      }
+      return null;
+    }
+    default:
+      return null;
+  }
+}
+
+function fieldTypeText(p: PropertyDecl): string {
+  if (p.type !== null) return p.type.text;
+  return inferredInitType(p.init) ?? p.init?.text ?? "";
+}
+
+function schemaFor(ctx: FileContext, t: TypeDecl): PayloadSchema {
+  const fields: Field[] = [];
+  for (const p of t.properties) {
+    if (p.is_static || !p.is_stored) continue;
+    const base = p.type?.base ?? null;
+    const ref = base === null ? undefined : ctx.declared.get(base);
+    fields.push({
+      name: p.name,
+      type: fieldTypeText(p),
+      optional: (p.type?.optional ?? false) || p.init !== null,
+      classification: [],
+      ref_schema_id:
+        ref !== undefined && ref.is_codable
+          ? schemaId(ctx.repo, ctx.path, ref.qualified)
+          : null,
+    });
+  }
+  return {
+    id: schemaId(ctx.repo, ctx.path, t.qualified),
+    name: t.qualified,
+    source: {
+      repo: ctx.repo,
+      path: ctx.path,
+      line_start: lineStart(t.decl),
+      line_end: lineEnd(t.decl),
+    },
+    confidence: "certain",
+    confidence_reason: null,
+    fields,
+  };
+}
+
+function propertyFacts(props: PropertyDecl[]): PropertyFact[] {
+  return props.map((p) => ({
+    name: p.name,
+    type: p.type?.base ?? inferredInitType(p.init),
+    is_static: p.is_static,
+    is_stored: p.is_stored,
+  }));
+}
+
+export function ownerFact(o: Owner): FunctionFact {
+  return {
+    node_id: o.node_id,
+    qualified: o.qualified,
+    owner_type: o.owner_type?.qualified ?? null,
+    member: o.member,
+    is_static: o.is_static,
+    form:
+      o.form === "init"
+        ? "init"
+        : o.form === "computed"
+          ? "computed"
+          : "function",
+    params: o.params.map((p) => ({
+      label: p.label,
+      name: p.name,
+      type: p.type?.base ?? null,
+    })),
+    return_type: o.return_type?.base ?? null,
+    url_constructions: [],
+    forwards: [],
+    sends_request: false,
+    property_assignments: [],
+  };
+}
+
+/** Second pass: emit nodes, provides, schemas and facts for what was collected. */
+export function emitDeclarations(ctx: FileContext): void {
+  const lines = ctx.content.split("\n");
+  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+  ctx.nodes.push({
+    id: ctx.module_id,
+    kind: "module",
+    label: basename(ctx.path),
+    tier: DEFAULT_TIER_BY_KIND.module ?? "domain",
+    parent: null,
+    sources: [
+      {
+        repo: ctx.repo,
+        path: ctx.path,
+        line_start: 1,
+        line_end: Math.max(1, lines.length),
+        hash: spanHash(ctx.content),
+      },
+    ],
+    confidence: "certain",
+    confidence_reason: null,
+    is_entry_point: false,
+    entry_point_kind: null,
+    is_infrastructure: false,
+    tags: [],
+  });
+
+  for (const t of ctx.types) {
+    const kind = kindOfType(t);
+    const spans = [span(ctx, t.decl)];
+    for (const ext of ctx.extensions) {
+      if (ext.merged_into === t) spans.push(span(ctx, ext.decl));
+    }
+    const dot = t.qualified.lastIndexOf(".");
+    const parentQualified = dot < 0 ? null : t.qualified.slice(0, dot);
+    const parentDecl =
+      parentQualified === null
+        ? null
+        : (ctx.declared.get(parentQualified) ??
+          ctx.owners.find((o) => o.qualified === parentQualified) ??
+          null);
+    const isMain = hasAttribute(t.decl, "main");
+    ctx.nodes.push({
+      id: t.node_id,
+      kind,
+      label: t.qualified,
+      tier: DEFAULT_TIER_BY_KIND[kind] ?? "domain",
+      parent: parentDecl === null ? ctx.module_id : parentDecl.node_id,
+      sources: spans,
+      confidence: "certain",
+      confidence_reason: null,
+      is_entry_point: isMain,
+      entry_point_kind: isMain ? "app_launch" : null,
+      is_infrastructure: false,
+      tags: [],
+    });
+    ctx.provides.push({
+      name: t.qualified,
+      node_id: t.node_id,
+      visibility: visibilityOf(visibilityModifier(t.decl)),
+      scope: "global",
+      scope_path: null,
+    });
+    const isCodable = t.is_codable && t.declaration_kind !== "protocol";
+    if (isCodable) ctx.schemas.push(schemaFor(ctx, t));
+    t.fact = {
+      qualified: t.qualified,
+      node_id: t.node_id,
+      declaration_kind:
+        t.declaration_kind === "extension" ? "struct" : t.declaration_kind,
+      conformances: t.conformances,
+      properties: propertyFacts(t.properties),
+      has_explicit_init: t.has_explicit_init,
+      is_codable: isCodable,
+      schema_id: isCodable ? schemaId(ctx.repo, ctx.path, t.qualified) : null,
+    };
+  }
+
+  for (const o of ctx.owners) {
+    if (o.form === "handler" || o.form === "type" || o.form === "module")
+      continue;
+    const type = o.owner_type;
+    // A cross-file extension member has no parent yet: compose sets it (item 2).
+    const parent =
+      type === null
+        ? ctx.module_id
+        : type.declaration_kind === "extension"
+          ? null
+          : type.node_id;
+    ctx.nodes.push({
+      id: o.node_id,
+      kind: "function",
+      label: o.qualified,
+      tier: DEFAULT_TIER_BY_KIND.function ?? "domain",
+      parent,
+      sources: [span(ctx, o.decl)],
+      confidence: "certain",
+      confidence_reason: null,
+      is_entry_point: false,
+      entry_point_kind: null,
+      is_infrastructure: false,
+      tags: [],
+    });
+    const visibility = visibilityOf(
+      visibilityModifier(o.decl) ??
+        (type === null ? null : visibilityModifier(type.decl)),
+    );
+    ctx.provides.push({
+      name: o.qualified,
+      node_id: o.node_id,
+      visibility,
+      scope: "global",
+      scope_path: null,
+    });
+    // Overloads also answer to the plain `Type.member` name, so a reference
+    // to it fans out to every candidate (parser §4.3) rather than picking one.
+    const plain = type === null ? o.member : `${type.qualified}.${o.member}`;
+    if (plain !== o.qualified) {
+      ctx.provides.push({
+        name: plain,
+        node_id: o.node_id,
+        visibility,
+        scope: "global",
+        scope_path: null,
+      });
+    }
+    o.fact = ownerFact(o);
+  }
+
+  // Cross-file extensions: no type node here; record the fact for compose.
+  for (const ext of ctx.extensions) {
+    if (ext.merged_into !== null) continue;
+    const members = ctx.owners
+      .filter((o) => o.owner_type === ext && o.form !== "type")
+      .sort((a, b) => a.decl.startIndex - b.decl.startIndex);
+    ext.ext_fact = {
+      type_name: ext.extension_target ?? ext.qualified,
+      span: span(ctx, ext.decl),
+      conformances: ext.conformances,
+      member_ids: members.map((m) => m.node_id),
+      functions: members.map((m) => m.fact ?? ownerFact(m)),
+      properties: propertyFacts(ext.properties),
+    };
+  }
+}
+
+export function collectImports(ctx: FileContext): void {
+  for (const imp of childrenOfType(ctx.root, "import_declaration")) {
+    const id = firstChildOfType(imp, "identifier");
+    if (id !== null) ctx.imports.push(id.text);
+  }
+  for (const ta of ctx.root.descendantsOfType("typealias_declaration")) {
+    const names = fieldChildren(ta, "name");
+    const alias = names.find((c) => c.type === "type_identifier");
+    const target =
+      names.find((c) => TYPE_NODE_KINDS.has(c.type)) ??
+      ta.childForFieldName("value");
+    if (alias !== undefined && target !== null && target !== undefined) {
+      ctx.typealiases.set(alias.text, typeRef(target).base);
+    }
+  }
+}

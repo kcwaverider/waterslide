@@ -1,0 +1,42 @@
+{
+  "$comment": "Swift is_error_path construct table, parser pipeline §6.2. Data, not code (handoff §2). The recognizer computes which constructs a branch limb contains and looks each one up here; a limb is an error path when any present construct maps to true. Detection is from branch shape, never from naming.",
+  "language": "swift",
+  "constructs": {
+    "guard_else": {
+      "is_error_path": true,
+      "note": "guard ... else { } — the else limb"
+    },
+    "throw": {
+      "is_error_path": true,
+      "note": "throw anywhere in the limb"
+    },
+    "catch": {
+      "is_error_path": true,
+      "note": "catch block. True by default; a handler that retries is arguably the happy path (parser §10). The confidence_reason records the default."
+    },
+    "return_nil": {
+      "is_error_path": true,
+      "note": "return nil from an optional-returning function"
+    },
+    "early_return": {
+      "is_error_path": true,
+      "note": "return where the enclosing body continues below the branch point"
+    },
+    "fatal_error": {
+      "is_error_path": true,
+      "note": "fatalError / preconditionFailure: the limb terminates the process"
+    },
+    "if_limb": { "is_error_path": false, "note": "if limb that continues" },
+    "else_limb": {
+      "is_error_path": false,
+      "note": "else limb that continues"
+    },
+    "guard_continue": {
+      "is_error_path": false,
+      "note": "the code after a guard, reached when its condition holds"
+    },
+    "switch_case": { "is_error_path": false },
+    "do_body": { "is_error_path": false },
+    "ternary_limb": { "is_error_path": false }
+  }
+}
