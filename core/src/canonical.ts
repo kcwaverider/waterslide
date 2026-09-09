@@ -30,13 +30,27 @@ const nfcOrNull = (s: string | null): string | null =>
 const sortedStrings = (xs: readonly string[]): string[] =>
   xs.map(nfc).sort(byteCompare);
 
-/** §7.2: `sources` sorted by repo, then path (byte-wise), then line_start. */
+/**
+ * §7.2: `sources` sorted by repo, then path (byte-wise), then line_start, then
+ * line_end (null first), then hash (byte-wise). The key is total on purpose:
+ * Array.sort is stable, so any tie would preserve pack emission order and the
+ * same graph would serialize to different bytes.
+ */
 export function spanCompare(a: SourceSpan, b: SourceSpan): number {
   return (
     byteCompare(a.repo, b.repo) ||
     byteCompare(a.path, b.path) ||
-    a.line_start - b.line_start
+    a.line_start - b.line_start ||
+    compareNullableInt(a.line_end, b.line_end) ||
+    byteCompare(a.hash, b.hash)
   );
+}
+
+function compareNullableInt(a: number | null, b: number | null): number {
+  if (a === null && b === null) return 0;
+  if (a === null) return -1;
+  if (b === null) return 1;
+  return a - b;
 }
 
 function canonicalSpan(s: SourceSpan): SourceSpan {

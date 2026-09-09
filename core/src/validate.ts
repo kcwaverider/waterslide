@@ -15,7 +15,7 @@ import {
 } from "./model/graph.js";
 
 /**
- * The validator — handoff §5, invariants 1–20, plus the loud version check
+ * The validator — every invariant in the handoff §5 table, plus the loud version check
  * (§5.2) and the explicit shape (graph model §7.3).
  *
  * The caller names the shape. There is no default: an unlabelled call is a type
@@ -218,7 +218,7 @@ function mapIssue(issue: z.core.$ZodIssue, shape: GraphShape): ValidationError {
 }
 
 // ---------------------------------------------------------------------------
-// Semantic invariants — handoff §5, rows 1–4, 6–10, 13–20.
+// Semantic invariants — the handoff §5 table, minus the rows Zod covers (5, 11, 12).
 // ---------------------------------------------------------------------------
 
 function checkInvariants(
@@ -312,8 +312,8 @@ function checkInvariants(
         `parent "${node.parent}" does not resolve to a node`,
       );
     }
-    // 6. Non-certain → reason.
-    checkReason(node, p, err);
+    // 6. Non-certain → reason. Tombstones are covered by 22, which subsumes this.
+    if (node.kind !== "tombstone") checkReason(node, p, err);
     // 7. Entry point → kind.
     if (node.is_entry_point && node.entry_point_kind === null) {
       err(
@@ -505,7 +505,15 @@ function checkInvariants(
     });
   });
 
-  return errors;
+  // One defect, one error: a check that fires identically more than once for the
+  // same location (two foreign-repo spans on one node, say) reports it once.
+  const seen = new Set<string>();
+  return errors.filter((e) => {
+    const key = `${e.code}@${e.path}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function indexUnique<T extends { id: string }>(
@@ -688,7 +696,7 @@ function checkCanonicalOrder(
         err(
           "E_CANONICAL_ORDER",
           `$.nodes[${String(i)}].sources[${String(j)}]`,
-          `sources are not in canonical order: sort by repo, then path, then line_start (graph model §7.2)`,
+          `sources are not in canonical order: sort by repo, path, line_start, line_end (null first), hash (graph model §7.2)`,
         );
         break;
       }
