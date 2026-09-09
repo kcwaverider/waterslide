@@ -165,11 +165,13 @@ export function buildViewerHtml(
 <title>${escapeHtml(title)}</title>
 <style>
   html, body { margin: 0; height: 100%; font: 13px system-ui, sans-serif; background: #fff; color: #222; }
+  body { display: flex; flex-direction: column; overflow: hidden; }
+  #main { flex: 1; position: relative; display: flex; min-height: 0; }
   #bar { display: flex; gap: 12px; align-items: center; padding: 8px 12px; border-bottom: 1px solid #eee; }
   #bar2 { display: flex; gap: 16px; align-items: center; padding: 5px 12px; border-bottom: 1px solid #ddd; background: #fafafa; flex-wrap: wrap; }
   #bar h1 { font-size: 14px; margin: 0; }
   #status { color: #555; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #sidebar { position: absolute; top: 72px; bottom: 0; left: 0; width: 232px; overflow: auto; border-right: 1px solid #ddd; background: #fafafa; padding: 8px; box-sizing: border-box; }
+  #sidebar { flex: 0 0 232px; overflow: auto; border-right: 1px solid #ddd; background: #fafafa; padding: 8px; box-sizing: border-box; }
   #sidebar h3 { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: #777; margin: 12px 4px 4px; }
   #sidebar .entry { display: block; width: 100%; text-align: left; border: none; background: none; padding: 6px 8px; border-radius: 6px; font: inherit; cursor: pointer; color: #222; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #sidebar .entry::before { content: "▶ "; color: #999; }
@@ -183,7 +185,7 @@ export function buildViewerHtml(
   #controls button:disabled { color: #aaa; cursor: default; }
   #controls label { font-size: 12px; color: #555; display: flex; align-items: center; gap: 3px; }
   #hide-unresolved-label { font-weight: 600; color: #333; }
-  #stage { position: absolute; top: 72px; bottom: 0; left: 232px; right: 0; }
+  #stage { flex: 1; position: relative; min-width: 0; }
   /* Flow mode (§5.2): outside the blast radius dims; nothing is hidden. */
   svg.flow .node.dim, svg.flow .edge.dim, svg.flow .badge-holder.dim { opacity: .18; }
   /* §7.5: the untravelled side of a fork is drawn, dimmed. */
@@ -194,7 +196,7 @@ export function buildViewerHtml(
   .edge.travelled.broken > path:first-of-type { stroke: hsl(0 72% 42%); }
   .node.visited > rect:first-of-type { stroke-width: 2.4; stroke: #1d1d1f; }
   .object { transition: opacity .2s; }
-  #zoom-label { position: absolute; left: 50%; top: 96px; transform: translateX(-50%); background: rgba(29,29,31,.88); color: #fff; padding: 6px 14px; border-radius: 16px; font-size: 13px; pointer-events: none; opacity: 0; }
+  #zoom-label { position: absolute; left: 50%; top: 24px; transform: translateX(-50%); background: rgba(29,29,31,.88); color: #fff; padding: 6px 14px; border-radius: 16px; font-size: 13px; pointer-events: none; opacity: 0; }
   #zoom-label.show { animation: zoom-label 1.6s ease-out forwards; }
   @keyframes zoom-label { 0% { opacity: 0; transform: translate(-50%, -6px); } 15% { opacity: 1; transform: translate(-50%, 0); } 80% { opacity: 1; } 100% { opacity: 0; } }
   #stage svg { display: block; width: 100%; height: 100%; }
@@ -212,7 +214,7 @@ export function buildViewerHtml(
   .legend .skips-mark { background: #f2c14e; color: #3a2a00; border-radius: 8px; padding: 0 6px; font-size: 10px; font-weight: 600; }
   .node.selected > rect:first-of-type { stroke: #111; stroke-width: 3; }
   .edge.selected > path:first-of-type { stroke-width: 3.5; }
-  #panel { position: absolute; top: 84px; right: 12px; bottom: 12px; width: 360px; overflow: auto; background: #fff; border: 1px solid #ccc; border-radius: 8px; box-shadow: 0 4px 18px rgba(0,0,0,.12); padding: 12px 14px; box-sizing: border-box; }
+  #panel { position: absolute; top: 12px; right: 12px; bottom: 12px; width: 360px; overflow: auto; background: #fff; border: 1px solid #ccc; border-radius: 8px; box-shadow: 0 4px 18px rgba(0,0,0,.12); padding: 12px 14px; box-sizing: border-box; }
   .panel-head { display: flex; align-items: flex-start; gap: 8px; }
   .panel-title { font-size: 15px; margin: 0; flex: 1; overflow-wrap: anywhere; }
   .panel-close { border: none; background: none; font-size: 18px; line-height: 1; cursor: pointer; color: #666; padding: 0 2px; }
@@ -264,10 +266,12 @@ export function buildViewerHtml(
     <span><span class="broken-mark">▲!</span> broken</span><span><span class="skips-mark">skips N</span> bands bypassed</span>
   </div>
 </div>
+<div id="main">
 <nav id="sidebar"></nav>
 <div id="stage"></div>
 <div id="zoom-label" hidden></div>
 <aside id="panel" hidden></aside>
+</div>
 <script id="graph" type="application/json">${safeJson}</script>
 <script id="change-state" type="application/json">${safeChangeState}</script>
 <script>${d3}</script>
