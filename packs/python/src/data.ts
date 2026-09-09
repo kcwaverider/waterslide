@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { EntryPointKindSchema } from "@waterslide/core";
 import { z } from "zod";
 import { packageRoot } from "./tree-sitter/runtime.js";
 
@@ -86,6 +87,12 @@ export const NoiseTableSchema = z.strictObject({
   value_methods: BuiltinsSchema,
   model_methods: BuiltinsSchema,
 });
+export const LambdaEventShapesSchema = z.strictObject({
+  $comment: z.string().optional(),
+  keys: z.record(z.string(), EntryPointKindSchema),
+});
+export type LambdaEventShapes = z.infer<typeof LambdaEventShapesSchema>;
+
 export interface NoiseTable {
   readonly libraryModules: ReadonlySet<string>;
   readonly valueMethods: ReadonlySet<string>;
@@ -99,6 +106,7 @@ export interface PackData {
   readonly builtins: ReadonlySet<string>;
   readonly stdlibModules: ReadonlySet<string>;
   readonly noise: NoiseTable;
+  readonly lambdaEventShapes: LambdaEventShapes;
 }
 
 function loadJson<T>(file: string, schema: z.ZodType<T>): T {
@@ -124,6 +132,10 @@ export function loadPackData(): PackData {
     builtins: new Set(loadJson("builtins.json", BuiltinsSchema).names),
     stdlibModules: new Set(
       loadJson("stdlib-modules.json", BuiltinsSchema).names,
+    ),
+    lambdaEventShapes: loadJson(
+      "lambda-event-shapes.json",
+      LambdaEventShapesSchema,
     ),
     noise: (() => {
       const t = loadJson("noise.json", NoiseTableSchema);

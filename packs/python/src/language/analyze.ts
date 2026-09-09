@@ -589,7 +589,7 @@ function bindFunctionLocals(
   if (body) bindBlockNames(body, scope, def, resolveChain);
 }
 
-function parameterName(p: Node): {
+export function parameterName(p: Node): {
   name: string | null;
   annotation: string | null;
 } {
