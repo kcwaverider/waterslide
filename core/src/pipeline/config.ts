@@ -23,8 +23,24 @@ export const TierConfigSchema = z.strictObject({
 });
 export type TierConfig = z.infer<typeof TierConfigSchema>;
 
+/**
+ * Persisted-files §3.2. One entry per glob, repo-relative and unqualified like
+ * the tier globs; matched against every span in a node's `sources[].path`.
+ */
+export const InfrastructureMarkerSchema = z.strictObject({
+  glob: z.string(),
+});
+export type InfrastructureMarker = z.infer<typeof InfrastructureMarkerSchema>;
+
 export const WaterslideConfigSchema = z.strictObject({
   tiers: TierConfigSchema.optional(),
+  /**
+   * Persisted-files §3.2: sets `is_infrastructure` by declaration, never by
+   * inference. Consumed by stage 5 only — it does not touch parsing, so it is
+   * deliberately absent from the stage 3 cache key (parser §2.1) and from
+   * `tier_config_hash`, which is spec-defined over the tiers block alone.
+   */
+  infrastructure: z.array(InfrastructureMarkerSchema).optional(),
   /** Per-pack options blocks, keyed by pack id (parser §3.3). */
   packs: z.record(z.string(), PackOptionsSchema).optional(),
   /** Parser §1.3: tests are excluded by default. */

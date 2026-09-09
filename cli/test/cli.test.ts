@@ -249,6 +249,89 @@ describe("waterslide parse --pack-option", () => {
   });
 });
 
+describe("waterslide parse --infrastructure", () => {
+  const base = (): string[] => [
+    "parse",
+    `server=${root}/server`,
+    `client=${root}/client`,
+    "--pack",
+    TOY,
+    "--canonical",
+  ];
+  const graphText = (): string =>
+    readFileSync(path.join(root, ".waterslide", "graph.json"), "utf8");
+  const infra = (): string[] =>
+    (
+      JSON.parse(graphText()) as {
+        nodes: { id: string; is_infrastructure: boolean }[];
+      }
+    ).nodes
+      .filter((n) => n.is_infrastructure)
+      .map((n) => n.id);
+
+  it("is repeatable, matches any span under a repo-relative glob, and applies on a warm run from the cache", async () => {
+    const plain = await waterslide(...base());
+    expect(plain.code, plain.stderr).toBe(0);
+    expect(plain.stdout).toMatch(/3 files, 3 parsed, 0 from cache/);
+    expect(infra()).toEqual([]);
+    const plainBytes = graphText();
+
+    const marked = await waterslide(
+      ...base(),
+      "--infrastructure",
+      "api/store.*",
+      "--infrastructure",
+      "App/**",
+    );
+    expect(marked.code, marked.stderr).toBe(0);
+    // Not a cache-key change: every file is a hit, and the marks still land.
+    expect(marked.stdout).toMatch(/3 files, 0 parsed, 3 from cache/);
+    expect(infra()).toEqual([
+      "client:App/Sync.toy",
+      "client:App/Sync.toy#sync",
+      "server:api/store.toy",
+      "server:api/store.toy#save",
+    ]);
+    expect(graphText()).not.toBe(plainBytes);
+    const v = await waterslide(
+      "validate",
+      ".waterslide/graph.json",
+      "--shape",
+      "canonical",
+    );
+    expect(v.code, v.stderr).toBe(0);
+
+    // Absent flag: back to no marks and the cold bytes, byte for byte.
+    const again = await waterslide(...base());
+    expect(again.code, again.stderr).toBe(0);
+    expect(graphText()).toBe(plainBytes);
+  });
+
+  it("rejects a missing or empty glob as usage, and never takes the next option as the glob", async () => {
+    const missing = await waterslide(...base(), "--infrastructure");
+    expect(missing.code).toBe(1);
+    expect(missing.stderr).toContain("--infrastructure needs a value");
+    // `--infrastructure --canonical` must not run with "--canonical" as the
+    // glob and the canonical flag silently dropped.
+    const swallowed = await waterslide(
+      "parse",
+      `server=${root}/server`,
+      "--pack",
+      TOY,
+      "--infrastructure",
+      "--canonical",
+    );
+    expect(swallowed.code).toBe(1);
+    expect(swallowed.stderr).toContain("--infrastructure needs a value");
+    expect(existsSync(path.join(root, ".waterslide", "graph.json"))).toBe(
+      false,
+    );
+    const empty = await waterslide(...base(), "--infrastructure", "  ");
+    expect(empty.code).toBe(1);
+    expect(empty.stderr).toContain("non-empty glob");
+  });
+});
+
 describe("malformed graph files", () => {
   it("validate and dump report not-valid-JSON with exit 2; view treats it as usage", async () => {
     writeFileSync(path.join(root, "bad.json"), "{ not json");

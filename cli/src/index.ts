@@ -12,6 +12,7 @@ import {
   summarize,
   validate,
   type GraphShape,
+  type InfrastructureMarker,
   type LanguagePack,
   type PackOptions,
   type RepoInput,
@@ -37,6 +38,10 @@ const USAGE = `usage:
                            comma-separated value becomes a list where the
                            pack's schema expects one. Flag beats config beats
                            pack default, and changes the cache key.
+      --infrastructure <glob>
+                           mark every node with a source span under this
+                           repo-relative glob as infrastructure (repeatable).
+                           Never inferred; absent means no node is marked.
       --quiet              print only the summary
   waterslide validate <graph.json> [--shape artifact|canonical]   (default artifact)
   waterslide dump [graph.json]                                   (default .waterslide/graph.json)
@@ -64,13 +69,18 @@ function parseArgs(argv: readonly string[]): Args {
       "state-dir",
       "pack",
       "pack-option",
+      "infrastructure",
       "shape",
       "out",
     ].includes(name);
     if (takesValue && value === undefined) {
       value = argv[i + 1];
+      // The next token is the value only if it is not itself an option:
+      // `--infrastructure --canonical` is a missing glob, not a glob named
+      // "--canonical" and a silently dropped --canonical.
+      if (value === undefined || value.startsWith("--"))
+        throw new UsageError(`--${name} needs a value`);
       i++;
-      if (value === undefined) throw new UsageError(`--${name} needs a value`);
     }
     flags.set(name, [...(flags.get(name) ?? []), value ?? "true"]);
   }
@@ -265,6 +275,17 @@ function setPath(
   return obj;
 }
 
+/** `--infrastructure <glob>`, repeatable: one persisted-files §3.2 marker per occurrence. */
+export function parseInfrastructure(
+  globs: readonly string[],
+): InfrastructureMarker[] {
+  return globs.map((glob) => {
+    if (glob.trim() === "")
+      throw new UsageError("--infrastructure needs a non-empty glob");
+    return { glob };
+  });
+}
+
 function parseRepos(specs: readonly string[]): RepoInput[] {
   if (specs.length === 0)
     throw new UsageError("parse needs at least one <name=path>");
@@ -306,9 +327,16 @@ async function cmdParse(
     args.flags.get("pack-option") ?? [],
     loaded,
   );
+  // Same precedence as --pack-option once config.yaml arrives (M3): the flag
+  // list replaces the config block. It is stage-5-only config, so it stays out
+  // of the stage 3 cache key on purpose — see WaterslideConfigSchema.
+  const infrastructure = parseInfrastructure(
+    args.flags.get("infrastructure") ?? [],
+  );
   const config: WaterslideConfig = {
     ...(flag(args, "include-tests") === "true" ? { include_tests: true } : {}),
     ...(Object.keys(packOptions).length > 0 ? { packs: packOptions } : {}),
+    ...(infrastructure.length > 0 ? { infrastructure } : {}),
   };
   const cache =
     flag(args, "no-cache") === "true"

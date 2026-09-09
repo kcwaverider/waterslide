@@ -12,7 +12,7 @@ import {
   tierConfigHash,
   type WaterslideConfig,
 } from "./config.js";
-import { assignTiers, fillParents } from "./derive.js";
+import { assignTiers, fillParents, markInfrastructure } from "./derive.js";
 import {
   captureRepoState,
   discover,
@@ -51,7 +51,7 @@ export interface ProvideOrigin {
 export interface Corpus {
   readonly repos: readonly RepoState[];
   readonly tier_config_hash: string;
-  /** Tiers and parents derived, duplicates merged, sorted by id. */
+  /** Tiers, infrastructure and parents derived, duplicates merged, sorted by id. */
   readonly nodes: readonly Node[];
   readonly edges: readonly EdgeOrigin[];
   readonly schemas: readonly PayloadSchema[];
@@ -89,7 +89,9 @@ export async function parseSources(input: ParseSourcesInput): Promise<Corpus> {
   const merged = mergeNodes(composed.files, composed.additions);
   const schemasMerged = mergeSchemas(composed.files, composed.additions);
 
-  const nodes = fillParents(assignTiers(merged.nodes, config));
+  const nodes = fillParents(
+    markInfrastructure(assignTiers(merged.nodes, config), config),
+  );
   const edges: EdgeOrigin[] = [];
   const provides: ProvideOrigin[] = [];
   const diagnostics: Diagnostic[] = [];
