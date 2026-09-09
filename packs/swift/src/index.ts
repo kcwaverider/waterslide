@@ -13,7 +13,7 @@ import {
   type PerFileResult,
 } from "@waterslide/core";
 import { analyzeFile, type FileAnalysis } from "./analyze.js";
-import { compose, type SwiftPerFileResult } from "./compose.js";
+import { compose } from "./compose.js";
 import { rePath } from "./repath.js";
 
 export const manifest: PackManifest = {
@@ -65,7 +65,7 @@ export class SwiftPack implements LanguagePack {
     options: PackOptions,
   ): PerFileResult {
     void options;
-    return rePath(result as SwiftPerFileResult, repo, path);
+    return rePath(result, repo, path);
   }
 }
 
@@ -75,7 +75,8 @@ export const pack: LanguagePack = new SwiftPack();
 export { analyzeFile } from "./analyze.js";
 export type { FileAnalysis } from "./analyze.js";
 export { applyPatch, compose, composeWithReport } from "./compose.js";
-export type { ComposeReport, SwiftPerFileResult } from "./compose.js";
+export { PACK_DATA_KEY, stateOf } from "./compose.js";
+export type { ComposeReport } from "./compose.js";
 export { spanHash } from "./ids.js";
 export { rePath } from "./repath.js";
 export { formatSummary } from "./summary.js";

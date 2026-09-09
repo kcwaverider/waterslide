@@ -176,6 +176,10 @@ export const SwiftFileStateSchema = z.strictObject({
   candidates: z.array(CandidateSchema),
   /** node ids of types whose members issue a direct HTTP request in this file. */
   http_types: z.array(z.string()),
+  /** `Button(action: viewModel.method)`: the referenced method is the entry point; compose marks it. */
+  entry_point_refs: z.array(
+    z.strictObject({ type_name: z.string(), member: z.string() }),
+  ),
   dropped_receivers: z.int().nonnegative(),
 });
 export type SwiftFileState = z.infer<typeof SwiftFileStateSchema>;

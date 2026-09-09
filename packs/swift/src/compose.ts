@@ -5,17 +5,19 @@
  * with `results` sorted by (repo, path) byte-wise. Everything here iterates in
  * that order and relies on it; nothing is re-sorted.
  *
- * MAY: add nodes, edges, schemas, provides; add a source span to a node
- * emitted by another file; set or overwrite `parent`; annotate label,
- * is_entry_point, entry_point_kind, tags (plus `kind` for the client_service
- * rule, item 7; flagged in the report). MAY NOT: change a node id, remove a node.
+ * The per-file pass hands its private state to compose through the module
+ * node's `pack_data`, which core strips after compose runs. Compose MAY add
+ * nodes, edges, schemas and provides; add source spans; set `parent`; annotate
+ * `label`, `is_entry_point`, `entry_point_kind`, `tags` and `kind`. It MAY NOT
+ * change a node id or remove a node.
  */
 import {
   DEFAULT_TIER_BY_KIND,
+  NodeUpdateSchema,
   type Diagnostic,
-  type Node as GraphNode,
   type NodeKind,
   type NodeUpdate,
+  type PackNode,
   type PackPatch,
   type PackResult,
   type PartialEdge,
@@ -30,27 +32,29 @@ import {
   type FactsIndex,
   type HttpResolution,
 } from "./recognizers/network.js";
-import type {
-  ArgValue,
-  Candidate,
-  FunctionFact,
-  PropertyFact,
-  SwiftFileState,
-  TypeFact,
+import {
+  SwiftFileStateSchema,
+  type ArgValue,
+  type Candidate,
+  type FunctionFact,
+  type PropertyFact,
+  type SwiftFileState,
+  type TypeFact,
 } from "./state.js";
 
-/**
- * Core's `PerFileResult` is `{ repo, path, result }`. The Swift pack needs one
- * more thing per file to do cross-file work: the pack-private state recorded
- * by the per-file pass (extension spans with hashes, helper bodies, cross-file
- * call sites). Until the contract carries it, `compose` accepts results that
- * happen to have it and reports every file that does not.
- */
-export interface SwiftPerFileResult extends PerFileResult {
-  state?: SwiftFileState;
-}
-
 export type { NodeUpdate, PackPatch } from "@waterslide/core";
+
+/** The key under which the per-file pass stores its state on the module node. */
+export const PACK_DATA_KEY = "swift";
+
+/** Read the per-file state back out of the module node's `pack_data`. */
+export function stateOf(r: PerFileResult): SwiftFileState | null {
+  const module = r.result.nodes.find((n) => n.id === moduleId(r.repo, r.path));
+  const raw = module?.pack_data?.[PACK_DATA_KEY];
+  if (raw === undefined || raw === null) return null;
+  const parsed = SwiftFileStateSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
 
 /** Coverage figures the run summary prints (handoff §6 item 6). */
 export interface ComposeReport {
@@ -68,8 +72,13 @@ export interface ComposeReport {
 const byteCmp = (a: string, b: string): number =>
   Buffer.compare(Buffer.from(a, "utf8"), Buffer.from(b, "utf8"));
 
+interface FileWithState {
+  r: PerFileResult;
+  state: SwiftFileState;
+}
+
 interface RepoIndex {
-  types: Map<string, { file: SwiftPerFileResult; fact: TypeFact }>;
+  types: Map<string, { path: string; fact: TypeFact }>;
   /** `${type}#${member}` (type "" for top level) → facts. */
   functions: Map<string, FunctionFact[]>;
   /** Properties contributed by extensions, by type name. */
@@ -84,12 +93,11 @@ function fkey(type: string | null, member: string): string {
 }
 
 function buildIndex(
-  results: readonly SwiftPerFileResult[],
+  files: readonly FileWithState[],
   diagnostics: Diagnostic[],
 ): Map<string, RepoIndex> {
   const repos = new Map<string, RepoIndex>();
-  for (const r of results) {
-    if (r.state === undefined) continue;
+  for (const { r, state } of files) {
     let idx = repos.get(r.repo);
     if (idx === undefined) {
       idx = {
@@ -102,13 +110,13 @@ function buildIndex(
       repos.set(r.repo, idx);
     }
     for (const n of r.result.nodes) idx.kinds.set(n.id, n.kind);
-    for (const t of r.state.types) {
+    for (const t of state.types) {
       const existing = idx.types.get(t.qualified);
       if (existing !== undefined) {
         diagnostics.push({
           severity: "warning",
           code: "ambiguous_type_declaration",
-          message: `type \`${t.qualified}\` is declared in both ${existing.file.path} and ${r.path}; references resolve against the first`,
+          message: `type \`${t.qualified}\` is declared in both ${existing.path} and ${r.path}; references resolve against the first`,
           repo: r.repo,
           path: r.path,
           line: null,
@@ -116,16 +124,16 @@ function buildIndex(
         });
         continue;
       }
-      idx.types.set(t.qualified, { file: r, fact: t });
+      idx.types.set(t.qualified, { path: r.path, fact: t });
       if (t.schema_id !== null) idx.schemaByType.set(t.qualified, t.schema_id);
     }
-    for (const f of r.state.functions) {
+    for (const f of state.functions) {
       const k = fkey(f.owner_type, f.member);
       const list = idx.functions.get(k);
       if (list === undefined) idx.functions.set(k, [f]);
       else list.push(f);
     }
-    for (const e of r.state.extensions) {
+    for (const e of state.extensions) {
       const list = idx.extProps.get(e.type_name);
       if (list === undefined) idx.extProps.set(e.type_name, [...e.properties]);
       else list.push(...e.properties);
@@ -220,11 +228,18 @@ function encodedType(args: Candidate["args"]): string | null {
   return null;
 }
 
-export function compose(results: readonly SwiftPerFileResult[]): PackPatch {
+/**
+ * `NodeUpdate.kind` is being added to the contract (review decision). Until
+ * core's schema carries it, the reclassification is reported instead of
+ * emitted, so it is never silently dropped. Remove the fallback once it lands.
+ */
+const NODE_UPDATE_HAS_KIND = "kind" in NodeUpdateSchema.shape;
+
+export function compose(results: readonly PerFileResult[]): PackPatch {
   return composeWithReport(results).patch;
 }
 
-export function composeWithReport(results: readonly SwiftPerFileResult[]): {
+export function composeWithReport(results: readonly PerFileResult[]): {
   patch: PackPatch;
   report: ComposeReport;
 } {
@@ -233,8 +248,8 @@ export function composeWithReport(results: readonly SwiftPerFileResult[]): {
     edges: [],
     schemas: [],
     provides: [],
-    diagnostics: [],
     node_updates: [],
+    diagnostics: [],
   };
   const report: ComposeReport = {
     external_refs: new Map(),
@@ -245,17 +260,22 @@ export function composeWithReport(results: readonly SwiftPerFileResult[]): {
     extensions_merged: 0,
     extensions_minted: 0,
   };
-  const repos = buildIndex(results, patch.diagnostics);
+  const files: FileWithState[] = [];
+  for (const r of results) {
+    const state = stateOf(r);
+    if (state !== null) files.push({ r, state });
+  }
+  const repos = buildIndex(files, patch.diagnostics);
   const httpTypes = new Set<string>();
-  for (const r of results)
-    for (const id of r.state?.http_types ?? []) httpTypes.add(id);
+  for (const { state } of files)
+    for (const id of state.http_types) httpTypes.add(id);
 
   // --- Extensions (item 2) --------------------------------------------------
   const minted = new Map<string, string>(); // `${repo}|${type}` → node id
-  for (const r of results) {
+  for (const { r, state } of files) {
     const idx = repos.get(r.repo);
-    if (idx === undefined || r.state === undefined) continue;
-    for (const ext of r.state.extensions) {
+    if (idx === undefined) continue;
+    for (const ext of state.extensions) {
       const declared = idx.types.get(ext.type_name);
       let typeNodeId: string;
       if (declared !== undefined) {
@@ -273,7 +293,7 @@ export function composeWithReport(results: readonly SwiftPerFileResult[]): {
           // type): the first extension file, in sorted order, is the declaring site.
           typeNodeId = codeId(r.repo, r.path, ext.type_name);
           minted.set(key, typeNodeId);
-          patch.nodes.push({
+          const node: PackNode = {
             id: typeNodeId,
             kind: "class",
             label: ext.type_name,
@@ -286,7 +306,8 @@ export function composeWithReport(results: readonly SwiftPerFileResult[]): {
             entry_point_kind: null,
             is_infrastructure: false,
             tags: [],
-          });
+          };
+          patch.nodes.push(node);
           patch.provides.push({
             name: ext.type_name,
             node_id: typeNodeId,
@@ -326,14 +347,13 @@ export function composeWithReport(results: readonly SwiftPerFileResult[]): {
   }
 
   // --- Candidates -----------------------------------------------------------
-  for (const r of results) {
+  for (const { r, state } of files) {
     const idx = repos.get(r.repo);
-    if (idx === undefined || r.state === undefined) continue;
+    if (idx === undefined) continue;
     const facts = factsIndex(idx);
     const externals = new Map<string, number>();
-    for (const c of r.state.candidates) {
+    for (const c of state.candidates) {
       if (c.consumed) continue;
-      const line = c.edge.source?.line_start ?? 1;
       if (c.form === "free_function") {
         const name = c.member ?? "";
         const declared = idx.functions.get(fkey(null, name)) ?? [];
@@ -399,11 +419,12 @@ export function composeWithReport(results: readonly SwiftPerFileResult[]): {
       const entries = [...externals.entries()].sort(
         (a, b) => b[1] - a[1] || byteCmp(a[0], b[0]),
       );
-      for (const [name, n] of entries)
+      for (const [name, n] of entries) {
         report.external_refs.set(
           name,
           (report.external_refs.get(name) ?? 0) + n,
         );
+      }
       patch.diagnostics.push({
         severity: "info",
         code: "external_type_reference",
@@ -417,24 +438,44 @@ export function composeWithReport(results: readonly SwiftPerFileResult[]): {
         pack: "swift",
       });
     }
+
+    // `Button(action: viewModel.method)` on a type declared elsewhere: the
+    // referenced method is the entry point (a framework recognizer may mark
+    // an existing node as one, parser §3.2).
+    for (const ref of state.entry_point_refs) {
+      for (const f of idx.functions.get(fkey(ref.type_name, ref.member)) ??
+        []) {
+        patch.node_updates.push({
+          node_id: f.node_id,
+          add_sources: [],
+          is_entry_point: true,
+          entry_point_kind: "ui_handler",
+        });
+      }
+    }
   }
 
   // --- client_service (item 7) -----------------------------------------------
-  // A type whose members reach HTTP only through a helper in another file is
-  // known here, but `NodeUpdate` carries no `kind`, so the reclassification is
-  // unrepresentable in a PackPatch. Reported rather than silently dropped; the
-  // per-file pass already marks types with a direct send.
-  const stillClass: string[] = [];
+  const reclassify: string[] = [];
   for (const id of [...httpTypes].sort(byteCmp)) {
     let kind: NodeKind | undefined;
     for (const idx of repos.values()) kind ??= idx.kinds.get(id);
-    if (kind === "class") stillClass.push(id);
+    if (kind === "class") reclassify.push(id);
   }
-  if (stillClass.length > 0) {
+  if (NODE_UPDATE_HAS_KIND) {
+    for (const id of reclassify) {
+      const update = {
+        node_id: id,
+        add_sources: [],
+        kind: "client_service",
+      } as unknown as NodeUpdate;
+      patch.node_updates.push(update);
+    }
+  } else if (reclassify.length > 0) {
     patch.diagnostics.push({
       severity: "warning",
       code: "kind_update_unrepresentable",
-      message: `${String(stillClass.length)} type(s) issue HTTP requests only through a helper and should be client_service (decisions item 7), but NodeUpdate cannot change kind; left as class: ${stillClass.map((id) => id.split("#")[1] ?? id).join(", ")}`,
+      message: `${String(reclassify.length)} type(s) issue HTTP requests only through a helper and should be client_service (decisions item 7); core's NodeUpdate does not carry kind yet, left as class: ${reclassify.map((id) => id.split("#")[1] ?? id).join(", ")}`,
       repo: null,
       path: null,
       line: null,
@@ -444,7 +485,7 @@ export function composeWithReport(results: readonly SwiftPerFileResult[]): {
 
   patch.nodes.sort((a, b) => byteCmp(a.id, b.id));
   patch.provides.sort((a, b) =>
-    byteCmp(`${a.name} ${a.node_id}`, `${b.name} ${b.node_id}`),
+    byteCmp(`${a.name} ${a.node_id ?? ""}`, `${b.name} ${b.node_id ?? ""}`),
   );
   return { patch, report };
 }
@@ -483,7 +524,7 @@ function tryHttp(
   c: Candidate,
   facts: FactsIndex,
   patch: PackPatch,
-  r: SwiftPerFileResult,
+  r: PerFileResult,
   report: ComposeReport,
 ): PartialEdge | null {
   const line = c.edge.source?.line_start ?? 1;
@@ -500,8 +541,9 @@ function tryHttp(
       !resolutions.some(
         (x) => x.rendered.path === res.rendered.path && x.method === res.method,
       )
-    )
+    ) {
       resolutions.push(res);
+    }
   }
   const single = resolutions[0];
   if (resolutions.length === 1 && single !== undefined) {
@@ -537,10 +579,10 @@ function tryHttp(
 
 /** Merge per-file results and a patch into one five-return result (for the driver and tests). */
 export function applyPatch(
-  results: readonly SwiftPerFileResult[],
+  results: readonly PerFileResult[],
   patch: PackPatch,
 ): PackResult {
-  const nodes = new Map<string, GraphNode>();
+  const nodes = new Map<string, PackNode>();
   const out: PackResult = {
     nodes: [],
     edges: [],
@@ -577,6 +619,11 @@ export function applyPatch(
     if (u.entry_point_kind !== undefined)
       n.entry_point_kind = u.entry_point_kind;
     if (u.tags !== undefined) n.tags = u.tags;
+    const kind = (u as { kind?: NodeKind }).kind;
+    if (kind !== undefined) {
+      n.kind = kind;
+      n.tier = DEFAULT_TIER_BY_KIND[kind] ?? n.tier;
+    }
   }
   out.nodes = [...nodes.values()].sort((a, b) => byteCmp(a.id, b.id));
   out.edges.push(...patch.edges);

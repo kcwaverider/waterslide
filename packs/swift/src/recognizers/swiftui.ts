@@ -9,7 +9,14 @@
  */
 import { DEFAULT_TIER_BY_KIND } from "@waterslide/core";
 import type { Node, Query } from "web-tree-sitter";
-import { diag, typeAt, type FileContext, type Owner } from "../context.js";
+import {
+  diag,
+  ownerAt,
+  typeAt,
+  type FileContext,
+  type Owner,
+} from "../context.js";
+import { typeOfExpr } from "./scope.js";
 import { codeId } from "../ids.js";
 import { childrenOfType, lineStart } from "../tree.js";
 import { span } from "./declarations.js";
@@ -34,6 +41,21 @@ interface HandlerSite {
   label: string;
 }
 
+/** The `action:` argument when it is not a closure: a method reference. */
+function buttonActionReference(call: Node): Node | null {
+  const suffix = childrenOfType(call, "call_suffix")[0] ?? null;
+  if (suffix === null) return null;
+  for (const va of childrenOfType(suffix, "value_arguments")) {
+    for (const a of childrenOfType(va, "value_argument")) {
+      if (a.childForFieldName("name")?.text === "action") {
+        const v = a.childForFieldName("value");
+        if (v !== null && v.type !== "lambda_literal") return v;
+      }
+    }
+  }
+  return null;
+}
+
 function buttonAction(call: Node): Node | null {
   const suffix = childrenOfType(call, "call_suffix")[0] ?? null;
   if (suffix === null) return null;
@@ -41,7 +63,9 @@ function buttonAction(call: Node): Node | null {
     for (const a of childrenOfType(va, "value_argument")) {
       if (a.childForFieldName("name")?.text === "action") {
         const v = a.childForFieldName("value");
-        if (v !== null && v.type === "lambda_literal") return v;
+        // An explicit `action:` that is not a closure is a method reference;
+        // any trailing closure is then the label, not the action.
+        return v !== null && v.type === "lambda_literal" ? v : null;
       }
     }
   }
@@ -69,6 +93,40 @@ function buttonLabel(call: Node): string {
     }
   }
   return "button";
+}
+
+/**
+ * `Button(action: signIn)` / `Button(action: viewModel.beginRecording)`: the
+ * handler is the referenced method. A method declared here is flagged on its
+ * owner; a method on a type declared elsewhere is recorded for compose to mark.
+ * A stored closure property (`Button(action: action)` in a reusable component)
+ * has its real handler at the call site that supplied it, so nothing is marked.
+ */
+function markMethodReference(ctx: FileContext, call: Node): void {
+  const ref = buttonActionReference(call);
+  if (ref === null) return;
+  const owner = ownerAt(ctx, call);
+  if (ref.type === "simple_identifier") {
+    const type = typeAt(ctx, call);
+    const declared = type === null ? null : (type.merged_into ?? type);
+    const members = declared?.members.get(ref.text) ?? [];
+    for (const m of members) m.is_entry_point = true;
+    return;
+  }
+  if (ref.type === "navigation_expression") {
+    const target = ref.childForFieldName("target");
+    const member =
+      ref.childForFieldName("suffix")?.namedChildren[0]?.text ?? null;
+    if (target === null || member === null) return;
+    const r = typeOfExpr(ctx, target, owner);
+    if (r === null || r.type_name === null) return;
+    if (r.in_file !== null) {
+      for (const m of r.in_file.members.get(member) ?? [])
+        m.is_entry_point = true;
+      return;
+    }
+    ctx.entry_point_refs.push({ type_name: r.type_name, member });
+  }
 }
 
 export function collectHandlers(ctx: FileContext, q: Query): void {
@@ -106,7 +164,10 @@ export function collectHandlers(ctx: FileContext, q: Query): void {
       });
     } else if (buttonCall !== undefined && !seen.has(buttonCall.id)) {
       const closure = buttonAction(buttonCall);
-      if (closure === null) continue;
+      if (closure === null) {
+        markMethodReference(ctx, buttonCall);
+        continue;
+      }
       seen.add(buttonCall.id);
       sites.push({
         call: buttonCall,

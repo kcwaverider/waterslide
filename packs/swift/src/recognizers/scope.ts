@@ -326,7 +326,16 @@ export function typeOfExpr(
         const name = ctx.typealiases.get(callee.text) ?? callee.text;
         if (ctx.declared.has(name) || isCapitalized(name))
           return instanceReceiver(ctx, name);
-        // A bare function call: its return type, if declared here.
+        // A bare call to a method of the enclosing type, or a top-level
+        // function declared here: its return type.
+        const enclosing = owner?.owner_type ?? null;
+        const declaredType =
+          enclosing === null ? null : (enclosing.merged_into ?? enclosing);
+        const method = (declaredType?.members.get(name) ?? []).find(
+          (m) => m.return_type !== null,
+        );
+        if (method?.return_type)
+          return instanceReceiver(ctx, method.return_type.base);
         const o = ctx.owners.find(
           (x) =>
             x.owner_type === null && x.member === name && x.form === "function",

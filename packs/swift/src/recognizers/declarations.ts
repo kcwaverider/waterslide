@@ -181,16 +181,90 @@ interface RawOwner {
   prefix: string;
 }
 
-function skipWithSyntaxError(ctx: FileContext, n: Node): boolean {
+function describeDeclaration(n: Node, prefix: string): string {
+  if (n.type === "class_declaration" || n.type === "protocol_declaration") {
+    const keyword =
+      n.type === "protocol_declaration"
+        ? "protocol"
+        : (anyChildrenOfType(n, DECLARATION_KEYWORDS)[0]?.text ?? "class");
+    return `${keyword} ${n.childForFieldName("name")?.text ?? "<anonymous>"}`;
+  }
+  if (n.type === "init_declaration")
+    return `init of ${prefix === "" ? "<top level>" : prefix}`;
+  if (n.type === "function_declaration") {
+    const name = n.childForFieldName("name")?.text ?? "<anonymous>";
+    return `func ${prefix === "" ? name : `${prefix}.${name}`}`;
+  }
+  if (n.type === "property_declaration") {
+    const name =
+      n.descendantsOfType("simple_identifier")[0]?.text ?? "<anonymous>";
+    return `property ${prefix === "" ? name : `${prefix}.${name}`}`;
+  }
+  return n.type;
+}
+
+/**
+ * §9 as corrected in review: a declaration containing a syntax error is
+ * skipped and NAMED, so the drill-down says which type or function is missing
+ * rather than which file is suspect. The rest of the file is emitted.
+ */
+function skipWithSyntaxError(
+  ctx: FileContext,
+  n: Node,
+  prefix: string,
+): boolean {
   if (!hasErrorInside(ctx, n)) return false;
   diag(
     ctx,
     "error",
     "syntax_error",
-    `declaration at line ${String(lineStart(n))} contains a syntax error and was skipped`,
+    `${describeDeclaration(n, prefix)} (lines ${String(lineStart(n))}-${String(lineEnd(n))}) contains a syntax error and was skipped; nothing inside it is emitted`,
     lineStart(n),
   );
   return true;
+}
+
+/**
+ * tree-sitter's recovery for a header it cannot parse wraps the file in one
+ * ERROR node and spills the type's members as top-level siblings. Those
+ * members must not be emitted as free functions, and the loss must be named:
+ * a view missing from a 196-entry-point map is invisible unless the count
+ * says so (review decision 3).
+ */
+function reportFlattened(ctx: FileContext, err: Node): number {
+  const kids = err.namedChildren.filter((c): c is Node => c !== null);
+  const spilled = kids.filter((c) =>
+    [
+      "function_declaration",
+      "init_declaration",
+      "property_declaration",
+    ].includes(c.type),
+  );
+  if (spilled.length === 0) return 0;
+  const firstSpill = kids.find((c) =>
+    [
+      "inheritance_specifier",
+      "function_declaration",
+      "init_declaration",
+      "property_declaration",
+    ].includes(c.type),
+  );
+  const spillIndex = firstSpill === undefined ? -1 : kids.indexOf(firstSpill);
+  const before = spillIndex > 0 ? kids[spillIndex - 1] : undefined;
+  const typeName =
+    before !== undefined && before.type === "simple_identifier"
+      ? before.text
+      : (kids.find((c) => c.type === "simple_identifier")?.text ?? null);
+  const first = spilled[0];
+  const last = spilled[spilled.length - 1];
+  diag(
+    ctx,
+    "error",
+    "syntax_error",
+    `grammar recovery flattened a type declaration${typeName === null ? "" : ` (probably \`${typeName}\`)`} starting near line ${String(firstSpill === undefined ? lineStart(err) : lineStart(firstSpill))}: the type node and its ${String(spilled.length)} member declaration(s) (lines ${String(first === undefined ? 0 : lineStart(first))}-${String(last === undefined ? 0 : lineEnd(last))}) are not emitted; SwiftUI handlers inside it cannot be attributed to a type`,
+    firstSpill === undefined ? lineStart(err) : lineStart(firstSpill),
+  );
+  return spilled.length;
 }
 
 /** First pass: find every declaration, tracking nesting for qualified names. */
@@ -263,7 +337,7 @@ export function collectDeclarations(ctx: FileContext): void {
     for (const m of body.namedChildren) {
       if (m === null) continue;
       if (m.type === "property_declaration") {
-        if (hasErrorInside(ctx, m)) continue;
+        if (skipWithSyntaxError(ctx, m, qualified)) continue;
         const props = propertyDecls(m);
         t.properties.push(...props);
         const computed = m.childForFieldName("computed_value");
@@ -284,10 +358,22 @@ export function collectDeclarations(ctx: FileContext): void {
     }
   };
 
-  const walk = (n: Node, prefix: string, type: TypeDecl | null): void => {
+  const walk = (
+    n: Node,
+    prefix: string,
+    type: TypeDecl | null,
+    inError = false,
+  ): void => {
+    if (n.type === "ERROR") {
+      reportFlattened(ctx, n);
+      for (const c of n.namedChildren)
+        if (c !== null) walk(c, prefix, type, true);
+      return;
+    }
     if (n.type === "class_declaration" || n.type === "protocol_declaration") {
-      // An error inside one member skips that member, not the type (§9: emit
-      // what was understood). Only a header that failed to parse is absent.
+      // An error inside one member skips that member, not the type (§9 as
+      // corrected: emit what was understood). Only a header that failed to
+      // parse is absent, and that is reported by reportFlattened.
       const keyword =
         n.type === "protocol_declaration"
           ? "protocol"
@@ -314,7 +400,8 @@ export function collectDeclarations(ctx: FileContext): void {
       return;
     }
     if (n.type === "function_declaration" || n.type === "init_declaration") {
-      if (skipWithSyntaxError(ctx, n)) return;
+      if (inError) return; // a member spilled out of a flattened type; reported above
+      if (skipWithSyntaxError(ctx, n, prefix)) return;
       const member =
         n.type === "init_declaration"
           ? "init"
@@ -337,8 +424,9 @@ export function collectDeclarations(ctx: FileContext): void {
       }
       return;
     }
+    if (inError && n.type === "property_declaration") return;
     for (const c of n.namedChildren) {
-      if (c !== null) walk(c, prefix, type);
+      if (c !== null) walk(c, prefix, type, inError);
     }
   };
 
@@ -626,8 +714,8 @@ export function emitDeclarations(ctx: FileContext): void {
       sources: [span(ctx, o.decl)],
       confidence: "certain",
       confidence_reason: null,
-      is_entry_point: false,
-      entry_point_kind: null,
+      is_entry_point: o.is_entry_point === true,
+      entry_point_kind: o.is_entry_point === true ? "ui_handler" : null,
       is_infrastructure: false,
       tags: [],
     });

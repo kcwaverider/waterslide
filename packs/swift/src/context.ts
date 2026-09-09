@@ -1,7 +1,7 @@
 /** In-memory model of one file while it is being analyzed. Not serialized. */
 import type {
   Diagnostic,
-  Node as GraphNode,
+  PackNode as GraphNode,
   PartialEdge,
   PayloadSchema,
   Provide,
@@ -46,6 +46,8 @@ export interface Owner {
   params: Param[];
   return_type: TypeRef | null;
   fact: FunctionFact | null;
+  /** Set by the SwiftUI recognizer when a Button passes this method as its action. */
+  is_entry_point?: boolean;
 }
 
 export interface TypeDecl {
@@ -111,6 +113,8 @@ export interface FileContext {
   unsupported: Map<string, number>;
   /** Call nodes that are framework constructs (handler modifiers, Button), not edges. */
   skipCalls: Set<number>;
+  /** Methods referenced as `Button(action: Type.method)` whose type lives in another file. */
+  entry_point_refs: { type_name: string; member: string }[];
 }
 
 export function diag(

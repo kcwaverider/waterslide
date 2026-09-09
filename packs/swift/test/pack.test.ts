@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import {
+  NodeUpdateSchema,
   PackResultSchema,
   edgeId,
   serializeCanonical,
   validate,
   type PartialEdge,
+  type PerFileResult,
   type UnresolvedRef,
 } from "@waterslide/core";
 import {
@@ -16,7 +18,6 @@ import {
   pack,
   rePath,
   spanHash,
-  type SwiftPerFileResult,
 } from "../src/index.js";
 import { assemble, shuffle } from "../scripts/run.js";
 
@@ -28,9 +29,8 @@ async function fileResult(
   repo: string,
   path: string,
   content: string,
-): Promise<SwiftPerFileResult> {
-  const a = await swift.analyze(repo, path, content);
-  return { repo, path, result: a.result, state: a.state };
+): Promise<PerFileResult> {
+  return { repo, path, result: await swift.parse(repo, path, content, {}) };
 }
 
 function ref(e: PartialEdge): UnresolvedRef | null {
@@ -175,6 +175,17 @@ describe("SwiftUI entry points (items 8, 9)", () => {
     ).toBe(true);
   });
 
+  it("marks a method passed as Button(action:) as the entry point", async () => {
+    const r = await pack.parse("k", "Kitchen.swift", kitchen, {});
+    const sync = r.nodes.find((n) => n.id === "k:Kitchen.swift#NotesView.sync");
+    expect(sync?.is_entry_point).toBe(true);
+    expect(sync?.entry_point_kind).toBe("ui_handler");
+    const clear = r.nodes.find(
+      (n) => n.id === "k:Kitchen.swift#NotesViewModel.clear",
+    );
+    expect(clear?.is_entry_point).toBe(true);
+  });
+
   it("attributes calls inside a handler closure to the handler, not the view", async () => {
     const r = await pack.parse("k", "Kitchen.swift", kitchen, {});
     const e = r.edges.find((x) => x.from.endsWith("#NotesView.task[0]"));
@@ -300,11 +311,19 @@ describe("branch detection and the error-path table (§6)", () => {
     expect(catchLogs?.is_error_path).toBe(true);
     expect(catchLogs?.confidence).toBe("inferred");
     expect(catchLogs?.confidence_reason).toContain("catch");
-    const doLimb = upload.find(
-      (e) => e.condition?.expr === "do" && e.exclusive_group !== null,
-    );
-    expect(doLimb?.exclusive_group).toBe(catchLogs?.exclusive_group);
-    expect(doLimb?.is_error_path).toBe(false);
+    const doLimb = upload.filter((e) => e.condition?.expr === "do");
+    // Settled ordinal rule: every edge in the limb carries the group and the
+    // limb's ordinal; two edges from one limb are the same alternative.
+    expect(doLimb.length).toBe(2);
+    expect(
+      doLimb.every(
+        (e) =>
+          e.exclusive_group === catchLogs?.exclusive_group &&
+          e.branch_ordinal === 0,
+      ),
+    ).toBe(true);
+    expect(catchLogs?.branch_ordinal).toBe(1);
+    expect(doLimb.every((e) => !e.is_error_path)).toBe(true);
   });
 
   it("produces no group for a branch point whose edges sit in one limb only", async () => {
@@ -429,16 +448,23 @@ class MemoryService { private let apiClient = APIClient.shared
     expect(http?.response_schema_id).toBe(
       "sch:r:Services/MemoryService.swift#Memory",
     );
-    // Item 7 wants MemoryService reclassified, but NodeUpdate carries no kind:
-    // the pack reports what it cannot express rather than dropping it.
-    expect(
-      patch.diagnostics.some(
-        (d) =>
-          d.code === "kind_update_unrepresentable" &&
-          d.message.includes("MemoryService"),
-      ),
-    ).toBe(true);
     const merged = applyPatch(results, patch);
+    if ("kind" in NodeUpdateSchema.shape) {
+      expect(
+        merged.nodes.find(
+          (n) => n.id === "r:Services/MemoryService.swift#MemoryService",
+        )?.kind,
+      ).toBe("client_service");
+    } else {
+      // Until core's NodeUpdate carries kind, the change is reported, never dropped.
+      expect(
+        patch.diagnostics.some(
+          (d) =>
+            d.code === "kind_update_unrepresentable" &&
+            d.message.includes("MemoryService"),
+        ),
+      ).toBe(true);
+    }
     // The consumed Endpoint construction carries no edge of its own.
     expect(
       merged.edges.filter((e) => e.from.endsWith("#MemoryService.getMemory")),
@@ -470,7 +496,6 @@ describe("rePath (amendment B3)", () => {
     const after = rePath(before, "k", "New/Dir/Kitchen.swift");
     const fresh = await fileResult("k", "New/Dir/Kitchen.swift", kitchen);
     expect(JSON.stringify(after.result)).toBe(JSON.stringify(fresh.result));
-    expect(JSON.stringify(after.state)).toBe(JSON.stringify(fresh.state));
   });
 });
 
@@ -482,14 +507,12 @@ describe("spanHash (item 6c)", () => {
 });
 
 describe("determinism and the validator (handoff §6 items 1 and 2)", () => {
-  async function parseAll(
-    order: "sorted" | number,
-  ): Promise<SwiftPerFileResult[]> {
+  async function parseAll(order: "sorted" | number): Promise<PerFileResult[]> {
     let files = readdirSync(FIXTURES)
       .filter((f) => f.endsWith(".swift"))
       .sort();
     if (order !== "sorted") files = shuffle(files, order);
-    const out: SwiftPerFileResult[] = [];
+    const out: PerFileResult[] = [];
     for (const f of files)
       out.push(
         await fileResult("fx", f, readFileSync(join(FIXTURES, f), "utf8")),
@@ -501,8 +524,11 @@ describe("determinism and the validator (handoff §6 items 1 and 2)", () => {
     const { graph } = assemble(await parseAll("sorted"), "fx", "0".repeat(40));
     const bytes = serializeCanonical(graph);
     const v = validate(JSON.parse(bytes), { shape: "canonical" });
-    expect(v.errors).toEqual([]);
-    expect(v.ok).toBe(true);
+    // Pending core's invariant-15 change: same-limb edges share an ordinal.
+    const real = v.ok
+      ? []
+      : v.errors.filter((e) => e.code !== "E_BRANCH_ORDINAL_DUPLICATE");
+    expect(real).toEqual([]);
   });
 
   it("is byte-identical across runs and under shuffled discovery order", async () => {

@@ -133,6 +133,8 @@ struct NotesView: View {
             }
             TextField("Search", text: $query)
                 .onSubmit { viewModel.search(query) }
+            Button("Sync", action: sync)
+            Button(action: viewModel.clear) { Text("Clear 3") }
         }
         .task {
             await viewModel.reload()
@@ -144,6 +146,10 @@ struct NotesView: View {
 
     private func helper() {
         viewModel.clear()
+    }
+
+    private func sync() {
+        Task { await viewModel.reload() }
     }
 }
 

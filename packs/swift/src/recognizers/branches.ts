@@ -353,23 +353,11 @@ export function assignBranches(ctx: FileContext): void {
         expr: chosen.limb.condition,
         source_line: chosen.limb.condition_line,
       };
-      // INTERIM (reported): invariant 15 requires branch_ordinal unique within a
-      // group, but a limb may contain several edges that fire together. Until
-      // the model decides how siblings in one limb are represented, only the
-      // first site in each limb carries the group; the rest keep the condition
-      // label. See the report to the orchestrator.
+      // Every edge in a limb carries the group and the limb's ordinal: two edges
+      // from one limb are the same alternative (settled ordinal rule).
       if (g !== null) {
-        const firstInLimb = sites
-          .filter((s) => within(s, g.limb))
-          .sort(
-            (a, b) =>
-              a.call.startIndex - b.call.startIndex ||
-              (a.edge.label ?? "").localeCompare(b.edge.label ?? ""),
-          )[0];
-        if (firstInLimb === site) {
-          edge.exclusive_group = `${owner.node_id}/branch[${String(g.k)}]`;
-          edge.branch_ordinal = g.ordinal;
-        }
+        edge.exclusive_group = `${owner.node_id}/branch[${String(g.k)}]`;
+        edge.branch_ordinal = g.ordinal;
       }
       const ep = isErrorPath(constructsIn(chosen.limb, chosen.bp, owner));
       edge.is_error_path = ep.value;

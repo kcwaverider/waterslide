@@ -20,14 +20,13 @@ cross-file `compose` pass for extensions and helper-routed URL reconstruction.
 | `src/recognizers/branches.ts` | Forks: `exclusive_group`, `branch_ordinal`, `condition`, `is_error_path` |
 | `src/compose.ts` | Cross-file pass (item 1): extension merge, candidate resolution, `client_service` |
 | `src/repath.ts` | `rePath` for cache hits on moved files (amendment B3) |
-| `src/state.ts` | The JSON-serializable per-file state compose consumes; cache it with the result |
+| `src/state.ts` | The JSON-serializable per-file state compose consumes, carried on the module node's `pack_data` |
 | `scripts/run.ts` | Dev driver: walk a tree, parse, compose, assemble, validate, print the summary |
-| `scripts/ensure-core-shim.mjs` | Temporary: core's package exports point at a file its build does not emit |
 
 ## Running against a tree
 
 ```bash
-npx tsc -b && node packs/swift/scripts/ensure-core-shim.mjs
+npx tsc -b
 node packs/swift/dist/scripts/run.js --repo tapistree --path ~/Code/tapistree/iOS --out /tmp/swift.json
 node packs/swift/dist/scripts/run.js --repo tapistree --path ~/Code/tapistree/iOS --shuffle 42 --quiet
 ```
@@ -56,7 +55,15 @@ for unresolved refs are minted by the driver only; core mints the real
   type. `parser.ts` retries such files with `await` blanked to spaces (same
   offsets) and reads node text from the original; a `grammar_workaround`
   diagnostic records it. Remaining `syntax_error` diagnostics are genuine
-  grammar gaps (operator continuation lines, `as? [K: V] ?? [:]`).
+  grammar gaps (operator continuation lines, `as? [K: V] ?? [:]`), each
+  naming the declaration skipped. Two tapistree views still lose their struct
+  to an unisolated gap and are reported as flattened: `QuestionsView.swift`
+  and `SharedWithMeView.swift`.
+- **Pending core changes.** `NodeUpdate.kind` (client_service through a
+  helper) is emitted once core's schema carries it, reported as
+  `kind_update_unrepresentable` until then; the driver and tests tolerate
+  `E_BRANCH_ORDINAL_DUPLICATE` until invariant 15's uniqueness clause is
+  dropped, since same-limb edges share an ordinal by the settled rule.
 - **Visibility.** Access modifiers only; no module boundary (parser §10 open
   question). `project.pbxproj` is not read.
 - **Protocol-typed receivers.** `provider.load()` with `provider: Providing`

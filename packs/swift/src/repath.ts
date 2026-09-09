@@ -8,7 +8,7 @@
  * Swift `provides` names are not path-derived, so they are untouched except
  * for their `node_id`.
  */
-import type { SwiftPerFileResult } from "./compose.js";
+import type { PerFileResult } from "@waterslide/core";
 
 /** A node id prefix ends at the string end, at `#` (member), or at `/` (branch group suffix). */
 function idBoundary(rest: string): boolean {
@@ -16,10 +16,10 @@ function idBoundary(rest: string): boolean {
 }
 
 export function rePath(
-  result: SwiftPerFileResult,
+  result: PerFileResult,
   repo: string,
   path: string,
-): SwiftPerFileResult {
+): PerFileResult {
   const oldPrefix = `${result.repo}:${result.path}`;
   const newPrefix = `${repo}:${path}`;
   const oldSchema = `sch:${oldPrefix}#`;
@@ -55,13 +55,17 @@ export function rePath(
     return v;
   };
 
-  const rewritten = walk({
-    result: result.result,
-    state: result.state,
-  }) as Pick<SwiftPerFileResult, "result" | "state">;
-  if (rewritten.state !== undefined) {
-    rewritten.state.repo = repo;
-    rewritten.state.path = path;
+  // The per-file state rides inside the module node's pack_data and is
+  // rewritten by the same walk (its own repo/path fields included).
+  const rewritten = walk({ result: result.result }) as Pick<
+    PerFileResult,
+    "result"
+  >;
+  const state = rewritten.result.nodes.find((n) => n.id === newPrefix)
+    ?.pack_data?.swift as { repo: string; path: string } | undefined;
+  if (state !== undefined) {
+    state.repo = repo;
+    state.path = path;
   }
   // The module node's label is the file basename, which is path-derived.
   const moduleNode = rewritten.result.nodes.find((n) => n.id === newPrefix);
@@ -69,7 +73,5 @@ export function rePath(
     const i = path.lastIndexOf("/");
     moduleNode.label = i < 0 ? path : path.slice(i + 1);
   }
-  return rewritten.state === undefined
-    ? { repo, path, result: rewritten.result }
-    : { repo, path, result: rewritten.result, state: rewritten.state };
+  return { repo, path, result: rewritten.result };
 }
