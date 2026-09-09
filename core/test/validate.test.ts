@@ -5,6 +5,7 @@ import {
   type CanonicalGraph,
   type GraphArtifact,
 } from "../src/model/graph.js";
+import { serializeCanonical } from "../src/canonical.js";
 import { validate, type ValidationErrorCode } from "../src/validate.js";
 
 const fixturesDir = new URL("../../fixtures/", import.meta.url);
@@ -554,7 +555,7 @@ describe("invariants 21–23: line ranges, tombstone confidence, set-valued arra
 
   it("treats unsorted sources as a canonical-order violation in canonical shape only", () => {
     const g = load("split-definition.json");
-    const n = g.nodes.find((x) => x.sources.length === 2);
+    const n = g.nodes.find((x) => x.sources.length >= 2);
     if (!n) throw new Error("no split node");
     n.sources.reverse();
     const canonical = validate(g, { shape: "canonical" });
@@ -564,6 +565,57 @@ describe("invariants 21–23: line ranges, tombstone confidence, set-valued arra
         "E_CANONICAL_ORDER",
       ]);
     expect(validate(toArtifact(g), { shape: "artifact" }).ok).toBe(true);
+  });
+});
+
+describe("one defect, one error", () => {
+  it("reports a tombstone with a null reason once, under invariant 22", () => {
+    const g = load("tombstone-broken-edge.json");
+    const t = g.nodes.find((n) => n.kind === "tombstone");
+    if (!t) throw new Error("no tombstone");
+    t.confidence_reason = null;
+    const result = validate(g, { shape: "canonical" });
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.errors.map((e) => e.code)).toEqual([
+        "E_TOMBSTONE_CONFIDENCE",
+      ]);
+  });
+
+  it("reports two foreign-repo spans on one node as one E_ID_FORMAT at the id", () => {
+    const g = load("split-definition.json");
+    const n = g.nodes.find((x) => x.sources.length === 3);
+    if (!n) throw new Error("no split node");
+    g.repos = [...g.repos, { name: "other", commit: "c" }].sort((a, b) =>
+      byteSort(a.name, b.name),
+    );
+    for (const sp of n.sources) sp.repo = "other";
+    const result = validate(g, { shape: "canonical" });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.filter((e) => e.code === "E_ID_FORMAT")).toHaveLength(
+      1,
+    );
+  });
+});
+
+describe("span order is total (graph model §7.2)", () => {
+  it("orders same-start spans by line_end then hash, so serialization does not depend on emission order", () => {
+    const g = load("split-definition.json");
+    const n = g.nodes.find((x) => x.sources.length === 3);
+    if (!n) throw new Error("no split node");
+    const same = n.sources.filter((sp) => sp.line_start === 5);
+    expect(same).toHaveLength(2);
+    expect((same[0]?.line_end ?? 0) < (same[1]?.line_end ?? 0)).toBe(true);
+    const a = {
+      ...g,
+      nodes: g.nodes.map((x) => ({ ...x, sources: [...x.sources] })),
+    };
+    const b = {
+      ...g,
+      nodes: g.nodes.map((x) => ({ ...x, sources: [...x.sources].reverse() })),
+    };
+    expect(serializeCanonical(a)).toBe(serializeCanonical(b));
   });
 });
 
