@@ -1,0 +1,39 @@
+{
+  "$comment": "Parser \u00a78 Mongo read-versus-write, from the method name. Motor/PyMongo collection methods. A method in neither list is emitted with `operation` omitted plus an unsupported_construct diagnostic (decision item 6). Receiver module markers are matched against dotted-name segments of what the receiver resolves to. Receiver roots are the names a Motor database handle is conventionally bound to; matching on them is why every datastore ref is `inferred`.",
+  "read": [
+    "find",
+    "find_one",
+    "aggregate",
+    "count_documents",
+    "estimated_document_count",
+    "distinct",
+    "find_raw_batches",
+    "list_indexes"
+  ],
+  "write": [
+    "insert_one",
+    "insert_many",
+    "update_one",
+    "update_many",
+    "replace_one",
+    "delete_one",
+    "delete_many",
+    "find_one_and_update",
+    "find_one_and_replace",
+    "find_one_and_delete",
+    "bulk_write",
+    "create_index",
+    "create_indexes",
+    "drop_index",
+    "drop"
+  ],
+  "receiver_roots": ["db", "database", "mongo", "mongo_db"],
+  "receiver_module_markers": [
+    "db",
+    "database",
+    "motor",
+    "mongo",
+    "pymongo",
+    "mongodb"
+  ]
+}

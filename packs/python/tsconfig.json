@@ -2,7 +2,15 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "."
+    "rootDir": ".",
+    "paths": {
+      "@waterslide/core": ["../../core/src/index.ts"]
+    }
   },
-  "include": ["src", "test"]
+  "include": ["src", "test", "scripts"],
+  "references": [
+    {
+      "path": "../../core"
+    }
+  ]
 }

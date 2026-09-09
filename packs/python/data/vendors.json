@@ -1,0 +1,54 @@
+{
+  "$comment": "External vendor table (parser \u00a74.1 `external`, decisions 2026-09-08 item 4). A call whose receiver traces to one of these SDK constructors is an external_call to ext:{vendor}/{surface}. boto3 is split by AWS service: S3 is an external service; SQS send is a `publish` edge to a topic, never a vendor. Cohere stays here although tapistree does not use it, so the fixture path stays tested.",
+  "vendors": [
+    {
+      "module": "anthropic",
+      "vendor": "anthropic",
+      "constructors": [
+        "Anthropic",
+        "AsyncAnthropic",
+        "AnthropicBedrock",
+        "AsyncAnthropicBedrock"
+      ],
+      "surface": "first_attribute",
+      "module_functions": {}
+    },
+    {
+      "module": "cohere",
+      "vendor": "cohere",
+      "constructors": ["Client", "AsyncClient", "ClientV2", "AsyncClientV2"],
+      "surface": "method",
+      "module_functions": {}
+    },
+    {
+      "module": "voyageai",
+      "vendor": "voyageai",
+      "constructors": ["Client", "AsyncClient"],
+      "surface": "method",
+      "module_functions": {}
+    }
+  ],
+  "boto3": {
+    "module": "boto3",
+    "factories": ["client", "resource"],
+    "services": {
+      "s3": {
+        "kind": "external",
+        "vendor": "aws",
+        "surface": "s3"
+      },
+      "sqs": {
+        "kind": "topic",
+        "publish_methods": ["send_message", "send_message_batch"],
+        "queue_kwarg": "QueueUrl",
+        "subscribe_methods": ["receive_message"]
+      },
+      "sns": {
+        "kind": "topic",
+        "publish_methods": ["publish", "publish_batch"],
+        "queue_kwarg": "TopicArn",
+        "subscribe_methods": []
+      }
+    }
+  }
+}
