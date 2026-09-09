@@ -71,6 +71,8 @@ export type {
   Generation,
   Hop,
 } from "./browser/flow.js";
+export { aggregateGraph, depthOf, levelsOf } from "./browser/aggregate.js";
+export type { AggregatedGraph, Level } from "./browser/aggregate.js";
 
 const require = createRequire(import.meta.url);
 
@@ -136,6 +138,7 @@ export function buildViewerHtml(
     "./browser/offscreen.js",
     "./browser/flow.js",
     "./browser/animation.js",
+    "./browser/aggregate.js",
     "./browser/render.js",
   ].map(readBrowserModule);
   const title = options.title ?? "waterslide";
@@ -181,6 +184,9 @@ export function buildViewerHtml(
   .edge.travelled.broken > path:first-of-type { stroke: hsl(0 72% 42%); }
   .node.visited > rect:first-of-type { stroke-width: 2.4; stroke: #1d1d1f; }
   .object { transition: opacity .2s; }
+  #zoom-label { position: absolute; left: 50%; top: 96px; transform: translateX(-50%); background: rgba(29,29,31,.88); color: #fff; padding: 6px 14px; border-radius: 16px; font-size: 13px; pointer-events: none; opacity: 0; }
+  #zoom-label.show { animation: zoom-label 1.6s ease-out forwards; }
+  @keyframes zoom-label { 0% { opacity: 0; transform: translate(-50%, -6px); } 15% { opacity: 1; transform: translate(-50%, 0); } 80% { opacity: 1; } 100% { opacity: 0; } }
   #stage svg { display: block; width: 100%; height: 100%; }
   .legend { display: flex; gap: 10px; font-size: 11px; color: #555; align-items: center; flex-wrap: wrap; }
   .legend .line::before { content: ""; display: inline-block; width: 22px; border-top: 2px solid #666; margin-right: 4px; vertical-align: middle; }
@@ -234,6 +240,9 @@ export function buildViewerHtml(
     <button id="replay" type="button" disabled title="play again from the entry point">↺</button>
     <label><input id="loop" type="checkbox"> loop</label>
     <label>speed <select id="speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
+    <span class="sep">|</span>
+    <label title="Semantic level. Scrolling changes it too; this is the same control by hand.">detail <select id="zoom-level"></select></label>
+    <label title="Magnification: base text and node size. A preference, remembered; it does not change the level on its own.">size <select id="magnification"><option value="1">100%</option><option value="1.25">125%</option><option value="1.5">150%</option><option value="2">200%</option></select></label>
   </div>
   <div class="legend" title="Hue is the node's kind. Saturation is change state since your last baseline. Line style is confidence. Red with a warning icon is a broken edge.">
     <span class="line">certain</span><span class="line inferred">inferred</span><span class="line annotated">annotated</span>
@@ -245,6 +254,7 @@ export function buildViewerHtml(
 </div>
 <nav id="sidebar"></nav>
 <div id="stage"></div>
+<div id="zoom-label" hidden></div>
 <aside id="panel" hidden></aside>
 <script id="graph" type="application/json">${safeJson}</script>
 <script id="change-state" type="application/json">${safeChangeState}</script>

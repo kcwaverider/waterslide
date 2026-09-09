@@ -37,6 +37,12 @@ import {
   type BlastRadius,
 } from "./flow.js";
 import { createPlayer, type Player, type PlayerState } from "./animation.js";
+import {
+  aggregateGraph,
+  levelsOf,
+  type AggregatedGraph,
+  type Level,
+} from "./aggregate.js";
 
 /**
  * The renderer — UI spec §1, §3, §4 and §8. Runs in the browser as an inline
@@ -250,6 +256,14 @@ export interface RenderOptions {
   readonly onSelect?: (selection: Selection) => void;
   /** A fork marker was clicked: the edges rooted at that marker (§7.5). */
   readonly onFork?: (edges: readonly LayoutEdge[]) => void;
+  /** §2.2: how many original edges a drawn edge stands for; thicker when more. */
+  readonly weights?: ReadonlyMap<string, number>;
+  /** §2.1: the base-size multiplier. Persistent, and never the same variable as zoom. */
+  readonly magnification?: number;
+  /** The pan/zoom to start from, so a re-render at another level keeps the reader's place. */
+  readonly initialTransform?: D3.ZoomTransform;
+  /** §2.2: after every zoom, the average on-screen node width in CSS pixels. Drives the level trigger. */
+  readonly onZoom?: (avgNodePx: number, zoom: number) => void;
 }
 
 /**
@@ -269,6 +283,10 @@ export interface ViewerHandle {
   clearTravel(): void;
   /** Where travelling objects are drawn, above everything else. */
   readonly objects: D3.Selection<SVGGElement, unknown, null, undefined>;
+  /** The current pan/zoom, to carry across a re-render. */
+  readonly transform: () => D3.ZoomTransform;
+  /** §2.1: change the base size without touching zoom. */
+  setMagnification(magnification: number): void;
 }
 
 export function renderGraph(
@@ -279,6 +297,9 @@ export function renderGraph(
   const changeState = options.changeState ?? {};
   const onSelect = options.onSelect ?? ((): void => undefined);
   const onFork = options.onFork ?? ((): void => undefined);
+  const onZoom = options.onZoom ?? ((): void => undefined);
+  const weights = options.weights ?? new Map<string, number>();
+  let magnification = options.magnification ?? 1;
   const layout = layoutGraph(graph);
   root.replaceChildren();
 
@@ -358,12 +379,15 @@ export function renderGraph(
         ev.stopPropagation();
         onSelect({ type: "edge", id: e.id });
       });
+    // §2.2: an aggregated edge is one thick line, not forty thin ones.
+    const weight = weights.get(e.id) ?? 1;
+    const width = (e.is_broken ? 2 : 1.4) + 1.3 * Math.log2(weight);
     edge
       .append("path")
       .attr("d", le.d)
       .attr("fill", "none")
       .attr("stroke", e.is_broken ? BROKEN_RED : "#666")
-      .attr("stroke-width", e.is_broken ? 2 : 1.4)
+      .attr("stroke-width", width)
       .attr("stroke-dasharray", confidenceDash(e.confidence))
       .attr("marker-end", e.is_broken ? "url(#arrow-broken)" : "url(#arrow)");
     // A wide invisible stroke so a thin line is clickable.
@@ -500,29 +524,51 @@ export function renderGraph(
     w: ln.w,
     h: ln.h,
   }));
-  let lastTransform: D3.ZoomTransform = d3.zoomIdentity;
+  let lastTransform: D3.ZoomTransform =
+    options.initialTransform ?? d3.zoomIdentity;
   const updateOffscreen = (): void => {
-    const view = visibleRegion(root, layout, lastTransform);
+    const view = visibleRegion(root, layout, lastTransform, magnification);
     drawOffscreen(
       overlay,
       offscreenIndicators(boxes, view.layout, inherited),
       view.viewBox,
     );
   };
+  // §2: zoom (scroll wheel, per session) and magnification (a preference,
+  // persistent) are two variables. Both scale the picture; only zoom changes
+  // what is rendered, through the level trigger below. They are composed
+  // here and nowhere else.
+  const applyTransform = (): void => {
+    g.attr(
+      "transform",
+      `${lastTransform.toString()} scale(${String(magnification)})`,
+    );
+  };
+  const meanNodeW =
+    layout.nodes.length === 0
+      ? 0
+      : layout.nodes.reduce((sum, n) => sum + n.w, 0) / layout.nodes.length;
+  const reportZoom = (): void => {
+    const rect = root.getBoundingClientRect();
+    const px = Math.min(rect.width / layout.width, rect.height / layout.height);
+    onZoom(meanNodeW * magnification * lastTransform.k * px, lastTransform.k);
+  };
 
-  // Pan and zoom. Zoom here is magnification of the drawn picture only; the
-  // semantic zoom of UI §2 is M4's, and the two must never share a variable.
   const zoom = d3
     .zoom<SVGSVGElement, unknown>()
-    .scaleExtent([0.2, 6])
+    .scaleExtent([0.15, 8])
     .on("zoom", (event: D3.D3ZoomEvent<SVGSVGElement, unknown>) => {
       lastTransform = event.transform;
-      g.attr("transform", event.transform.toString());
+      applyTransform();
       updateOffscreen();
+      reportZoom();
     });
   svg.call(zoom);
+  if (options.initialTransform !== undefined)
+    svg.call(zoom.transform, options.initialTransform);
   svg.on("click", () => onSelect({ type: "none" }));
   window.addEventListener("resize", updateOffscreen);
+  applyTransform();
   updateOffscreen();
 
   const edgeById = new Map(layout.edges.map((le) => [le.edge.id, le] as const));
@@ -571,6 +617,13 @@ export function renderGraph(
       for (const el of root.querySelectorAll(".travelled, .visited"))
         el.classList.remove("travelled", "visited");
     },
+    transform: () => lastTransform,
+    setMagnification(next) {
+      magnification = next > 0 ? next : 1;
+      applyTransform();
+      updateOffscreen();
+      reportZoom();
+    },
   };
 }
 
@@ -584,6 +637,7 @@ function visibleRegion(
   root: HTMLElement,
   layout: Layout,
   t: D3.ZoomTransform,
+  magnification: number,
 ): { viewBox: Viewport; layout: Viewport } {
   const rect = root.getBoundingClientRect();
   const cw = Math.max(1, rect.width);
@@ -600,10 +654,10 @@ function visibleRegion(
   return {
     viewBox,
     layout: {
-      x0: t.invertX(viewBox.x0),
-      y0: t.invertY(viewBox.y0),
-      x1: t.invertX(viewBox.x1),
-      y1: t.invertY(viewBox.y1),
+      x0: t.invertX(viewBox.x0) / magnification,
+      y0: t.invertY(viewBox.y0) / magnification,
+      x1: t.invertX(viewBox.x1) / magnification,
+      y1: t.invertY(viewBox.y1) / magnification,
     },
   };
 }
@@ -844,6 +898,11 @@ export function mountViewer(): void {
     replay: document.getElementById("replay") as HTMLButtonElement | null,
     loop: document.getElementById("loop") as HTMLInputElement | null,
     speed: document.getElementById("speed") as HTMLSelectElement | null,
+    level: document.getElementById("zoom-level") as HTMLSelectElement | null,
+    magnification: document.getElementById(
+      "magnification",
+    ) as HTMLSelectElement | null,
+    zoomLabel: document.getElementById("zoom-label"),
   };
 
   const draw = (text: string, source: string): void => {
@@ -900,18 +959,37 @@ interface Controls {
   readonly replay: HTMLButtonElement | null;
   readonly loop: HTMLInputElement | null;
   readonly speed: HTMLSelectElement | null;
+  readonly level: HTMLSelectElement | null;
+  readonly magnification: HTMLSelectElement | null;
+  readonly zoomLabel: HTMLElement | null;
 }
 
 const SPEED_KEY = "waterslide.speed";
+const MAGNIFICATION_KEY = "waterslide.magnification";
 
 /**
- * One drawn graph and everything that happens on it: selection, flow mode,
- * branch choice and playback. Zoom and magnification live in the renderer;
- * nothing here re-draws the map.
+ * §2.2 trigger: step to the next level when the average on-screen node is
+ * wider than this many CSS pixels, back when narrower than the lower bound.
+ * Two thresholds, well apart, are the hysteresis that stops flicker.
+ */
+export const LEVEL_TRIGGER = { finerAbovePx: 270, coarserBelowPx: 95 } as const;
+
+/**
+ * One graph and everything that happens on it: selection, flow mode, branch
+ * choice, playback, and the semantic level it is drawn at. The map is drawn
+ * once per level (§0) — only a level change, which is a different graph,
+ * re-draws it — and the reader's pan/zoom survives that.
  */
 class Session {
-  readonly handle: ViewerHandle;
-  private readonly player: Player;
+  handle: ViewerHandle;
+  private player: Player;
+  private view: AggregatedGraph;
+  private readonly levels: Level[];
+  private level: number;
+  /** §2.1: a persistent preference. Never the same variable as zoom. */
+  private magnification = 1;
+  /** When the level last changed; the trigger holds off briefly afterwards. Starts in the past so the first zoom counts. */
+  private levelChangedAt = Number.NEGATIVE_INFINITY;
   private entry: string | null = null;
   /** Where the current play starts: the entry point, or the fork just flipped (§7.5). */
   private playStart: string | null = null;
@@ -925,14 +1003,46 @@ class Session {
     private readonly panel: HTMLElement | null,
     private readonly controls: Controls,
   ) {
-    this.handle = renderGraph(stage, graph, {
-      changeState,
-      onSelect: (selection) => {
-        if (panel !== null) select(stage, panel, graph, changeState, selection);
+    this.levels = levelsOf(graph.nodes);
+    this.level = this.levels.length - 1;
+    this.magnification = this.readMagnification();
+    this.view = aggregateGraph(graph, this.level);
+    this.handle = this.draw(undefined);
+    this.player = this.makePlayer();
+    this.wireControls();
+    this.reflect("idle");
+  }
+
+  private draw(initialTransform: D3.ZoomTransform | undefined): ViewerHandle {
+    const { stage, panel, changeState } = this;
+    const view = this.view;
+    return renderGraph(
+      stage,
+      { ...this.graph, ...view },
+      {
+        changeState,
+        weights: view.weights,
+        magnification: this.magnification,
+        ...(initialTransform === undefined ? {} : { initialTransform }),
+        onSelect: (selection) => {
+          if (panel !== null)
+            select(
+              stage,
+              panel,
+              { ...this.graph, ...view },
+              changeState,
+              selection,
+            );
+        },
+        onFork: (edges) => this.flipFork(edges),
+        onZoom: (avgNodePx) => this.considerLevel(avgNodePx),
       },
-      onFork: (edges) => this.flipFork(edges),
-    });
-    this.player = createPlayer(this.handle.objects, this.handle.edgeById, {
+    );
+  }
+
+  private makePlayer(): Player {
+    const { stage, panel, changeState } = this;
+    return createPlayer(this.handle.objects, this.handle.edgeById, {
       onTravel: (id) => this.handle.markTravelled(id),
       onArrive: (id) => this.handle.markVisited(id),
       onRestart: () => {
@@ -941,12 +1051,78 @@ class Session {
       },
       onObjectClick: (id) => {
         if (panel !== null)
-          select(stage, panel, graph, changeState, { type: "edge", id });
+          select(stage, panel, { ...this.graph, ...this.view }, changeState, {
+            type: "edge",
+            id,
+          });
       },
       onState: (state) => this.reflect(state),
     });
-    this.wireControls();
-    this.reflect("idle");
+  }
+
+  /** §2.2: the level trigger, with hysteresis and a short guard after a change. */
+  private considerLevel(avgNodePx: number): void {
+    if (performance.now() - this.levelChangedAt < 500) return;
+    if (
+      avgNodePx > LEVEL_TRIGGER.finerAbovePx &&
+      this.level < this.levels.length - 1
+    )
+      this.setLevel(this.level + 1);
+    else if (avgNodePx < LEVEL_TRIGGER.coarserBelowPx && this.level > 0)
+      this.setLevel(this.level - 1);
+  }
+
+  /** Re-draws at another level. The only thing that re-draws the map, and it keeps the reader's place. */
+  setLevel(level: number): void {
+    const target = Math.max(0, Math.min(this.levels.length - 1, level));
+    if (target === this.level) return;
+    this.level = target;
+    this.levelChangedAt = performance.now();
+    const transform = this.handle.transform();
+    this.player.stop();
+    this.view = aggregateGraph(this.graph, target);
+    this.handle = this.draw(transform);
+    this.player = this.makePlayer();
+    this.player.setLoop(this.controls.loop?.checked ?? false);
+    this.player.setSpeed(Number(this.controls.speed?.value) || 1);
+    if (this.controls.level !== null)
+      this.controls.level.value = String(target);
+    this.announce(`now showing ${this.levels[target]?.name ?? "nodes"}`);
+    if (this.entry !== null) this.selectEntry(this.entry);
+    else this.reflect("idle");
+  }
+
+  /** §2.2: a brief transition label, so a level change is never surprising. */
+  private announce(text: string): void {
+    const el = this.controls.zoomLabel;
+    if (el === null) return;
+    el.textContent = text;
+    el.hidden = false;
+    el.classList.remove("show");
+    void el.offsetWidth;
+    el.classList.add("show");
+    window.setTimeout(() => {
+      el.hidden = true;
+    }, 1600);
+  }
+
+  private readMagnification(): number {
+    try {
+      const saved = Number(localStorage.getItem(MAGNIFICATION_KEY));
+      return saved > 0 ? saved : 1;
+    } catch {
+      return 1;
+    }
+  }
+
+  setMagnification(m: number): void {
+    this.magnification = m > 0 ? m : 1;
+    this.handle.setMagnification(this.magnification);
+    try {
+      localStorage.setItem(MAGNIFICATION_KEY, String(this.magnification));
+    } catch {
+      // A preference that did not persist still applies to this page.
+    }
   }
 
   private wireControls(): void {
@@ -957,6 +1133,28 @@ class Session {
     c.loop?.addEventListener("change", () =>
       this.player.setLoop(c.loop?.checked ?? false),
     );
+    if (c.level !== null) {
+      c.level.replaceChildren();
+      for (const l of this.levels) {
+        const o = document.createElement("option");
+        o.value = String(l.depth);
+        o.textContent = l.name;
+        c.level.appendChild(o);
+      }
+      c.level.value = String(this.level);
+      c.level.addEventListener("change", () => {
+        if (c.level !== null) this.setLevel(Number(c.level.value));
+      });
+    }
+    if (c.magnification !== null) {
+      c.magnification.value = String(this.magnification);
+      if (c.magnification.value !== String(this.magnification))
+        c.magnification.value = "1";
+      c.magnification.addEventListener("change", () => {
+        if (c.magnification !== null)
+          this.setMagnification(Number(c.magnification.value) || 1);
+      });
+    }
     if (c.speed !== null) {
       // §7.1: speed is adjustable and persisted.
       let saved: string | null = null;
@@ -1039,16 +1237,19 @@ class Session {
     const node = this.graph.nodes.find((n) => n.id === id);
     if (node === undefined) return;
     this.entry = id;
-    const radius = blastRadius(this.graph, id);
+    // At a coarser level the entry point is drawn as the aggregate holding it.
+    const start = this.view.representative.get(id) ?? id;
+    const radius = blastRadius(this.view, start);
     this.handle.setFlow(radius);
-    this.playStart = id;
-    const chosen = chosenAlternatives(this.graph, this.overrides);
+    this.playStart = start;
+    const chosen = chosenAlternatives(this.view, this.overrides);
     this.handle.setBranches(chosen);
     this.markSidebar();
+    const levelName = this.levels[this.level]?.name ?? "";
     this.onStatus(
-      `flow: ${node.label} — ${String(radius.nodes.size - 1)} reachable node${radius.nodes.size === 2 ? "" : "s"}, ${String(radius.edges.size)} edge${radius.edges.size === 1 ? "" : "s"}`,
+      `flow: ${node.label} — ${String(radius.nodes.size - 1)} reachable node${radius.nodes.size === 2 ? "" : "s"}, ${String(radius.edges.size)} edge${radius.edges.size === 1 ? "" : "s"}${this.level === this.levels.length - 1 ? "" : ` at ${levelName} level`}`,
     );
-    this.player.play(planPlayback(this.graph, id, chosen));
+    this.player.play(planPlayback(this.view, start, chosen));
     this.reflect(this.player.state);
   }
 
@@ -1058,7 +1259,7 @@ class Session {
     this.player.stop();
     this.handle.setFlow(null);
     this.handle.clearTravel();
-    this.handle.setBranches(chosenAlternatives(this.graph, this.overrides));
+    this.handle.setBranches(chosenAlternatives(this.view, this.overrides));
     this.markSidebar();
     this.onStatus(null);
     this.reflect("idle");
@@ -1080,19 +1281,19 @@ class Session {
           .filter((o): o is number => o !== null),
       ),
     ].sort((a, b) => a - b);
-    const current = chosenAlternatives(this.graph, this.overrides).get(group);
+    const current = chosenAlternatives(this.view, this.overrides).get(group);
     const idx = current === undefined ? -1 : ordinals.indexOf(current);
     const next =
       ordinals.length === 1
         ? (ordinals[0] as number)
         : (ordinals[(idx + 1) % ordinals.length] as number);
     this.overrides.set(group, next);
-    const chosen = chosenAlternatives(this.graph, this.overrides);
+    const chosen = chosenAlternatives(this.view, this.overrides);
     this.handle.setBranches(chosen);
     if (this.entry === null) return;
     // Replay from the fork: objects start at the branching node.
     this.playStart = first.edge.from;
-    this.player.play(planPlayback(this.graph, first.edge.from, chosen));
+    this.player.play(planPlayback(this.view, first.edge.from, chosen));
   }
 }
 
