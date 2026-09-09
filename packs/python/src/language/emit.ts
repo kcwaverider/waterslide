@@ -345,12 +345,19 @@ function isNoise(
   if (libraryModules.has(root)) return true;
   const last = (segments[segments.length - 1] as string).replace(/\(\)$/, "");
   // A builtin-value method needs receiver evidence beyond its name: the call
-  // sits on an attribute of a typed value (`request.name.strip()`) or on a
-  // call result (`docs().append()`). A method called directly on an imported
-  // name (`formatter.format(report)`) may be a domain method and keeps its edge.
-  const throughAttribute =
-    restLength >= 2 || segments.some((x) => x.endsWith("()"));
-  if (valueMethods.has(last) && throughAttribute) return true;
+  // sits on an attribute of a typed value (`request.name.strip()`), or on the
+  // result of a call that is itself a builtin-value producer (`model.dict()`,
+  // `text.strip()`). A method called directly on an imported name
+  // (`formatter.format(report)`) or on an untyped call result
+  // (`opaque().format(x)`) may be a domain method and keeps its edge.
+  const producers = segments
+    .slice(0, -1)
+    .filter((x) => x.endsWith("()"))
+    .map((x) => x.slice(0, -2));
+  const throughValue =
+    restLength >= 2 ||
+    producers.some((p) => modelMethods.has(p) || valueMethods.has(p));
+  if (valueMethods.has(last) && throughValue) return true;
   const receiver =
     segments.length >= 2 ? (segments[segments.length - 2] as string) : "";
   return modelMethods.has(last) && /^[A-Z]/.test(receiver);

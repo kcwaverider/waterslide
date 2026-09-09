@@ -20,7 +20,7 @@
     ]
   },
   "value_methods": {
-    "$comment": "Methods of builtin values (str, bytes, list, dict, set, datetime) that no domain class plausibly defines. Dropped when they are the last segment of an unresolved reference AND the receiver shows builtin-value evidence: the call sits on an attribute of a typed value (`request.name.strip()`) or on a call result (`_docs().append()`). A method called directly on an imported name (`formatter.format(report)`) keeps its edge. Deliberately EXCLUDED because a repository or service class plausibly defines them: get, update, add, remove, pop, clear, copy, find, read, write, close, send, run. Could still wrongly drop: an in-repo method named e.g. `format` or `items` on an attribute of a typed value or on a call result.",
+    "$comment": "Methods of builtin values (str, bytes, list, dict, set, datetime) that no domain class plausibly defines. Dropped when they are the last segment of an unresolved reference AND the receiver shows builtin-value evidence: the call sits on an attribute of a typed value (`request.name.strip()`) or on the result of a call that is itself a builtin-value producer (`model.dict().items()`, `text.strip().split()`). A method called directly on an imported name (`formatter.format(report)`) or on an untyped call result (`opaque().format(x)`) keeps its edge. A producer annotated with a builtin return type is handled by the analyzer without this table. Deliberately EXCLUDED because a repository or service class plausibly defines them: get, update, add, remove, pop, clear, copy, find, read, write, close, send, run. Could still wrongly drop: an in-repo method named e.g. `format` or `items` on an attribute of a typed value.",
     "names": [
       "append",
       "capitalize",

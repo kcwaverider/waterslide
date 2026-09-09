@@ -82,6 +82,35 @@ describe("noise (A10 item 1): calls that tell a reader nothing are dropped silen
     ]);
   });
 
+  it("a call result is evidence only when the producing call is itself a value producer", async () => {
+    const pack = await getPack();
+    const r = pack.parse(
+      "r",
+      "m.py",
+      [
+        "from typing import Any",
+        "from models.memory import MemoryDB",
+        "from services import loader",
+        "def opaque() -> Any:",
+        "    return loader.load()",
+        "def f(memory: MemoryDB, x):",
+        "    opaque().format(x)",
+        "    loader.fetch().format(x)",
+        "    memory.dict().items()",
+        "    memory.name.strip().split()",
+        "",
+      ].join("\n"),
+    );
+    const viaF = r.edges.filter(
+      (e) => e.from.endsWith("#f") && typeof e.to !== "string",
+    );
+    expect(targets(viaF).sort()).toEqual([
+      "m.opaque().format", // untyped call result: could be a domain object
+      "services.loader.fetch", // the producing call is a real edge
+      "services.loader.fetch().format", // untyped call result, cross-file: kept
+    ]);
+  });
+
   it("a classmethod on a builtin type name is a builtin value operation: bytes.fromhex, dict.fromkeys", async () => {
     const pack = await getPack();
     const r = pack.parse(
