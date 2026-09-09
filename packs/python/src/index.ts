@@ -13,6 +13,7 @@ import { Emitter } from "./emitter.js";
 import { externalRecognizer } from "./frameworks/external.js";
 import { composeFastApi } from "./frameworks/fastapi/compose.js";
 import { fastapiRecognizer } from "./frameworks/fastapi/index.js";
+import { awsLambdaRecognizer } from "./frameworks/aws-lambda.js";
 import { mongoRecognizer } from "./frameworks/mongo.js";
 import { pydanticRecognizer } from "./frameworks/pydantic.js";
 import type { FrameworkRecognizer } from "./frameworks/types.js";
@@ -51,7 +52,7 @@ export const manifest: PackManifest = {
   version: "0.1.0",
   graph_schema_version: GRAPH_SCHEMA_VERSION,
   extensions: [".py"],
-  frameworks: ["fastapi"],
+  frameworks: ["fastapi", "aws_lambda"],
 };
 
 /**
@@ -61,6 +62,7 @@ export const manifest: PackManifest = {
 const RECOGNIZERS: readonly FrameworkRecognizer[] = [
   pydanticRecognizer,
   fastapiRecognizer,
+  awsLambdaRecognizer,
   mongoRecognizer,
   externalRecognizer,
 ];

@@ -45,6 +45,8 @@ export interface AttributeInfo {
   readonly value: ValueInfo | null;
   /** The first assignment was a literal (dict, list, str, None, ...): a builtin, not a traceable type. */
   readonly literal: boolean;
+  /** The first assignment's right-hand side as written, for string-constant recovery (URLs). */
+  readonly assigned: Node | null;
   readonly line: number;
 }
 
@@ -71,6 +73,8 @@ export type Binding =
       readonly kind: "variable";
       readonly value: ValueInfo | null;
       readonly annotation: string | null;
+      /** The right-hand side as written, for string-constant recovery (URLs). */
+      readonly assigned: Node | null;
       readonly line: number;
     }
   | { readonly kind: "parameter"; readonly annotation: string | null }
@@ -119,6 +123,8 @@ export type Callee =
   | { readonly kind: "builtin"; readonly name: string }
   /** A call to a nested def or lambda bound in the enclosing function: internal plumbing, skipped silently. */
   | { readonly kind: "local"; readonly name: string }
+  /** The receiver is a builtin value by evidence (a producer annotated `-> dict`, `-> List[str]`): its methods are not edges. Skipped silently. */
+  | { readonly kind: "builtin_value"; readonly reason: string }
   /** A bare name bound nowhere in the file: emitted verbatim, file-scoped provides may match it. */
   | {
       readonly kind: "unbound";
@@ -183,6 +189,16 @@ export interface FileModel {
     scope: Scope,
     owner: Definition | null,
   ): Callee;
+  /**
+   * The string literals an expression can evaluate to, by local evidence:
+   * a literal, a module constant, a `self.<attr>` assigned in `__init__`, or a
+   * conditional over those. Null when any branch is not recoverable.
+   */
+  stringConstants(
+    expr: Node,
+    scope: Scope,
+    owner: Definition | null,
+  ): string[] | null;
   /** Resolve `<call>().a.b` — a call on the result of another call — to a callee. */
   resolveCallResult(
     receiverCall: Node,

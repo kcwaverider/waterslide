@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { EntryPointKindSchema } from "@waterslide/core";
 import { z } from "zod";
 import { packageRoot } from "./tree-sitter/runtime.js";
 
@@ -53,9 +54,22 @@ const Boto3ServiceSchema = z.discriminatedUnion("kind", [
     queue_kwarg: z.string(),
   }),
 ]);
+const HttpClientSchema = z.strictObject({
+  module: z.string(),
+  constructors: z.array(z.string()),
+  /** `requests.get(url)`: the module itself exposes the verbs. */
+  module_functions: z.boolean(),
+});
+export type HttpClient = z.infer<typeof HttpClientSchema>;
+
 export const VendorTableSchema = z.strictObject({
   $comment: z.string().optional(),
   vendors: z.array(VendorSchema),
+  http_clients: z.strictObject({
+    $comment: z.string().optional(),
+    clients: z.array(HttpClientSchema),
+    methods: z.record(z.string(), z.string().nullable()),
+  }),
   boto3: z.strictObject({
     module: z.string(),
     factories: z.array(z.string()),
@@ -80,12 +94,32 @@ export const BuiltinsSchema = z.strictObject({
   names: z.array(z.string()),
 });
 
+export const NoiseTableSchema = z.strictObject({
+  $comment: z.string().optional(),
+  library_modules: BuiltinsSchema,
+  value_methods: BuiltinsSchema,
+  model_methods: BuiltinsSchema,
+});
+export const LambdaEventShapesSchema = z.strictObject({
+  $comment: z.string().optional(),
+  keys: z.record(z.string(), EntryPointKindSchema),
+});
+export type LambdaEventShapes = z.infer<typeof LambdaEventShapesSchema>;
+
+export interface NoiseTable {
+  readonly libraryModules: ReadonlySet<string>;
+  readonly valueMethods: ReadonlySet<string>;
+  readonly modelMethods: ReadonlySet<string>;
+}
+
 export interface PackData {
   readonly errorPaths: ErrorPathTable;
   readonly vendors: VendorTable;
   readonly mongo: MongoTable;
   readonly builtins: ReadonlySet<string>;
   readonly stdlibModules: ReadonlySet<string>;
+  readonly noise: NoiseTable;
+  readonly lambdaEventShapes: LambdaEventShapes;
 }
 
 function loadJson<T>(file: string, schema: z.ZodType<T>): T {
@@ -112,6 +146,18 @@ export function loadPackData(): PackData {
     stdlibModules: new Set(
       loadJson("stdlib-modules.json", BuiltinsSchema).names,
     ),
+    lambdaEventShapes: loadJson(
+      "lambda-event-shapes.json",
+      LambdaEventShapesSchema,
+    ),
+    noise: (() => {
+      const t = loadJson("noise.json", NoiseTableSchema);
+      return {
+        libraryModules: new Set(t.library_modules.names),
+        valueMethods: new Set(t.value_methods.names),
+        modelMethods: new Set(t.model_methods.names),
+      };
+    })(),
   };
   return cached;
 }

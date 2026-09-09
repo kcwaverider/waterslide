@@ -375,7 +375,7 @@ describe("factory calls: receiver types from return annotations", () => {
       ["repo:m.py#make", "certain"],
       ["repositories.note_repo.NoteRepo.save", "certain"],
       ["repo:m.py#opaque", "certain"],
-      ["m.opaque().get", "inferred"],
+      ["m.opaque().get", "inferred"], // `-> Any` is not evidence of a builtin value
     ]);
     const reason = r.edges.find(
       (e) => typeof e.to !== "string" && e.to.value.includes("().upload"),

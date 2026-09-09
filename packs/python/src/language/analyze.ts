@@ -71,6 +71,12 @@ export function analyzeFile(
     owner: Definition | null,
   ): Callee =>
     resolveChainImpl(chain, scope, owner, file, classes, data, dictTables);
+  const stringConstants = (
+    expr: Node,
+    scope: Scope,
+    owner: Definition | null,
+  ): string[] | null =>
+    stringConstantsImpl(expr, scope, owner, classes, moduleScope, 0, new Set());
   const resolveCallResult = (
     receiverCall: Node,
     attrs: readonly string[],
@@ -122,7 +128,60 @@ export function analyzeFile(
     scopeFor,
     resolveChain,
     resolveCallResult,
+    stringConstants,
   };
+}
+
+/**
+ * Local-evidence string recovery (A10 item 2): the literals an expression can
+ * take. Follows module constants, `self.<attr>` assigned in the class, and
+ * conditionals; stops at anything else with null rather than guessing.
+ */
+function stringConstantsImpl(
+  expr: Node,
+  scope: Scope,
+  owner: Definition | null,
+  classes: Map<string, ClassInfo>,
+  moduleScope: Scope,
+  depth: number,
+  seen: Set<number>,
+): string[] | null {
+  if (depth > 6 || seen.has(expr.id)) return null;
+  seen.add(expr.id);
+  const e = unwrapExpression(expr);
+  const recurse = (n: Node, s: Scope): string[] | null =>
+    stringConstantsImpl(n, s, owner, classes, moduleScope, depth + 1, seen);
+  if (e.type === "string") {
+    const lit = stringLiteral(e);
+    return lit === null ? null : [lit];
+  }
+  if (e.type === "conditional_expression") {
+    const [whenTrue, , whenFalse] = e.namedChildren;
+    if (!whenTrue || !whenFalse) return null;
+    const a = recurse(whenTrue, scope);
+    const b = recurse(whenFalse, scope);
+    return a && b ? [...new Set([...a, ...b])] : null;
+  }
+  if (e.type === "identifier") {
+    const b = lookup(scope, e.text);
+    if (b?.kind === "variable" && b.assigned) return recurse(b.assigned, scope);
+    return null;
+  }
+  const chain = attributeChain(e);
+  if (
+    chain &&
+    chain.length === 2 &&
+    owner?.parent &&
+    isFirstParameter(owner, chain[0] as string)
+  ) {
+    const attr = classes
+      .get(owner.parent.name)
+      ?.attributes.get(chain[1] as string);
+    // The attribute's expression was written in another method (usually __init__);
+    // module constants resolve from the module scope, parameters do not.
+    return attr?.assigned ? recurse(attr.assigned, moduleScope) : null;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -445,11 +504,31 @@ function bindAssignment(
     return;
   }
   if (left.type !== "identifier") return;
-  if (scope.bindings.get(left.text)?.kind === "definition") return; // a def wins over a later rebinding
-  const annotation = typeText(assignment.childForFieldName("type"));
+  bindVariable(
+    scope,
+    left.text,
+    right,
+    typeText(assignment.childForFieldName("type")),
+    owner,
+    resolveChain,
+    lineStart(assignment),
+  );
+}
+
+/** Bind `name` to a value: `x = ...`, or `with <call> as x`. First resolved binding wins. */
+function bindVariable(
+  scope: Scope,
+  name: string,
+  right: Node | null,
+  annotation: string | null,
+  owner: Definition | null,
+  resolveChain: FileModel["resolveChain"],
+  line: number,
+): void {
+  if (scope.bindings.get(name)?.kind === "definition") return; // a def wins over a later rebinding
   const value = right ? valueInfoOf(right, scope, owner, resolveChain) : null;
   // First binding wins: the type at first assignment is the one to trust.
-  const existing = scope.bindings.get(left.text);
+  const existing = scope.bindings.get(name);
   // First resolved binding wins. A name-only pass (dynamic callee) or a
   // non-call value never blocks the later pass that can resolve the constructor.
   if (
@@ -459,11 +538,12 @@ function bindAssignment(
     existing.value.callee.kind !== "dynamic"
   )
     return;
-  scope.bindings.set(left.text, {
+  scope.bindings.set(name, {
     kind: "variable",
     value,
     annotation,
-    line: lineStart(assignment),
+    assigned: right,
+    line: line,
   });
 }
 
@@ -549,13 +629,33 @@ function bindBlockNames(
             });
     } else if (n.type === "as_pattern") {
       const alias = n.childForFieldName("alias");
-      if (alias)
-        for (const id of identifiersIn(alias))
+      const valueNode = n.namedChildren[0];
+      const names = alias ? identifiersIn(alias) : [];
+      if (
+        names.length === 1 &&
+        valueNode &&
+        valueNode.id !== alias?.id &&
+        unwrapExpression(valueNode).type === "call"
+      ) {
+        // `async with aiohttp.ClientSession() as session`: the name holds the
+        // constructor result, exactly like `session = aiohttp.ClientSession()`.
+        bindVariable(
+          scope,
+          names[0] as string,
+          valueNode,
+          null,
+          owner,
+          resolveChain,
+          lineStart(n),
+        );
+      } else {
+        for (const id of names)
           if (!scope.bindings.has(id))
             scope.bindings.set(id, {
               kind: "loop_or_context",
               line: lineStart(n),
             });
+      }
     } else if (n.type === "lambda") {
       const params = n.childForFieldName("parameters");
       for (const p of params?.namedChildren ?? []) {
@@ -589,7 +689,7 @@ function bindFunctionLocals(
   if (body) bindBlockNames(body, scope, def, resolveChain);
 }
 
-function parameterName(p: Node): {
+export function parameterName(p: Node): {
   name: string | null;
   annotation: string | null;
 } {
@@ -667,6 +767,7 @@ function collectClassAttributes(
           value: null,
           literal:
             right !== null && LITERAL_TYPES.has(unwrapExpression(right).type),
+          assigned: right,
           line: lineStart(a),
         });
       }
@@ -718,6 +819,7 @@ function collectClassAttributes(
                 existing?.literal ??
                 (right !== null &&
                   LITERAL_TYPES.has(unwrapExpression(right).type)),
+              assigned: existing?.assigned ?? right,
               line: existing?.line ?? lineStart(n),
             };
             info.attributes.set(attr, record);
@@ -897,8 +999,9 @@ function resolveChainImpl(
   }
 
   if (binding === null) {
-    if (rest.length === 0 && data.builtins.has(rootName))
-      return { kind: "builtin", name: rootName };
+    // `len(x)`, and `bytes.fromhex(...)` / `dict.fromkeys(...)`: a call on a
+    // builtin, or on a builtin type's classmethod, is a value operation.
+    if (data.builtins.has(rootName)) return { kind: "builtin", name: rootName };
     const root: RootInfo = {
       name: rootName,
       binding: null,
@@ -1021,6 +1124,16 @@ function resolveChainImpl(
             uncertainty: null,
           };
       }
+      if (
+        binding.value?.callee.kind === "in_file" &&
+        rest.length > 0 &&
+        returnsBuiltinValue(binding.value.callee.def, scope, file, data)
+      ) {
+        return {
+          kind: "builtin_value",
+          reason: `${rootName} holds the result of ${binding.value.callee.def.qualifiedName}(), annotated ${binding.value.callee.def.returnType ?? ""}, a builtin value`,
+        };
+      }
       const factory = binding.value
         ? calleeQualified(binding.value.callee, file)
         : null;
@@ -1082,6 +1195,45 @@ function resolveChainImpl(
       };
     }
   }
+}
+
+/**
+ * A return annotation that names a builtin or standard-library value —
+ * `-> dict`, `-> List[str]`, `-> Optional[str]`, `-> datetime` — so a call on
+ * the result (`names.get(...)`) is a value operation, not an edge (A10 item 1,
+ * the evidence-based rule: no name table involved).
+ */
+function returnsBuiltinValue(
+  def: Definition,
+  scope: Scope,
+  file: FileContext,
+  data: PackData,
+): boolean {
+  if (def.kind !== "function" || def.returnType === null) return false;
+  let t = def.returnType.trim().replace(/^["']|["']$/g, "");
+  for (;;) {
+    const m = /^(Optional|Annotated)\[(.*)\]$/s.exec(t);
+    if (!m) break;
+    t = (m[2] as string).split(",")[0]?.trim() ?? "";
+  }
+  t = t.replace(/\s*\|\s*None$/, "").replace(/^None\s*\|\s*/, "");
+  if (
+    /^(List|list|Sequence|Iterable|Set|set|Dict|dict|Tuple|tuple|FrozenSet|frozenset|Mapping|deque)\b/.test(
+      t,
+    )
+  )
+    return true;
+  if (/^[A-Za-z_]\w*$/.test(t) && data.builtins.has(t))
+    return lookup(scope, t) === null;
+  if (t === "None") return true;
+  const chain = annotationChain(def.returnType);
+  const resolved = chain ? resolveTypeChain(chain, scope, file) : null;
+  // `typing.Any` says nothing about the value; a domain call on it must stay an edge.
+  if (resolved !== null && /\.Any$/.test(resolved)) return false;
+  return (
+    resolved !== null &&
+    data.stdlibModules.has(resolved.split(".")[0] as string)
+  );
 }
 
 /** The qualified name of a callee, for naming what a call returned. */
@@ -1152,6 +1304,15 @@ function resolveCallResultImpl(
       root,
       rest: attrs,
       uncertainty: null,
+    };
+  }
+  if (
+    inner.kind === "in_file" &&
+    returnsBuiltinValue(inner.def, scope, file, data)
+  ) {
+    return {
+      kind: "builtin_value",
+      reason: `${inner.def.qualifiedName}() is annotated ${inner.def.returnType ?? ""}, a builtin value`,
     };
   }
   const factory = calleeQualified(inner, file);

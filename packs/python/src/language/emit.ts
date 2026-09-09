@@ -269,8 +269,10 @@ function emitCall(model: FileModel, em: Emitter, site: CallSite): void {
       });
       return;
     case "symbol": {
-      const rootModule = callee.value.split(".")[0] as string;
+      const segments = callee.value.split(".");
+      const rootModule = segments[0] as string;
       if (em.data.stdlibModules.has(rootModule)) return; // the standard library is not on the map
+      if (isNoise(segments, callee.rest.length, em)) return; // data/noise.json; silent by design
       const ref: UnresolvedRef = {
         ref_kind: "symbol",
         value: callee.value,
@@ -305,6 +307,7 @@ function emitCall(model: FileModel, em: Emitter, site: CallSite): void {
     }
     case "builtin":
     case "local":
+    case "builtin_value":
       return;
     case "opaque":
       em.diag(
@@ -326,6 +329,38 @@ function emitCall(model: FileModel, em: Emitter, site: CallSite): void {
       emitDispatch(model, em, site);
       return;
   }
+}
+
+/**
+ * A10 item 1: calls that exist but tell a reader nothing, from data/noise.json.
+ * Reached only for references the resolver could not bind to an in-file node.
+ */
+function isNoise(
+  segments: readonly string[],
+  restLength: number,
+  em: Emitter,
+): boolean {
+  const { libraryModules, valueMethods, modelMethods } = em.data.noise;
+  const root = (segments[0] as string).replace(/\(\)$/, "");
+  if (libraryModules.has(root)) return true;
+  const last = (segments[segments.length - 1] as string).replace(/\(\)$/, "");
+  // A builtin-value method needs receiver evidence beyond its name: the call
+  // sits on an attribute of a typed value (`request.name.strip()`), or on the
+  // result of a call that is itself a builtin-value producer (`model.dict()`,
+  // `text.strip()`). A method called directly on an imported name
+  // (`formatter.format(report)`) or on an untyped call result
+  // (`opaque().format(x)`) may be a domain method and keeps its edge.
+  const producers = segments
+    .slice(0, -1)
+    .filter((x) => x.endsWith("()"))
+    .map((x) => x.slice(0, -2));
+  const throughValue =
+    restLength >= 2 ||
+    producers.some((p) => modelMethods.has(p) || valueMethods.has(p));
+  if (valueMethods.has(last) && throughValue) return true;
+  const receiver =
+    segments.length >= 2 ? (segments[segments.length - 2] as string) : "";
+  return modelMethods.has(last) && /^[A-Z]/.test(receiver);
 }
 
 /** Parser §6.4: a literal handler map is a fork with one alternative per key. */

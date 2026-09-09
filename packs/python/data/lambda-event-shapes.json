@@ -1,0 +1,6 @@
+{
+  "$comment": "AWS Lambda event envelopes that make a module-level function an entry point (A10 item 3). Detection is from SHAPE: the function reads one of these keys off a parameter, by `event[\"Records\"]` or `event.get(\"Records\", ...)`. The function's name plays no part — `handler` would misfire on the Mangum-wrapped HTTP handlers. `Records` is the batch envelope shared by SQS, SNS, S3 and Kinesis triggers, all event-driven consumers, hence queue_subscriber. Could misfire: a function that iterates a dict parameter's \"Records\" key without being a Lambda entry; tapistree has one such access and it is the embed worker.",
+  "keys": {
+    "Records": "queue_subscriber"
+  }
+}
