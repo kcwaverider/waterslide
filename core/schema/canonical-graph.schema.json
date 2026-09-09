@@ -78,51 +78,47 @@
               "null"
             ]
           },
-          "source": {
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "repo": {
-                    "type": "string"
-                  },
-                  "path": {
-                    "type": "string"
-                  },
-                  "line_start": {
-                    "type": "integer",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "line_end": {
-                    "anyOf": [
-                      {
-                        "type": "integer",
-                        "exclusiveMinimum": 0,
-                        "maximum": 9007199254740991
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "hash": {
-                    "type": "string"
-                  }
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "repo": {
+                  "type": "string"
                 },
-                "required": [
-                  "repo",
-                  "path",
-                  "line_start",
-                  "line_end",
-                  "hash"
-                ],
-                "additionalProperties": false
+                "path": {
+                  "type": "string"
+                },
+                "line_start": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "line_end": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "hash": {
+                  "type": "string"
+                }
               },
-              {
-                "type": "null"
-              }
-            ]
+              "required": [
+                "repo",
+                "path",
+                "line_start",
+                "line_end",
+                "hash"
+              ],
+              "additionalProperties": false
+            }
           },
           "confidence": {
             "type": "string",
@@ -175,7 +171,7 @@
           "label",
           "tier",
           "parent",
-          "source",
+          "sources",
           "confidence",
           "confidence_reason",
           "is_entry_point",

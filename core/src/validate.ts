@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import { byteCompare } from "./canonical.js";
+import { byteCompare, spanCompare } from "./canonical.js";
 import { FIXED_ID_SCOPES, SKIPS_TIERS_EXCLUDED_KINDS } from "./model/enums.js";
 import {
   CanonicalGraphSchema,
@@ -42,6 +42,8 @@ export type ValidationErrorCode =
   | "E_ID_FORMAT"
   | "E_SOURCE_REPO"
   | "E_PARENT_CYCLE"
+  | "E_TOMBSTONE_CONFIDENCE"
+  | "E_DUPLICATE_VALUE"
   | "E_DUPLICATE_ID"
   | "E_EDGE_ENDPOINT"
   | "E_PARENT"
@@ -270,17 +272,24 @@ function checkInvariants(
   const checkSourceRepo = (
     source: { repo: string } | null,
     path: string,
+    nested = true,
   ): void => {
     if (source !== null && !repoNames.has(source.repo)) {
       err(
         "E_SOURCE_REPO",
-        `${path}.source.repo`,
+        nested ? `${path}.source.repo` : `${path}.repo`,
         `source.repo "${source.repo}" is not a repo in repos[] (graph model §2.4)`,
       );
     }
   };
   graph.nodes.forEach((n, i) =>
-    checkSourceRepo(n.source, `$.nodes[${String(i)}]`),
+    n.sources.forEach((span, j) =>
+      checkSourceRepo(
+        span,
+        `$.nodes[${String(i)}].sources[${String(j)}]`,
+        false,
+      ),
+    ),
   );
   graph.edges.forEach((e, i) =>
     checkSourceRepo(e.source, `$.edges[${String(i)}]`),
@@ -313,14 +322,31 @@ function checkInvariants(
         `node "${node.id}" is an entry point but has no entry_point_kind`,
       );
     }
-    // 10. Tombstone → no source.
-    if (node.kind === "tombstone" && node.source !== null) {
+    // 10. Tombstone → no defining span.
+    if (node.kind === "tombstone" && node.sources.length > 0) {
       err(
         "E_TOMBSTONE_SOURCE",
-        `${p}.source`,
-        `tombstone "${node.id}" must have source: null — its definition is gone (graph model §5.1)`,
+        `${p}.sources`,
+        `tombstone "${node.id}" must have sources: [] — its definition is gone (graph model §5.1)`,
       );
     }
+    // 22. Tombstone → inferred, with a reason. It appears nowhere in source.
+    if (
+      node.kind === "tombstone" &&
+      (node.confidence !== "inferred" || node.confidence_reason === null)
+    ) {
+      err(
+        "E_TOMBSTONE_CONFIDENCE",
+        `${p}.confidence`,
+        `tombstone "${node.id}" must be inferred with a confidence_reason; it is reconstructed from the baseline and the parser never saw it (graph model §5.1)`,
+      );
+    }
+    // 21. line_end never precedes line_start, per span.
+    node.sources.forEach((span, j) =>
+      checkLineRange(span, `${p}.sources[${String(j)}]`, err),
+    );
+    // 23. No duplicate tags.
+    checkUnique(node.tags, `${p}.tags`, "tags", err);
   });
 
   // 20. The parent chain is acyclic (graph model §2.3). A self-parent is the
@@ -377,6 +403,11 @@ function checkInvariants(
 
     // 6.
     checkReason(edge, p, err);
+
+    // 21. line_end never precedes line_start.
+    checkLineRange(edge.source, `${p}.source`, err);
+    // 23. No duplicate skips_tiers.
+    checkUnique(edge.skips_tiers, `${p}.skips_tiers`, "skips_tiers", err);
 
     // 8. Broken → reason.
     if (edge.is_broken && edge.broken_reason === null) {
@@ -453,7 +484,14 @@ function checkInvariants(
   graph.schemas.forEach((schema, i) => {
     const p = `$.schemas[${String(i)}]`;
     checkReason(schema, p, err);
+    checkLineRange(schema.source, `${p}.source`, err);
     schema.fields.forEach((field, j) => {
+      checkUnique(
+        field.classification,
+        `${p}.fields[${String(j)}].classification`,
+        "classification",
+        err,
+      );
       if (
         field.ref_schema_id !== null &&
         !schemasById.has(field.ref_schema_id)
@@ -575,19 +613,23 @@ function checkNodeId(
     );
     return;
   }
-  if (node.source !== null) {
-    if (node.source.repo !== scope) {
-      err(
-        "E_ID_FORMAT",
-        `${path}.id`,
-        `node id "${node.id}" is scoped to repo "${scope}" but source.repo is "${node.source.repo}" (graph model §1)`,
-      );
+  if (node.sources.length > 0) {
+    for (const span of node.sources) {
+      // A span whose repo is not in repos[] is invariant 19's report; only a
+      // resolved-but-different repo is an id/source disagreement.
+      if (repoNames.has(span.repo) && span.repo !== scope) {
+        err(
+          "E_ID_FORMAT",
+          `${path}.id`,
+          `node id "${node.id}" is scoped to repo "${scope}" but a span's repo is "${span.repo}" (graph model §1)`,
+        );
+      }
     }
-    if (node.source.path !== filePath) {
+    if (!node.sources.some((span) => span.path === filePath)) {
       err(
         "E_ID_FORMAT",
         `${path}.id`,
-        `node id "${node.id}" names path "${filePath}" but source.path is "${node.source.path}" (graph model §1)`,
+        `node id "${node.id}" names path "${filePath}" but no span has that path; the id names the declaring file (graph model §1)`,
       );
     }
   }
@@ -634,6 +676,24 @@ function checkCanonicalOrder(
     "$.nodes",
     "nodes (by id)",
   );
+  graph.nodes.forEach((n, i) => {
+    for (let j = 1; j < n.sources.length; j++) {
+      const prev = n.sources[j - 1];
+      const cur = n.sources[j];
+      if (
+        prev !== undefined &&
+        cur !== undefined &&
+        spanCompare(prev, cur) > 0
+      ) {
+        err(
+          "E_CANONICAL_ORDER",
+          `$.nodes[${String(i)}].sources[${String(j)}]`,
+          `sources are not in canonical order: sort by repo, then path, then line_start (graph model §7.2)`,
+        );
+        break;
+      }
+    }
+  });
   checkSorted(
     graph.edges.map((e) => e.id),
     "$.edges",
@@ -685,5 +745,54 @@ function checkNfc(value: unknown, path: string, err: Report): void {
   if (typeof value === "object" && value !== null) {
     for (const [k, v] of Object.entries(value))
       checkNfc(v, `${path}.${k}`, err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 21. line_end ≥ line_start — graph model §2.4. Reported at the object, since
+// the pair is the problem. A pack must not repair this with null.
+// ---------------------------------------------------------------------------
+
+function checkLineRange(
+  source: { line_start: number; line_end: number | null } | null,
+  path: string,
+  err: Report,
+): void {
+  if (
+    source !== null &&
+    source.line_end !== null &&
+    source.line_end < source.line_start
+  ) {
+    err(
+      "E_RANGE",
+      path,
+      `line_end ${String(source.line_end)} precedes line_start ${String(source.line_start)}; a span cannot end before it starts, and a pack must not repair this with null (graph model §2.4)`,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 23. Scalar arrays are sets — graph model §7.2, §3.4. Rejected, never deduped.
+// ---------------------------------------------------------------------------
+
+function checkUnique(
+  items: readonly string[],
+  path: string,
+  what: string,
+  err: Report,
+): void {
+  const seen = new Set<string>();
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item === undefined) continue;
+    if (seen.has(item)) {
+      err(
+        "E_DUPLICATE_VALUE",
+        `${path}[${String(i)}]`,
+        `${what} contains "${item}" more than once; duplicates are rejected, not deduplicated (graph model §7.2)`,
+      );
+      return;
+    }
+    seen.add(item);
   }
 }

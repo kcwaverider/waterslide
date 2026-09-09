@@ -30,8 +30,16 @@ const nfcOrNull = (s: string | null): string | null =>
 const sortedStrings = (xs: readonly string[]): string[] =>
   xs.map(nfc).sort(byteCompare);
 
-function canonicalSpan(s: SourceSpan | null): SourceSpan | null {
-  if (s === null) return null;
+/** §7.2: `sources` sorted by repo, then path (byte-wise), then line_start. */
+export function spanCompare(a: SourceSpan, b: SourceSpan): number {
+  return (
+    byteCompare(a.repo, b.repo) ||
+    byteCompare(a.path, b.path) ||
+    a.line_start - b.line_start
+  );
+}
+
+function canonicalSpan(s: SourceSpan): SourceSpan {
   return {
     repo: nfc(s.repo),
     path: nfc(s.path),
@@ -66,7 +74,7 @@ export function canonicalNode(n: Node): Node {
     label: nfc(n.label),
     tier: n.tier,
     parent: nfcOrNull(n.parent),
-    source: canonicalSpan(n.source),
+    sources: n.sources.map(canonicalSpan).sort(spanCompare),
     confidence: n.confidence,
     confidence_reason: nfcOrNull(n.confidence_reason),
     is_entry_point: n.is_entry_point,

@@ -49,7 +49,7 @@ export const NodeSchema = z.strictObject({
   label: z.string(),
   tier: TierSchema,
   parent: z.string().nullable(),
-  source: SourceSpanSchema.nullable(),
+  sources: z.array(SourceSpanSchema),
   confidence: ConfidenceSchema,
   confidence_reason: z.string().nullable(),
   is_entry_point: z.boolean(),
