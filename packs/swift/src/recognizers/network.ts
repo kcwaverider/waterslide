@@ -576,7 +576,14 @@ function emitDirectSend(
     };
     if (rendered.no_literal) {
       confidence = "inferred";
-      reason = `URL is built from ${describeParts(construction.parts)} with no literal path text; only callers can supply the path${rendered.path === "{unresolved}" ? "" : ` (template \`${rendered.path}\`)`}`;
+      const fromCallers = construction.parts.some((p) => p.kind === "param");
+      const template =
+        rendered.path === "{unresolved}"
+          ? ""
+          : ` (template \`${rendered.path}\`)`;
+      reason = fromCallers
+        ? `the path is ${describeParts(construction.parts)} of ${owner.qualified}, not a literal here; each caller's path is drawn as its own edge from the caller${template}`
+        : `the URL is ${describeParts(construction.parts)}, a value computed at runtime, with no literal path text in local scope${template}`;
       diag(
         ctx,
         "warning",
@@ -645,10 +652,20 @@ function emitDirectSend(
 function describeOrigin(ctx: FileContext, owner: Owner, v: Node): string {
   if (v.type === "simple_identifier") {
     const b = resolveBinding(ctx, v.text, v, owner);
-    if (b?.init)
-      return `\`${v.text}\` is bound to \`${b.init.text.replace(/\s+/g, " ")}\``;
+    if (b?.init) {
+      // A local copied from a parameter (`var request = urlRequest`) is the
+      // parameter for the reader's purposes: callers supply it.
+      const init = unwrapExpr(b.init);
+      if (init.type === "simple_identifier") {
+        const inner = resolveBinding(ctx, init.text, init, owner);
+        if (inner?.kind === "param") {
+          return `\`${v.text}\` is a copy of parameter \`${init.text}\` of ${owner.qualified}; each caller's request is drawn as its own edge from the caller`;
+        }
+      }
+      return `\`${v.text}\` is bound to \`${b.init.text.replace(/\s+/g, " ")}\`, a value computed at runtime`;
+    }
     if (b?.kind === "param")
-      return `\`${v.text}\` is a parameter of ${owner.qualified}`;
+      return `\`${v.text}\` is a parameter of ${owner.qualified}; each caller's request is drawn as its own edge from the caller`;
     if (b?.kind === "property") return `\`${v.text}\` is a stored property`;
   }
   return `\`${v.text.replace(/\s+/g, " ")}\``;
