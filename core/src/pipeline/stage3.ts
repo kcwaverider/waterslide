@@ -201,6 +201,9 @@ export async function parseFiles(
       packVersion: pack.manifest.version,
       graphSchemaVersion: GRAPH_SCHEMA_VERSION,
       optionsHash: resolved.hash,
+      ...(pack.rePath === undefined
+        ? { location: `${file.repo}:${file.path}` }
+        : {}),
     };
     const key = cacheKey(parts);
     const entry = await options.cache.get(key);

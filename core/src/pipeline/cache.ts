@@ -29,6 +29,15 @@ export interface CacheKeyParts {
   readonly packVersion: string;
   readonly graphSchemaVersion: number;
   readonly optionsHash: string;
+  /**
+   * `"{repo}:{path}"`, present ONLY for a pack without `rePath`. For such a
+   * pack a moved file is a miss by definition (parser §2.1), so keying its
+   * entries by location changes nothing about hits and misses — but without
+   * it, two identical files (every empty `__init__.py`) would share one entry
+   * and re-parse each other on every run, forever. Packs with `rePath` keep
+   * pure content keying and re-path the shared entry instead.
+   */
+  readonly location?: string;
 }
 
 /** The cache key: SHA-256 over the canonical JSON of every part. */

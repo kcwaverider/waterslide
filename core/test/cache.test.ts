@@ -43,6 +43,14 @@ describe("stage 3 cache key (parser §2.1)", () => {
     expect(cacheKey({ ...parts })).toBe(base);
   });
 
+  it("keys by location only when asked, for packs that cannot re-path", () => {
+    const base = cacheKey(parts);
+    expect(cacheKey({ ...parts, location: "r:a.py" })).not.toBe(base);
+    expect(cacheKey({ ...parts, location: "r:a.py" })).not.toBe(
+      cacheKey({ ...parts, location: "r:b.py" }),
+    );
+  });
+
   it("does not depend on repo or path: a moved file has the same key", () => {
     // Repo and path are not fields of the key at all; the type forbids them.
     expect(Object.keys(parts).sort()).toEqual([

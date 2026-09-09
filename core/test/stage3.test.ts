@@ -180,6 +180,24 @@ describe("stages 1–3 end to end", () => {
     expect(canonical(moved.corpus)).toBe(canonical(fresh.corpus));
   });
 
+  it("a pack without rePath caches identical content at two paths separately, so a warm run parses nothing", async () => {
+    tree.write("server/api/other/store.toy", STORE);
+    const cache = new MemoryParseCache();
+    const cold = await run(cache, { rePath: "none" });
+    expect(cold.corpus.stats).toMatchObject({
+      files: 4,
+      parsed: 4,
+      cache_hits: 0,
+    });
+    const warm = await run(cache, { rePath: "none" });
+    expect(warm.corpus.stats).toMatchObject({
+      files: 4,
+      parsed: 0,
+      cache_hits: 4,
+    });
+    expect(cache.size).toBe(4);
+  });
+
   it("a pack without rePath treats a moved file as a miss", async () => {
     const cache = new MemoryParseCache();
     await run(cache, { rePath: "none" });
