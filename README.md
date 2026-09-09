@@ -53,9 +53,10 @@ can click to flip.
 
 Measured on the codebase it was built against, a 177-file monorepo with a
 SwiftUI client and a FastAPI server: 2655 nodes and 2776 edges, 54 of which
-connect a Swift HTTP call to the Python route it hits. A first parse takes about
-three seconds; a second parse of an unchanged tree, under half a second. Those
-are one measurement on one codebase, not a guarantee.
+connect a Swift HTTP call to the Python route it hits (how that figure is read
+off the tool's output is under *Reading the summary*, below). A first parse
+takes about three seconds; a second parse of an unchanged tree, under half a
+second. Those are one measurement on one codebase, not a guarantee.
 
 ## Install
 
@@ -74,35 +75,37 @@ command yet; the CLI is invoked through `node`, as shown below.
 
 ## Usage
 
-Point `parse` at a checkout of the codebase you want mapped. The name on the
-left of the `=` is the repo name every node from that checkout is filed under;
-the path is wherever the checkout lives on your machine.
+Run it from any directory. Output goes to `.waterslide/` in the directory you
+run from. Point `parse` at a checkout of the codebase you want mapped. The name
+on the left of the `=` is the repo name every node from that checkout is filed
+under; the path is wherever the checkout lives on your machine.
 
 ```bash
 node cli/dist/src/index.js parse myrepo=/path/to/myrepo \
-  --pack-option python.source_roots=<import-root>
+  --pack-option python.source_roots=api
 ```
 
-`--pack-option python.source_roots=<import-root>` tells the Python analyzer
-which repo-relative directory your imports are written relative to, which is
+`--pack-option python.source_roots=api` tells the Python analyzer which
+repo-relative directory your imports are written relative to, which is
 whatever is on `sys.path` when the app runs. (Each language analyzer is a
-plugin the code calls a *pack*, hence the flag name.) Without it every module
-is named from the repo root, most calls fail to match the function they call,
-and the Swift client's HTTP calls no longer connect to the Python routes they
-hit. For a FastAPI app whose imports are written relative to `api/`, the value
-is `api`. If your app imports relative to the repo root, omit the flag. Several
-roots are comma-separated.
+plugin the code calls a *pack*, hence the flag name.) `api` is the example
+value. To find yours, open a few Python files and look at the import lines:
+`from db.database import db` in a file at `api/db/database.py` resolves
+against `api/`, so the value is `api`. If the imports resolve against the repo
+root, omit the flag. Several roots are comma-separated:
+`python.source_roots=api,workers`.
 
-That writes `.waterslide/graph.json` in the current directory and prints a
-summary: node and edge counts; how many references were connected to a
-definition and how many were not, the latter grouped by what they were (a
-symbol, a URL, a queue topic, a collection); and what the parser could not
-handle, by category. A second run over an unchanged tree is served from
-`.waterslide/cache/`. Then:
+With the wrong value, every module is named from the repo root, most calls
+fail to match the function they call, and the Swift client's HTTP calls no
+longer connect to the Python routes they hit. *Reading the summary*, below,
+shows what that looks like.
+
+`parse` writes `.waterslide/graph.json` and prints a summary. A second run over
+an unchanged tree is served from `.waterslide/cache/`. Then:
 
 ```bash
-node cli/dist/src/index.js view --open                      # write .waterslide/graph.html and open it
-node cli/dist/src/index.js dump                             # summary of the last parse
+node cli/dist/src/index.js view --open                      # write .waterslide/graph.html and open it in your browser
+node cli/dist/src/index.js dump                             # summary of the last parse, with counts per kind
 node cli/dist/src/index.js validate .waterslide/graph.json  # check a graph against the schema
 node cli/dist/src/index.js --help                           # every command and flag
 ```
@@ -110,16 +113,80 @@ node cli/dist/src/index.js --help                           # every command and 
 Several repos go in one command:
 `parse api=/path/to/api ios-client=/path/to/ios-client`.
 
+Flags a first run may want: `--no-cache` parses every file fresh, `--quiet`
+prints only the summary, `--state-dir somewhere` puts `graph.json` and the
+cache somewhere other than `./.waterslide`, and `--include-tests` brings test
+files in (they are excluded by default). `--help` lists the rest.
+
+### Reading the summary
+
+The summary is how you tell whether a run went well. Three parts of it matter:
+
+```
+resolution: 1545 resolved (105 via alias prefix), 20 ambiguous, 132 dangling, 206 stdlib references dropped silently
+unresolved references by ref_kind:
+  datastore  0
+  external   0
+  http       9
+  symbol     123
+  topic      0
+diagnostics by code:
+  ...
+```
+
+- **`resolved` against `dangling`.** A reference is *resolved* when the tool
+  found the thing it points at and *dangling* when it found nothing. On a good
+  run dangling is a small fraction of resolved; here it is 132 against 1545.
+  `ambiguous` means several candidates matched and every one is drawn.
+  `stdlib references dropped silently` is the standard library being left off
+  the map on purpose.
+- **`http` under `unresolved references by ref_kind`.** Client HTTP calls that
+  matched no server route. For a client whose URLs are literal this should be
+  close to zero, apart from calls to third-party hosts, which no local route
+  can match. The other kinds are `symbol` (a function or class), `datastore`
+  (a collection), `external` (a vendor SDK) and `topic` (a queue).
+- **`diagnostics by code`.** What the parser could not handle, and why. Two
+  codes, `router_not_mounted` and `unresolved_mount`, appeared only in the run
+  with `source_roots` missing: the server's `include_router` lines could not
+  be followed, so its routes kept their local paths and the client's URLs
+  matched nothing.
+
+**More nodes is not a better result.** Every dangling reference mints a
+placeholder node standing in for the thing that was not found, so a run with
+`source_roots` wrong produces *more* nodes and edges, not fewer. On the codebase
+measured above, leaving the flag off moved the counts like this:
+
+| | with `source_roots` | without |
+|---|---|---|
+| nodes / edges | 2655 / 2776 | 2826 / 2969 |
+| `resolved` | 1545 | 1095 |
+| `dangling` | 132 | 788 |
+| `http` unresolved | 9 | 57 |
+| `unknown targets` (printed by `dump`) | 73 | 244 |
+
+If your numbers look like the right-hand column, the flag is missing or wrong.
+`dump` prints the placeholder count as `unknown targets` and the edge counts
+per kind; the 54 cross-language edges quoted above are `dump`'s
+`http_request=63` minus the 9 unresolved `http` references.
+
 **Configuration.** No config produces the full map, and there is no config file
 to write yet. What can be declared today is declared as flags on `parse`:
-`--infrastructure <glob>` marks the nodes under a repo-relative glob as
-infrastructure — auth and middleware plumbing that would otherwise appear on
-every path, so the map can collapse it — `--exclude <name>:<glob>` and
-`--include <name>:<glob>` narrow which files are read, `--include-tests` brings
-test files in, and `--pack-option` is repeatable. A committed
-`.waterslide/config.yaml` is designed for declaring tiers (the horizontal
-layers of the map: UI, API, domain logic, data access, store), infrastructure
-and per-language options, and the policy checks are designed alongside it, in
+
+```bash
+node cli/dist/src/index.js parse myrepo=/path/to/myrepo \
+  --pack-option python.source_roots=api \
+  --infrastructure 'api/middleware/**' \
+  --exclude 'myrepo:**/generated/**'
+```
+
+Quote every glob; unquoted, the shell expands `**` before the tool sees it.
+`--infrastructure` marks the nodes under a repo-relative glob as infrastructure
+— auth and middleware plumbing that would otherwise appear on every path, so
+the map can collapse it. `--exclude name:glob` and `--include name:glob` narrow
+which files are read. A committed `.waterslide/config.yaml` is designed for
+declaring tiers (the horizontal layers of the map: UI, API, domain logic, data
+access, store), infrastructure and per-language options, and the policy checks
+are designed alongside it, in
 [`docs/03-persisted-files.md`](./docs/03-persisted-files.md) and
 [`docs/06-policy-checks.md`](./docs/06-policy-checks.md). Nothing reads them
 yet. Writing that file today does nothing.
@@ -149,7 +216,7 @@ how sure it is — and draws it, so a guess never looks like a fact:
 |---|---|---|
 | `certain` | Solid | Read directly from source |
 | `inferred` | Dashed | Derived by convention, with a stated reason |
-| `annotated` | Dotted | A human wrote it down, in a hand-maintained file of facts the parser cannot see |
+| `annotated` | Dotted | A human wrote it down in `.waterslide/annotations.yaml`, a hand-maintained file of facts the parser cannot see. Designed in `docs/03-persisted-files.md`; nothing reads it yet, so no node carries this level today |
 
 Anything not `certain` must carry a human-readable reason. Where a reference is
 ambiguous, every candidate is drawn — the tool never picks one arbitrarily.
