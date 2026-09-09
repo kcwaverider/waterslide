@@ -83,6 +83,7 @@ describe("stages 1–3 end to end", () => {
       "svc:server",
     ]);
     // completeHierarchy: function → module → directory → repo root.
+    /** The parent of one node by id; undefined when the node is absent. */
     const parentOf = (id: string): string | null | undefined =>
       corpus.nodes.find((n) => n.id === id)?.parent;
     expect(parentOf("client:App/Sync.toy#sync")).toBe("client:App/Sync.toy");
