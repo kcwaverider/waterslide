@@ -7,20 +7,36 @@
 
 /**
  * §2: the zoom range as a function of how big the map is on this stage.
- * Minimum is fit-to-viewport — zooming out past the whole map buys nothing.
+ * Minimum is fit-to-viewport — zooming out past the whole map buys nothing —
+ * except when a coarser level exists: then it goes just far enough below fit
+ * to bring the mean node under the coarser trigger, so scrolling out can
+ * reach the next level on a small graph too, and no further. Zoom is the only
+ * control that changes semantic level (§2.2), and it must do so on a graph of
+ * any size or the reader learns the wrong thing about it.
  * Maximum is whatever brings the mean node to a readable width, so however
- * large the graph, scrolling in always reaches the width where the level
+ * large the graph, scrolling in always reaches the width where the finer
  * trigger fires. Small maps keep a floor so they can still be inspected.
  */
 export const ZOOM = {
   /** The mean node's on-screen width at maximum zoom. Above the finer trigger, with margin. */
   readableNodePx: 420,
   minMaxZoom: 8,
+  /** Below fit, the mean node is brought to this fraction of the coarser trigger: under it, with margin. */
+  coarsenMargin: 0.9,
 } as const;
 
-export function zoomExtent(fitNodePx: number): [number, number] {
+export function zoomExtent(
+  fitNodePx: number,
+  hasCoarserLevel = false,
+): [number, number] {
   if (!(fitNodePx > 0)) return [1, ZOOM.minMaxZoom];
-  return [1, Math.max(ZOOM.minMaxZoom, ZOOM.readableNodePx / fitNodePx)];
+  const min = hasCoarserLevel
+    ? Math.min(
+        1,
+        (LEVEL_TRIGGER.coarserBelowPx * ZOOM.coarsenMargin) / fitNodePx,
+      )
+    : 1;
+  return [min, Math.max(ZOOM.minMaxZoom, ZOOM.readableNodePx / fitNodePx)];
 }
 
 /**

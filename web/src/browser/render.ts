@@ -266,6 +266,8 @@ export interface RenderOptions {
   readonly initialTransform?: D3.ZoomTransform;
   /** §2.2: after every zoom, the average on-screen node width in CSS pixels. Drives the level trigger. */
   readonly onZoom?: (avgNodePx: number, zoom: number) => void;
+  /** Whether a coarser semantic level exists, so scrolling out below fit can reach it. */
+  readonly hasCoarserLevel?: boolean;
 }
 
 /**
@@ -575,8 +577,9 @@ export function renderGraph(
     });
   // The extent depends on how big the map is relative to the stage, so it is
   // recomputed whenever that changes: at draw, on resize, on magnification.
+  const hasCoarser = options.hasCoarserLevel ?? false;
   const applyExtent = (): void => {
-    zoom.scaleExtent(zoomExtent(fitNodePx()));
+    zoom.scaleExtent(zoomExtent(fitNodePx(), hasCoarser));
   };
   applyExtent();
   svg.call(zoom);
@@ -639,7 +642,7 @@ export function renderGraph(
     transform: () => lastTransform,
     focus(fx, fy, nodePx) {
       const fit = fitNodePx();
-      const [kMin, kMax] = zoomExtent(fit);
+      const [kMin, kMax] = zoomExtent(fit, hasCoarser);
       const k = Math.max(kMin, Math.min(kMax, fit > 0 ? nodePx / fit : 1));
       // Put the layout point at these fractions under the centre of the stage.
       const t = d3.zoomIdentity
@@ -1130,6 +1133,7 @@ class Session {
         },
         onFork: (edges) => this.flipFork(edges),
         onZoom: (avgNodePx) => this.considerLevel(avgNodePx),
+        hasCoarserLevel: this.level > 0,
       },
     );
   }
