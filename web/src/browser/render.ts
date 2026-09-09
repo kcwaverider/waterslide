@@ -1,6 +1,14 @@
 import type * as D3 from "d3";
 import type { Edge, Node } from "@waterslide/core";
-import { layoutGraph, LAYOUT, type Layout } from "../layout.js";
+import {
+  bezierPoint,
+  bezierTangent,
+  forkPoints,
+  layoutGraph,
+  LAYOUT,
+  type Layout,
+  type LayoutEdge,
+} from "../layout.js";
 import {
   changeStateOf,
   confidenceDash,
@@ -41,6 +49,88 @@ function edgeTooltip(e: Edge): string {
   if (e.skips_tiers.length > 0)
     lines.push(`skips: ${e.skips_tiers.join(", ")}`);
   if (e.is_broken) lines.push(`BROKEN: ${e.broken_reason ?? ""}`);
+  return lines.join("\n");
+}
+
+/**
+ * Text on an edge. `label` sits beside the curve; a conditional edge also
+ * shows `condition.expr` verbatim (§3.3) nearer its start, in italics, so a
+ * reader sees when the edge fires without hovering. Neither uses line style.
+ */
+function drawEdgeText(
+  layer: D3.Selection<SVGGElement, unknown, null, undefined>,
+  le: LayoutEdge,
+): void {
+  const e = le.edge;
+  if (e.label !== null && e.label.length > 0) {
+    const t = e.condition === null ? 0.5 : 0.62;
+    placeText(layer, le, t, e.label)
+      .attr("class", "edge-label")
+      .attr("font-size", 11)
+      .attr("fill", "#444");
+  }
+  if (e.condition !== null) {
+    placeText(layer, le, 0.3, e.condition.expr)
+      .attr("class", "edge-condition")
+      .attr("font-size", 10.5)
+      .attr("font-style", "italic")
+      .attr("fill", "#333");
+  }
+}
+
+/**
+ * Sets text beside the curve at t, offset along the curve's normal: to the
+ * right of a steep edge, above a shallow one, so it clears the line and any
+ * badge sitting on it. A white halo keeps it legible over other edges.
+ */
+function placeText(
+  layer: D3.Selection<SVGGElement, unknown, null, undefined>,
+  le: LayoutEdge,
+  t: number,
+  text: string,
+): D3.Selection<SVGTextElement, unknown, null, undefined> {
+  const at = bezierPoint(le, t);
+  const tan = bezierTangent(le, t);
+  const steep = Math.abs(tan.y) > Math.abs(tan.x);
+  const self = le.edge.from === le.edge.to;
+  const offset = 9;
+  let x = at.x;
+  let y = at.y;
+  let anchor = "middle";
+  if (self) {
+    // A self-loop hangs off the node's right side; its text goes above the loop.
+    y = le.p[1].y - 6;
+    x = le.mx;
+  } else if (steep) {
+    x += offset;
+    y += 4;
+    anchor = "start";
+  } else {
+    y -= offset;
+  }
+  return layer
+    .append("text")
+    .attr("x", x)
+    .attr("y", y)
+    .attr("text-anchor", anchor)
+    .attr("paint-order", "stroke")
+    .attr("stroke", "#fff")
+    .attr("stroke-width", 3)
+    .attr("stroke-linejoin", "round")
+    .text(text);
+}
+
+function forkTooltip(edges: readonly LayoutEdge[]): string {
+  const group = edges[0]?.edge.exclusive_group ?? "";
+  const lines = [
+    `fork: ${String(edges.length)} branch${edges.length === 1 ? "" : "es"} drawn here (${group})`,
+  ];
+  for (const le of edges) {
+    const e = le.edge;
+    lines.push(
+      `  ${String(e.branch_ordinal ?? "")}: ${e.condition?.expr ?? "(no condition)"}${e.is_error_path ? " — error path" : ""}`,
+    );
+  }
   return lines.join("\n");
 }
 
@@ -109,7 +199,7 @@ export function renderGraph(
     .attr("font-weight", 600)
     .text("external");
 
-  // Edges under nodes.
+  // Edges under nodes. Line style is confidence and nothing else (§3.3).
   const edges = g.append("g").attr("class", "edges");
   for (const le of layout.edges) {
     const e = le.edge;
@@ -123,6 +213,7 @@ export function renderGraph(
       .attr("marker-end", "url(#arrow)")
       .append("title")
       .text(edgeTooltip(e));
+    drawEdgeText(edges, le);
     if (e.skips_tiers.length > 0 || e.is_broken) {
       const badge = edges
         .append("g")
@@ -141,6 +232,34 @@ export function renderGraph(
         .text(e.is_broken ? "!" : String(e.skips_tiers.length));
       badge.append("title").text(edgeTooltip(e));
     }
+  }
+
+  // Fork markers (§3.3): one where each branch point splits, whether or not
+  // any branch is active. Shape, not colour, so it survives greyscale.
+  const forks = g.append("g").attr("class", "forks");
+  for (const fp of forkPoints(layout.edges)) {
+    const [first] = fp.edges;
+    if (first === undefined) continue;
+    const toward = bezierPoint(first, 0.08);
+    const dx = toward.x - fp.x;
+    const dy = toward.y - fp.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const cx = fp.x + (dx / len) * 7;
+    const cy = fp.y + (dy / len) * 7;
+    const marker = forks
+      .append("g")
+      .attr("class", "fork")
+      .attr("transform", `translate(${String(cx)},${String(cy)}) rotate(45)`);
+    marker
+      .append("rect")
+      .attr("x", -4.5)
+      .attr("y", -4.5)
+      .attr("width", 9)
+      .attr("height", 9)
+      .attr("fill", "#333")
+      .attr("stroke", "#fff")
+      .attr("stroke-width", 1.5);
+    marker.append("title").text(forkTooltip(fp.edges));
   }
 
   // Nodes — §3.1 hue, §3.2 saturation and outline. The full label, wrapped,

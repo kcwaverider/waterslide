@@ -5,6 +5,8 @@ import {
   BAND_ORDER,
   LAYOUT,
   MAX_LINE_CHARS,
+  bezierPoint,
+  forkPoints,
   layoutGraph,
   nodeSize,
   wrapLabel,
@@ -127,6 +129,71 @@ describe('labels (scope §"Who reads the map")', () => {
     expect(long.w).toBeLessThanOrEqual(LAYOUT.maxNodeW);
     expect(long.h).toBe(LAYOUT.nodeH1);
     expect(nodeSize("a".repeat(60)).h).toBe(LAYOUT.nodeH2);
+  });
+});
+
+describe("edge geometry and fork points (UI §3.3)", () => {
+  it("every edge's control points match its path and its midpoint is t = 0.5", () => {
+    for (const f of fixtures)
+      for (const le of layoutGraph(load(f)).edges) {
+        const [a, b, c, d] = le.p;
+        expect(le.d).toBe(
+          `M ${String(a.x)} ${String(a.y)} C ${String(b.x)} ${String(b.y)}, ${String(c.x)} ${String(c.y)}, ${String(d.x)} ${String(d.y)}`,
+        );
+        const mid = bezierPoint(le, 0.5);
+        expect(mid.x).toBeCloseTo(le.mx);
+        expect(mid.y).toBeCloseTo(le.my);
+        expect(bezierPoint(le, 0)).toEqual(a);
+        expect(bezierPoint(le, 1)).toEqual(d);
+      }
+  });
+
+  it("every branch of a fork carries a marker at its root; branches sharing an exit share one", () => {
+    const layout = layoutGraph(load("derived-ids.json"));
+    const forks = forkPoints(layout.edges);
+    const branches = layout.edges.filter(
+      (le) => le.edge.exclusive_group !== null,
+    );
+    expect(branches).toHaveLength(2);
+    const exits = new Set(
+      branches.map((le) => `${String(le.p[0].x)},${String(le.p[0].y)}`),
+    );
+    expect(forks).toHaveLength(exits.size);
+    expect(forks.flatMap((f) => f.edges)).toHaveLength(2);
+    for (const f of forks) {
+      expect(
+        f.edges.every(
+          (le) => le.edge.exclusive_group === branches[0]?.edge.exclusive_group,
+        ),
+      ).toBe(true);
+      expect(`${String(f.x)},${String(f.y)}`).toBe(
+        `${String(f.edges[0]?.p[0].x)},${String(f.edges[0]?.p[0].y)}`,
+      );
+    }
+    expect(
+      forks.flatMap((f) => f.edges.map((le) => le.edge.condition?.expr)).sort(),
+    ).toEqual(["else", "if note.is_valid()"]);
+  });
+
+  it("is deterministic: fork points do not depend on input order", () => {
+    const g = load("shared-branch-ordinal.json");
+    const a = forkPoints(layoutGraph(g).edges);
+    const b = forkPoints(
+      layoutGraph({
+        nodes: [...g.nodes].reverse(),
+        edges: [...g.edges].reverse(),
+      }).edges,
+    );
+    expect(JSON.stringify(b)).toBe(JSON.stringify(a));
+    expect(
+      a.flatMap((f) => f.edges.map((le) => le.edge.branch_ordinal)),
+    ).toEqual([0, 0]);
+  });
+
+  it("no exclusive_group, no fork marker", () => {
+    expect(forkPoints(layoutGraph(load("annotated-edge.json")).edges)).toEqual(
+      [],
+    );
   });
 });
 

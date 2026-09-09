@@ -37,6 +37,8 @@ export const LAYOUT = {
   externalW: 340,
   externalGapY: 14,
   minBandW: 640,
+  /** Room to the right of a node with a self-loop, so the loop and its label clear the neighbour. */
+  selfLoopGap: 64,
 } as const;
 
 /** Characters that fit on one line at `maxNodeW`. */
@@ -105,12 +107,76 @@ export interface LayoutNode {
   readonly external: boolean;
 }
 
+export interface Point {
+  readonly x: number;
+  readonly y: number;
+}
+
 export interface LayoutEdge {
   readonly edge: Edge;
-  /** SVG path data. */
+  /** SVG path data: one cubic Bézier, `p[0]` to `p[3]`. */
   readonly d: string;
+  /** The curve's control points, so labels and markers can sit on it — see `bezierPoint`. */
+  readonly p: readonly [Point, Point, Point, Point];
+  /** The point at t = 0.5, where badges sit. */
   readonly mx: number;
   readonly my: number;
+}
+
+/** Unit tangent along a layout edge at t; the direction of travel. */
+export function bezierTangent(le: LayoutEdge, t: number): Point {
+  const [a, b, c, d] = le.p;
+  const u = 1 - t;
+  const x =
+    3 * u * u * (b.x - a.x) + 6 * u * t * (c.x - b.x) + 3 * t * t * (d.x - c.x);
+  const y =
+    3 * u * u * (b.y - a.y) + 6 * u * t * (c.y - b.y) + 3 * t * t * (d.y - c.y);
+  const len = Math.hypot(x, y) || 1;
+  return { x: x / len, y: y / len };
+}
+
+/** A point along a layout edge, t in [0, 1]. */
+export function bezierPoint(le: LayoutEdge, t: number): Point {
+  const [a, b, c, d] = le.p;
+  const u = 1 - t;
+  const w0 = u * u * u;
+  const w1 = 3 * u * u * t;
+  const w2 = 3 * u * t * t;
+  const w3 = t * t * t;
+  return {
+    x: w0 * a.x + w1 * b.x + w2 * c.x + w3 * d.x,
+    y: w0 * a.y + w1 * b.y + w2 * c.y + w3 * d.y,
+  };
+}
+
+export interface ForkPoint extends Point {
+  /** Edges leaving this point that belong to an `exclusive_group`, in id order. */
+  readonly edges: readonly LayoutEdge[];
+}
+
+/**
+ * UI §3.3 / graph model §3.2: a fork marker sits where the branches split.
+ * Every edge with an `exclusive_group` leaves its node at a point; edges of
+ * one group that share a start point share a marker, and a branch that leaves
+ * from another side of the node gets its own, so every branch is marked at
+ * its root. Deterministic: markers are ordered by group id, then start point.
+ */
+export function forkPoints(edges: readonly LayoutEdge[]): ForkPoint[] {
+  const byKey = new Map<string, LayoutEdge[]>();
+  for (const le of edges) {
+    if (le.edge.exclusive_group === null) continue;
+    const [start] = le.p;
+    const key = `${le.edge.exclusive_group}\u0000${String(start.x)},${String(start.y)}`;
+    const list = byKey.get(key);
+    if (list === undefined) byKey.set(key, [le]);
+    else list.push(le);
+  }
+  return [...byKey.entries()]
+    .sort(([a], [b]) => byteCompare(a, b))
+    .map(([, list]) => {
+      const [start] = (list[0] as LayoutEdge).p;
+      return { x: start.x, y: start.y, edges: list };
+    });
 }
 
 export interface LayoutBand {
@@ -199,9 +265,16 @@ export function layoutGraph(graph: {
   const size = new Map(nodes.map((n) => [n.id, nodeSize(n.label)] as const));
   const sizeOf = (n: Node): ReturnType<typeof nodeSize> =>
     size.get(n.id) as ReturnType<typeof nodeSize>;
+  const selfLoop = new Set(
+    graph.edges.filter((e) => e.from === e.to).map((e) => e.from),
+  );
+  const gapAfter = (n: Node): number =>
+    LAYOUT.gapX + (selfLoop.has(n.id) ? LAYOUT.selfLoopGap : 0);
   const rowWidth = (band: readonly Node[]): number =>
-    band.reduce((s, n) => s + sizeOf(n).w, 0) +
-    Math.max(0, band.length - 1) * LAYOUT.gapX;
+    band.reduce(
+      (s, n, i) => s + sizeOf(n).w + (i < band.length - 1 ? gapAfter(n) : 0),
+      0,
+    );
   const widest = Math.max(
     LAYOUT.minBandW,
     ...inBand.map((b) => rowWidth(b) + LAYOUT.bandPadX * 2),
@@ -237,7 +310,7 @@ export function layoutGraph(graph: {
       };
       placed.push(ln);
       pos.set(n.id, ln);
-      x += w + LAYOUT.gapX;
+      x += w + gapAfter(n);
     }
   });
   let ey = 20;
@@ -274,12 +347,13 @@ function edgePath(edge: Edge, a: LayoutNode, b: LayoutNode): LayoutEdge {
     // Self-loop: a small arc off the right edge.
     const x = a.x + a.w;
     const y = a.y + a.h / 2;
-    return {
+    return cubic(
       edge,
-      d: `M ${x} ${y - 8} C ${x + 28} ${y - 22}, ${x + 28} ${y + 22}, ${x} ${y + 8}`,
-      mx: x + 21,
-      my: y,
-    };
+      { x, y: y - 8 },
+      { x: x + 28, y: y - 22 },
+      { x: x + 28, y: y + 22 },
+      { x, y: y + 8 },
+    );
   }
   if (a.external || b.external) {
     // To or from the column: a horizontal-leaning curve from the node's side.
@@ -288,32 +362,52 @@ function edgePath(edge: Edge, a: LayoutNode, b: LayoutNode): LayoutEdge {
     const tx = b.external ? b.x : b.x + b.w;
     const ty = b.y + b.h / 2;
     const c = Math.abs(tx - sx) / 2;
-    return {
+    return cubic(
       edge,
-      d: `M ${sx} ${sy} C ${sx + c} ${sy}, ${tx - c} ${ty}, ${tx} ${ty}`,
-      mx: (sx + tx) / 2,
-      my: (sy + ty) / 2,
-    };
+      { x: sx, y: sy },
+      { x: sx + c, y: sy },
+      { x: tx - c, y: ty },
+      { x: tx, y: ty },
+    );
   }
   if (a.y === b.y) {
     // Same band: arc over the top.
     const y = a.y;
     const lift = 26 + Math.min(40, Math.abs(bx - ax) / 8);
-    return {
+    return cubic(
       edge,
-      d: `M ${ax} ${y} C ${ax} ${y - lift}, ${bx} ${y - lift}, ${bx} ${y}`,
-      mx: (ax + bx) / 2,
-      my: y - lift * 0.75,
-    };
+      { x: ax, y },
+      { x: ax, y: y - lift },
+      { x: bx, y: y - lift },
+      { x: bx, y },
+    );
   }
   const down = b.y > a.y;
   const sy = down ? a.y + a.h : a.y;
   const ty = down ? b.y : b.y + b.h;
   const c = Math.abs(ty - sy) / 2;
-  return {
+  return cubic(
     edge,
-    d: `M ${ax} ${sy} C ${ax} ${sy + (down ? c : -c)}, ${bx} ${ty - (down ? c : -c)}, ${bx} ${ty}`,
-    mx: (ax + bx) / 2,
-    my: (sy + ty) / 2,
+    { x: ax, y: sy },
+    { x: ax, y: sy + (down ? c : -c) },
+    { x: bx, y: ty - (down ? c : -c) },
+    { x: bx, y: ty },
+  );
+}
+
+function cubic(
+  edge: Edge,
+  p0: Point,
+  p1: Point,
+  p2: Point,
+  p3: Point,
+): LayoutEdge {
+  const n = (v: number): string => String(v);
+  const le = {
+    edge,
+    d: `M ${n(p0.x)} ${n(p0.y)} C ${n(p1.x)} ${n(p1.y)}, ${n(p2.x)} ${n(p2.y)}, ${n(p3.x)} ${n(p3.y)}`,
+    p: [p0, p1, p2, p3] as const,
   };
+  const mid = bezierPoint({ ...le, mx: 0, my: 0 }, 0.5);
+  return { ...le, mx: mid.x, my: mid.y };
 }
