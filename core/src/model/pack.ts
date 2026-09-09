@@ -19,6 +19,7 @@ import {
   PayloadSchemaSchema,
   SourceLocationSchema,
   SourceSpanSchema,
+  type Node,
 } from "./graph.js";
 
 // ---------------------------------------------------------------------------
@@ -168,6 +169,42 @@ export const UnresolvedRefSchema = z.discriminatedUnion("ref_kind", [
 export type UnresolvedRef = z.infer<typeof UnresolvedRefSchema>;
 
 // ---------------------------------------------------------------------------
+// `pack_data` — a pack's private channel from its per-file `parse` to its own
+// `compose`. Core never interprets it and one pack never reads another's. It
+// is STRIPPED by core after compose runs, before derivation: it does not reach
+// stage 5, the validator, `graph.json` or the canonical graph, so it cannot
+// affect byte-identity. It is deleted, not nulled — a field that is "ignored
+// downstream" is one that eventually gets read downstream. Absent and null
+// both mean "none"; optional because it is pack scratch data, not a graph
+// field, so graph model §2.5's always-present rule does not govern it.
+//
+// It exists so a FastAPI recognizer can hand a route's method and local path,
+// or a mount's `include_router` prefix, to its compose pass without encoding
+// them into `label` text and parsing them back with a regex.
+// ---------------------------------------------------------------------------
+
+export const PackDataSchema = z.record(z.string(), z.unknown()).nullable();
+export type PackData = z.infer<typeof PackDataSchema>;
+
+/** A node as a pack emits it: the graph model's `Node` plus `pack_data`. */
+export const PackNodeSchema = NodeSchema.extend({
+  pack_data: PackDataSchema.optional(),
+});
+export type PackNode = z.infer<typeof PackNodeSchema>;
+
+/** Removes `pack_data` from a node. The key is deleted, not nulled. */
+export function stripNodePackData(node: PackNode): Node {
+  const { pack_data: _dropped, ...rest } = node;
+  return rest;
+}
+
+/** Removes `pack_data` from an edge. The key is deleted, not nulled. */
+export function stripEdgePackData(edge: PartialEdge): CorePartialEdge {
+  const { pack_data: _dropped, ...rest } = edge;
+  return rest;
+}
+
+// ---------------------------------------------------------------------------
 // §3.3 — `PartialEdge`: an edge as a pack sees it, before resolution.
 //
 // The pack knows the call site and what it names. It does not know the edge id
@@ -190,8 +227,15 @@ export const PartialEdgeSchema = z.strictObject({
   branch_ordinal: z.int().nonnegative().nullable(),
   is_error_path: z.boolean(),
   source: SourceLocationSchema.nullable(),
+  pack_data: PackDataSchema.optional(),
 });
 export type PartialEdge = z.infer<typeof PartialEdgeSchema>;
+
+/** `PartialEdge` after core has stripped `pack_data`: what stage 4 resolves. */
+export const CorePartialEdgeSchema = PartialEdgeSchema.omit({
+  pack_data: true,
+});
+export type CorePartialEdge = z.infer<typeof CorePartialEdgeSchema>;
 
 // ---------------------------------------------------------------------------
 // Graph model §10 — Diagnostics. Never thrown. `code` is the grouping key and
@@ -218,7 +262,7 @@ export type Diagnostic = z.infer<typeof DiagnosticSchema>;
 // ---------------------------------------------------------------------------
 
 export const PackResultSchema = z.strictObject({
-  nodes: z.array(NodeSchema),
+  nodes: z.array(PackNodeSchema),
   edges: z.array(PartialEdgeSchema),
   schemas: z.array(PayloadSchemaSchema),
   provides: z.array(ProvideSchema),
@@ -272,7 +316,7 @@ export const NodeUpdateSchema = z.strictObject({
 export type NodeUpdate = z.infer<typeof NodeUpdateSchema>;
 
 export const PackPatchSchema = z.strictObject({
-  nodes: z.array(NodeSchema),
+  nodes: z.array(PackNodeSchema),
   edges: z.array(PartialEdgeSchema),
   schemas: z.array(PayloadSchemaSchema),
   provides: z.array(ProvideSchema),
