@@ -315,8 +315,8 @@ Done when all of the following hold:
    `from x import y` then bare `y()` — no prefix to resolve against, so it needs
    its own recognizer branch.
 5. **Spot-check passes.** Ten edges verified by hand across kinds — route to
-   service, service to repository, repository to collection, external call to
-   Cohere. Each correct in target, kind, tier and confidence.
+   service, service to repository, repository to collection, external call to a
+   vendor SDK. Each correct in target, kind, tier and confidence.
 6. **Unresolved refs are reported, not swallowed.** Summary of every
    `UnresolvedRef` that didn't resolve, grouped by `ref_kind`, printed every run.
    This is a coverage metric.
@@ -478,8 +478,9 @@ this one.
 - `baseline.json` and change-state computation. **Parsing reads the baseline and
   never writes it** — persisted-files §1.6. Capturing one is a separate command.
 - CLI, invoked as `waterslide`: `parse`, `validate`, `dump`, `baseline`, and
-  `view` (opens the renderer; `view` may land with M4 if the renderer isn't
-  ready).
+  `view` — opens the renderer. `view --export <file.html>` writes a
+  self-contained HTML with D3 and the graph inlined, for sharing. `view` may
+  land with M4 if the renderer isn't ready.
 
 **Done when:** a warm parse of an unchanged tree is measurably faster than cold
 and canonically byte-identical; touching one file changes only that file's nodes;

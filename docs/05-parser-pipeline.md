@@ -552,14 +552,20 @@ Target: the `tapistree` iOS client.
 
 | Target | Approach | Confidence |
 |---|---|---|
-| Types and functions | `class_declaration`, `struct_declaration`, `function_declaration` | `certain` |
+| Types and functions | Type declarations (class, struct, enum, actor) and function declarations | `certain` |
 | Import table | `import_declaration`, plus `typealias` | `certain` |
 | SwiftUI views | Types conforming to `View` | `certain` |
 | UI handlers | `.onTapGesture`, `Button(action:)`, `.onSubmit`, `.task`, `.onAppear` | `certain` |
 | App launch | `@main`, `App` conformance | `certain` |
-| HTTP calls | `URLSession` calls; path from the `URL` construction expression | `inferred` |
+| HTTP calls | `URLSession` calls; path from the `URL` construction expression | `certain` when the path literal is read at the call site; `inferred` when reconstructed through a request helper, or when only a fragment is recoverable |
 | Codable payloads | Types conforming to `Codable` → Schema | `certain` |
 | Error paths | Per §6.2 | `certain` |
+
+Core downgrades every resolved http match to `inferred` at stage 4, because
+path-template matching is convention. The pack's confidence therefore records
+what it read, not what the edge ends up as — which is what lets
+`confidence_reason` distinguish "read this literal" from "reconstructed this
+through a helper".
 
 **The hard part is the URL, not the call.** `URLSession.shared.data(for: request)`
 is trivial to find; the request was built somewhere else from a base URL constant
