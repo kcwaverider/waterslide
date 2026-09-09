@@ -280,7 +280,9 @@ persuasively. Make disagreement structurally impossible instead:
   registry is not pinned until someone remembers to edit the test. The
   registry is the authority: a schema that is not in `JSON_SCHEMA_FILES` is
   not gated, however the test iterates, so a Zod schema that is meant to be
-  emitted is added to the registry, not just written into `core/schema/`.
+  emitted is added to the registry, and until the test iterates the registry,
+  to the test's key list as well. Writing it into `core/schema/` alone gates
+  nothing.
 - The **validator is the arbiter**, and runs in the pre-commit hook on every
   commit. Every track's output must pass it. Running it in CI on every PR is
   road map, not MVP — the reasoning holds unchanged if this ever gets more than
