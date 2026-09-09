@@ -311,8 +311,9 @@ matches an `http` reference against that string under one normalisation: every
 `{...}` path parameter becomes a positional placeholder on both sides, so
 `{memoryId}` and `{memory_id}` are one route. Method, every literal segment, and
 parameter count and position must still agree; nothing else is folded — not
-case, not a trailing slash, not a query string. When the spellings differed the
-edge's reason says so and gives both verbatim. This is a canonical route key,
+case, not a trailing slash. Query strings never reach matching at all: §3.6
+carries them in `hints.query`, and the key is the method plus the path value.
+When the spellings differed the edge's reason says so and gives both verbatim. This is a canonical route key,
 not a segment-shape search.
 
 One node may have several `provides` entries — a Python function is referable as

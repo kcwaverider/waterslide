@@ -83,7 +83,8 @@ interface IndexEntry {
  * positional placeholder, so `{memoryId}` and `{memory_id}` are one route.
  * Method, every literal segment, and parameter count and position must still
  * agree; nothing else is normalised — no case folding, no trailing-slash
- * tolerance, no query stripping. One function, applied to the provide side
+ * tolerance. Query strings never reach matching: §3.6 carries them in
+ * `hints.query` and the key is method plus path. One function, applied to the provide side
  * and the reference side alike, so the two cannot drift.
  */
 export function routeKey(name: string): string {
