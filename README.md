@@ -69,8 +69,8 @@ Requires Node 20+.
 Point it at one or more repos:
 
 ```bash
-waterslide parse /path/to/myrepo
-waterslide parse /path/to/api /path/to/ios-client
+waterslide parse myrepo=/path/to/myrepo
+waterslide parse api=/path/to/api ios-client=/path/to/ios-client
 ```
 
 That writes `.waterslide/graph.json`, then:
