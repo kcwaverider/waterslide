@@ -147,11 +147,17 @@ export async function discover(
       ...(repo.exclude ?? []),
     ];
     const isExcluded = picomatch(excludes, { dot: true });
+    // Directory-shaped excludes ("**/node_modules/**") prune the walk itself,
+    // so a vendored tree is never read only to be discarded file by file.
+    const isExcludedDir = picomatch(
+      excludes.filter((g) => g.endsWith("/**")).map((g) => g.slice(0, -3)),
+      { dot: true },
+    );
     const isIncluded =
       repo.include === undefined || repo.include.length === 0
         ? (): boolean => true
         : picomatch(repo.include, { dot: true });
-    await walk(root, "", (rel) => {
+    await walk(root, "", isExcludedDir, (rel) => {
       if (!options.extensions.has(nodePath.posix.extname(rel))) return;
       if (isExcluded(rel) || !isIncluded(rel)) return;
       out.push({
@@ -169,6 +175,7 @@ export async function discover(
 async function walk(
   root: string,
   rel: string,
+  isExcludedDir: (rel: string) => boolean,
   visit: (rel: string) => void,
 ): Promise<void> {
   const dir = rel === "" ? root : nodePath.join(root, rel);
@@ -178,8 +185,12 @@ async function walk(
     // it, and a cycle would never terminate.
     if (entry.isSymbolicLink()) continue;
     const childRel = rel === "" ? entry.name : `${rel}/${entry.name}`;
-    if (entry.isDirectory()) await walk(root, childRel, visit);
-    else if (entry.isFile()) visit(childRel);
+    if (entry.isDirectory()) {
+      if (isExcludedDir(childRel)) continue;
+      await walk(root, childRel, isExcludedDir, visit);
+    } else if (entry.isFile()) {
+      visit(childRel);
+    }
   }
 }
 

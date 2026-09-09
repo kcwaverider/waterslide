@@ -389,8 +389,6 @@ function composeToy(results: readonly PerFileResult[], id: string): PackPatch {
       add_sources: [],
       parent: `svc:${id}-${r.repo}`,
     });
-    const text = moduleNode.sources[0]?.hash ?? "";
-    void text;
     if (
       r.result.diagnostics.some((d) => d.message.includes("!!patch-replace"))
     ) {

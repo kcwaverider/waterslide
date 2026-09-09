@@ -63,7 +63,20 @@ export function resolvePackOptions(
   config: WaterslideConfig,
   packId: string,
 ): PackOptions {
-  return config.packs?.[packId] ?? {};
+  // A deep-frozen clone: the options are hashed once per pack and handed to
+  // every call, so a pack that mutated a nested value would make later parses
+  // disagree with the cache key. Freezing turns that bug into a throw the
+  // driver reports as pack_exception.
+  return deepFreeze(structuredClone(config.packs?.[packId] ?? {}));
+}
+
+function deepFreeze<T>(value: T): T {
+  if (typeof value === "object" && value !== null && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const v of Object.values(value as Record<string, unknown>))
+      deepFreeze(v);
+  }
+  return value;
 }
 
 /** Part of the cache key (parser §2.1): a change to options must miss the cache. */

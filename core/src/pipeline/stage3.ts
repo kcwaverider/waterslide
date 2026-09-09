@@ -26,7 +26,7 @@ import {
   type WaterslideConfig,
 } from "./config.js";
 import type { DiscoveredFile } from "./discover.js";
-import { contentHash } from "./hash.js";
+import { canonicalJson, contentHash } from "./hash.js";
 import { rePathFileDataUnchanged, rePathViolations } from "./repath.js";
 
 /**
@@ -565,7 +565,7 @@ export function mergeNodes(
     merged.sources = dedupeSpans([...merged.sources, ...node.sources]);
     const { sources: _a, ...restPrior } = prior.node;
     const { sources: _b, ...restNew } = node;
-    if (JSON.stringify(restPrior) !== JSON.stringify(restNew)) {
+    if (canonicalJson(restPrior) !== canonicalJson(restNew)) {
       diagnostics.push({
         severity: "warning",
         code: "node_definition_conflict",
@@ -605,7 +605,7 @@ export function mergeSchemas(
       byId.set(schema.id, { schema, origin });
       return;
     }
-    if (JSON.stringify(prior.schema) !== JSON.stringify(schema)) {
+    if (canonicalJson(prior.schema) !== canonicalJson(schema)) {
       diagnostics.push({
         severity: "warning",
         code: "schema_definition_conflict",

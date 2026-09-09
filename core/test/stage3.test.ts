@@ -392,10 +392,11 @@ describe("compose (parser §3.3)", () => {
     expect(
       corpus.nodes.filter((n) => n.id === "server:api/notes.toy"),
     ).toHaveLength(1);
-  });
-
-  it("cannot rename a node: NodeUpdate has no id field, and a patch node with an existing id is refused", async () => {
-    const { corpus } = await run(new MemoryParseCache(), { compose: true });
+    // The refused replacement left the original node intact: its label and
+    // span are the per-file parse's, and no id appears twice.
+    const survivor = corpus.nodes.find((n) => n.id === "server:api/notes.toy");
+    expect(survivor?.label).toBe("notes.toy");
+    expect(survivor?.sources.map((s) => s.path)).toEqual(["api/notes.toy"]);
     expect(new Set(corpus.nodes.map((n) => n.id)).size).toBe(
       corpus.nodes.length,
     );

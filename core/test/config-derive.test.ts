@@ -131,3 +131,23 @@ describe("stage 5: parents (graph model §2.3)", () => {
     ]);
   });
 });
+
+describe("pack options are a frozen snapshot", () => {
+  it("returns a deep-frozen clone, so a pack cannot change what was hashed", () => {
+    const config = {
+      packs: { toy: { source_roots: ["server"], nested: { k: 1 } } },
+    };
+    const opts = resolvePackOptions(config, "toy") as {
+      source_roots: string[];
+      nested: { k: number };
+    };
+    expect(Object.isFrozen(opts)).toBe(true);
+    expect(Object.isFrozen(opts.source_roots)).toBe(true);
+    expect(Object.isFrozen(opts.nested)).toBe(true);
+    expect(() => {
+      opts.source_roots.push("x");
+    }).toThrow();
+    // The config itself is untouched.
+    expect(config.packs.toy.source_roots).toEqual(["server"]);
+  });
+});

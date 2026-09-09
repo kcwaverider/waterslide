@@ -130,3 +130,20 @@ describe("stage 1: discovery (parser §1)", () => {
     expect(dirty.dirty).toBe(true);
   });
 });
+
+describe("walk pruning", () => {
+  it("does not descend into excluded directories", async () => {
+    const t = new TmpTree();
+    try {
+      t.write("api/a.toy", "def a\n");
+      t.write("api/node_modules/deep/er/x.toy", "def x\n");
+      // An unreadable directory inside an excluded tree would throw if walked.
+      const files = await discover([{ name: "api", path: `${t.root}/api` }], {
+        extensions: EXT,
+      });
+      expect(files.map((f) => f.path)).toEqual(["a.toy"]);
+    } finally {
+      t.dispose();
+    }
+  });
+});
