@@ -664,11 +664,14 @@ export function renderGraph(
       };
     },
     setMagnification(next) {
+      // §2.2: magnification re-renders the same level at a different size. It
+      // shifts where in the zoom range the next level change falls — the
+      // extent and the fitted node width both move — but it never reports a
+      // zoom, so it cannot change level on its own.
       magnification = next > 0 ? next : 1;
       applyExtent();
       applyTransform();
       updateOffscreen();
-      reportZoom();
     },
   };
 }
