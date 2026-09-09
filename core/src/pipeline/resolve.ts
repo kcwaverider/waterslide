@@ -350,7 +350,7 @@ export function resolve(corpus: Corpus): ResolveOutput {
   // Sorted so minted-node reasons, tiers and origins accumulate in one order
   // regardless of how the corpus was assembled.
   const edges = [...corpus.edges].sort(edgeOriginCompare);
-  const stdlibGapGroups = gapGroupsIfStdlibDropped();
+  const stdlibKeep = stdlibAlternativesToKeep();
 
   for (const origin of edges) {
     const e = origin.edge;
@@ -549,20 +549,26 @@ export function resolve(corpus: Corpus): ResolveOutput {
   }
 
   /**
-   * C20: a stdlib-rooted fork alternative is dropped only if the group's
-   * surviving ordinals stay contiguous from 0 (invariant 15). Groups where a
-   * drop would open a gap keep their stdlib alternatives as dangling edges.
-   * Decided once, per group, before any edge is resolved, so the outcome does
-   * not depend on edge order.
+   * C20 / C21: a stdlib-rooted fork edge is dropped unless dropping it would
+   * leave a gap in its group's branch_ordinal sequence (invariant 15). The
+   * decision is per ALTERNATIVE, not per group: an ordinal survives if any of
+   * its edges is not stdlib, so a stdlib edge sharing an ordinal with a real
+   * call always drops, and a sole stdlib alternative is kept only when it
+   * sits below the highest surviving ordinal — a trailing one leaves no gap.
+   * Decided once, before any edge is resolved, so the outcome does not depend
+   * on edge order. Returns the `${group}#${ordinal}` keys to keep.
    */
-  function gapGroupsIfStdlibDropped(): ReadonlySet<string> {
-    const groups = new Map<string, { all: Set<number>; kept: Set<number> }>();
+  function stdlibAlternativesToKeep(): ReadonlySet<string> {
+    const groups = new Map<
+      string,
+      { all: Set<number>; survivors: Set<number> }
+    >();
     for (const origin of edges) {
       const e = origin.edge;
       if (e.exclusive_group === null || e.branch_ordinal === null) continue;
       const g = groups.get(e.exclusive_group) ?? {
         all: new Set<number>(),
-        kept: new Set<number>(),
+        survivors: new Set<number>(),
       };
       g.all.add(e.branch_ordinal);
       const droppable =
@@ -570,17 +576,19 @@ export function resolve(corpus: Corpus): ResolveOutput {
         e.to.ref_kind === "symbol" &&
         nodesById.has(e.from) &&
         planSymbol(refLookupName(e.to), origin).kind === "stdlib";
-      if (!droppable) g.kept.add(e.branch_ordinal);
+      if (!droppable) g.survivors.add(e.branch_ordinal);
       groups.set(e.exclusive_group, g);
     }
-    const gaps = new Set<string>();
+    const keep = new Set<string>();
     for (const [name, g] of groups) {
-      if (g.kept.size === g.all.size) continue; // nothing to drop
-      const kept = [...g.kept].sort((a, b) => a - b);
-      const contiguous = kept.every((o, i) => o === i);
-      if (!contiguous) gaps.add(name);
+      if (g.survivors.size === 0) continue; // every alternative is stdlib: the group vanishes whole
+      const top = Math.max(...g.survivors);
+      for (const ordinal of g.all) {
+        if (!g.survivors.has(ordinal) && ordinal < top)
+          keep.add(`${name}#${String(ordinal)}`);
+      }
     }
-    return gaps;
+    return keep;
   }
 
   function resolveByIndex(p: Pending, from: Node): void {
@@ -596,7 +604,10 @@ export function resolve(corpus: Corpus): ResolveOutput {
       switch (plan.kind) {
         case "stdlib": {
           const group = origin.edge.exclusive_group;
-          if (group !== null && stdlibGapGroups.has(group)) {
+          if (
+            group !== null &&
+            stdlibKeep.has(`${group}#${String(origin.edge.branch_ordinal)}`)
+          ) {
             stats.stdlib_fork_kept += 1;
             dangle(
               p,
