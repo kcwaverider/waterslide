@@ -135,9 +135,22 @@ reviews:
             `packs/python/src/frameworks/fastapi/compose.ts`, and
             `packs/swift/src/compose.ts`, `analyze.ts`, `ids.ts`, `summary.ts`,
             `repath.ts`.
-          - Stage 6 (the `graph.json` writer) and the CLI do not exist yet.
-            `cli/src/index.ts` and `web/src/index.ts` are placeholders; the moment
-            either gains a body it becomes output-producing code under this check.
+          - `core/src/pipeline/resolve.ts`, `core/src/pipeline/derive-edges.ts`
+            and `core/src/pipeline/vendors.ts` — stages 4 and 5: cross-file
+            matching, edge collapse, edge ids and `skips_tiers`.
+          - `core/src/pipeline/emit.ts` — stage 6. `runPipeline()` assembles the
+            artifact and sets `parsed_at` from an injectable `now`;
+            `serializeArtifact()` fixes artifact key order; `emitGraph()` writes
+            `graph.json` and honours `--canonical`; `buildStats()` and
+            `summarize()` produce artifact-only counts. Keep `now` injectable —
+            it is what makes the artifact testable against a fixed clock.
+          - `cli/src/index.ts` — the CLI surface (`parse`, `validate`, `dump`,
+            `view`; `--canonical`, `--shape`, `--state-dir`, `--pack-option`) and
+            the caller that writes both `graph.json` and the viewer page.
+          - `web/src/index.ts`, `web/src/layout.ts` and
+            `web/src/browser/render.ts` — `buildViewerHtml()` emits a
+            self-contained HTML page, and the layout and renderer decide what it
+            contains. That page is emitted output under this check too.
 
           FAIL if the PR introduces, into output-producing code, any of:
           - Timestamps or wall-clock reads (Date.now, new Date, performance.now)
