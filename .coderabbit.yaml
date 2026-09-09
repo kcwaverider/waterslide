@@ -63,9 +63,10 @@ reviews:
 
           FAIL if ALL of the following are true:
           - The PR modifies implementation files under `core/src/`,
-            `packs/*/src/`, `cli/src/` or `web/src/`. Test files under `*/test/`,
-            dev harnesses under `*/scripts/`, and `fixtures/` are not
-            implementation.
+            `packs/*/src/`, `cli/src/` or `web/src/`. Test files under any
+            `test/` directory (`core/test/`, `packs/*/test/`), dev harnesses
+            under any `scripts/` directory (`core/scripts/`,
+            `packs/*/scripts/`), and `fixtures/` are not implementation.
           - The change alters observable behavior: the graph model's output schema
             or serialization format, CLI surface (flags, commands, arguments),
             keys in `config.yaml` or `annotations.yaml`, the shape of any file
@@ -73,7 +74,8 @@ reviews:
             the language-pack interface, analysis semantics (node or edge
             identity, tier assignment, confidence, resolution, diagnostic codes),
             policy-check behavior, or rendering behavior
-          - No file under `docs/` is modified in the same PR
+          - No file under `docs/` receives a substantive modification in the
+            same PR — formatting-only or typo-only edits do not count
 
           PASS if ANY of the following are true:
           - No implementation file under a workspace `src/` directory is modified
