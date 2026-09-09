@@ -402,3 +402,66 @@ describe("factory calls: receiver types from return annotations", () => {
     ]);
   });
 });
+
+describe("module-level singletons, class constants and staticmethods", () => {
+  it("a module-level variable forwards to its constructor type or to the call that made it", async () => {
+    const pack = await getPack();
+    const r = pack.parse(
+      "repo",
+      "db/database.py",
+      'import logging\nclass Database:\n    def connect(self):\n        return 1\ndb = Database()\nlogger = logging.getLogger("x")\nrouter_like = Database\n',
+    );
+    const aliases = r.provides
+      .filter((p) => p.alias_of !== null && p.scope === "global")
+      .map((p) => [p.name, p.alias_of]);
+    expect(aliases).toEqual([
+      ["db.database.db", "db.database.Database"],
+      ["db.database.logger", "logging.getLogger()"],
+    ]);
+  });
+
+  it("a name that is a node in its file never also aliases elsewhere", async () => {
+    const pack = await getPack();
+    const r = pack.parse(
+      "repo",
+      "app.py",
+      "from fastapi import APIRouter\nrouter = APIRouter()\n",
+    );
+    const forRouter = r.provides.filter((p) => p.name === "app.router");
+    expect(forRouter.map((p) => p.alias_of)).toEqual([null]);
+  });
+
+  it("a staticmethod's first parameter is an argument, not the instance", async () => {
+    const pack = await getPack();
+    const r = pack.parse(
+      "repo",
+      "svc.py",
+      "class S:\n    @staticmethod\n    def clean(text):\n        return text.strip()\n",
+    );
+    expect(r.edges).toEqual([]);
+    expect(r.diagnostics.map((d) => d.code)).toEqual(["untyped_receiver"]);
+  });
+
+  it("class-body constants and builtin-annotated attributes are values, not nodes", async () => {
+    const pack = await getPack();
+    const r = pack.parse(
+      "repo",
+      "svc.py",
+      [
+        "class S:",
+        '    ENV = {"a": "A"}',
+        "    def __init__(self, cfg: dict):",
+        "        self.cfg = cfg",
+        "    def run(self):",
+        '        self.ENV.get("a")',
+        "        self.cfg.items()",
+        "",
+      ].join("\n"),
+    );
+    expect(r.edges).toEqual([]);
+    expect(r.diagnostics.map((d) => d.code)).toEqual([
+      "untyped_receiver",
+      "untyped_receiver",
+    ]);
+  });
+});

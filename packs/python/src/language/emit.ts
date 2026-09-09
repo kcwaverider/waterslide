@@ -5,7 +5,12 @@ import {
 } from "@waterslide/core";
 import type { Emitter } from "../emitter.js";
 import { lineStart, stringLiteral } from "../tree-sitter/runtime.js";
-import { annotationChain, qualify, resolveTypeChain } from "./analyze.js";
+import {
+  annotationChain,
+  moduleVariableAlias,
+  qualify,
+  resolveTypeChain,
+} from "./analyze.js";
 import type { CallSite, Definition, DictTable, FileModel } from "./model.js";
 
 /**
@@ -118,6 +123,32 @@ export function emitStructure(model: FileModel, em: Emitter): void {
       });
     }
     emitModuleGetattr(model, em);
+  }
+
+  // A module-level variable is importable by name; when it holds a constructor
+  // result (`db = Database()`) or a call result (`logger = logging.getLogger()`)
+  // it forwards to that type or call, so `from db import db` then `db.connect()`
+  // can reach `db.database.Database.connect` in stage 4.
+  if (file.module !== "") {
+    for (const [name, binding] of model.moduleScope.bindings) {
+      if (binding.kind !== "variable" || !binding.value) continue;
+      const target = moduleVariableAlias(
+        binding.value,
+        file,
+        model.moduleScope,
+        em.data,
+      );
+      if (!target) continue;
+      em.addProvide({
+        ref_kind: "symbol",
+        name: `${file.module}.${name}`,
+        node_id: null,
+        alias_of: target,
+        visibility: name.startsWith("_") ? "module" : "public",
+        scope: "global",
+        scope_path: null,
+      });
+    }
   }
 
   // A function with a return annotation names what its call returns:

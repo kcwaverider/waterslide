@@ -307,11 +307,23 @@ export class Emitter {
         };
       }
     }
+    // A name that is a node in this file (`router = APIRouter()`) never also
+    // aliases elsewhere: two candidates for one name would read as ambiguity.
+    const nodeBacked = new Set(
+      this.provides
+        .filter((p) => p.node_id !== null)
+        .map((p) => `${p.ref_kind} ${p.scope} ${p.name}`),
+    );
+    const provides = this.provides.filter(
+      (p) =>
+        p.alias_of === null ||
+        !nodeBacked.has(`${p.ref_kind} ${p.scope} ${p.name}`),
+    );
     return {
       nodes: this.nodeOrder.map((id) => this.nodes.get(id) as PackNode),
       edges: this.edges.map((p) => p.edge),
       schemas: this.schemas,
-      provides: this.provides,
+      provides,
       diagnostics: this.diagnostics,
     };
   }

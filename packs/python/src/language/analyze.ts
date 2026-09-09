@@ -640,13 +640,16 @@ function collectClassAttributes(
       if (!a || a.type !== "assignment") continue;
       const left = a.childForFieldName("left");
       const type = a.childForFieldName("type");
-      if (!left || left.type !== "identifier" || !type) continue;
+      if (!left || left.type !== "identifier") continue;
+      const right = a.childForFieldName("right");
+      if (!type && !right) continue;
       if (!info.attributes.has(left.text)) {
         info.attributes.set(left.text, {
           name: left.text,
-          annotation: type.text,
+          annotation: type ? type.text : null,
           value: null,
-          literal: false,
+          literal:
+            right !== null && LITERAL_TYPES.has(unwrapExpression(right).type),
           line: lineStart(a),
         });
       }
@@ -679,26 +682,17 @@ function collectClassAttributes(
           if (chain && chain.length === 2 && chain[0] === selfName) {
             const attr = chain[1] as string;
             const right = n.childForFieldName("right");
-            const annotation = typeText(n.childForFieldName("type"));
+            const fromParam =
+              right && right.type === "identifier"
+                ? scope.bindings.get(right.text)
+                : undefined;
+            const annotation =
+              typeText(n.childForFieldName("type")) ??
+              (fromParam?.kind === "parameter" ? fromParam.annotation : null);
             const value = right
               ? valueInfoOf(right, scope, method, resolveChain)
               : null;
             const existing = info.attributes.get(attr);
-            const literalTypes = new Set([
-              "dictionary",
-              "list",
-              "set",
-              "tuple",
-              "string",
-              "integer",
-              "float",
-              "none",
-              "true",
-              "false",
-              "concatenated_string",
-              "list_comprehension",
-              "dictionary_comprehension",
-            ]);
             const record: AttributeInfo = {
               name: attr,
               annotation: annotation ?? existing?.annotation ?? null,
@@ -706,7 +700,7 @@ function collectClassAttributes(
               literal:
                 existing?.literal ??
                 (right !== null &&
-                  literalTypes.has(unwrapExpression(right).type)),
+                  LITERAL_TYPES.has(unwrapExpression(right).type)),
               line: existing?.line ?? lineStart(n),
             };
             info.attributes.set(attr, record);
@@ -791,6 +785,7 @@ function resolveChainImpl(
     binding.kind === "parameter" &&
     owner &&
     owner.parent &&
+    !isStaticMethod(owner) &&
     isFirstParameter(owner, rootName)
   ) {
     const info = classes.get(owner.parent.name);
@@ -851,6 +846,20 @@ function resolveChainImpl(
         return {
           kind: "opaque",
           reason: `receiver ${rootName}.${attr} is assigned a literal in ${owner.parent.qualifiedName}; a builtin container, not a node`,
+          root,
+        };
+      }
+      const annotatedBuiltin = attribute?.annotation
+        ? annotationChain(attribute.annotation)?.[0]
+        : undefined;
+      if (
+        annotatedBuiltin !== undefined &&
+        data.builtins.has(annotatedBuiltin) &&
+        lookup(scope, annotatedBuiltin) === null
+      ) {
+        return {
+          kind: "opaque",
+          reason: `receiver ${rootName}.${attr} is annotated ${attribute?.annotation ?? ""}, a builtin type, not a node`,
           root,
         };
       }
@@ -1133,6 +1142,32 @@ function resolveCallResultImpl(
   return callResultSymbol(factory, attrs, root, `${chain.join(".")}()`);
 }
 
+/** Right-hand sides that are builtin containers or scalars: a value, never a node. */
+const LITERAL_TYPES: ReadonlySet<string> = new Set([
+  "dictionary",
+  "list",
+  "set",
+  "tuple",
+  "string",
+  "integer",
+  "float",
+  "none",
+  "true",
+  "false",
+  "concatenated_string",
+  "list_comprehension",
+  "dictionary_comprehension",
+  "set_comprehension",
+]);
+
+/** `@staticmethod`: the first parameter is an ordinary argument, not the instance. */
+function isStaticMethod(def: Definition): boolean {
+  return def.decorators.some(
+    (d) =>
+      attributeChain(d)?.[attributeChain(d)!.length - 1] === "staticmethod",
+  );
+}
+
 function isFirstParameter(def: Definition, name: string): boolean {
   const params = def.node.childForFieldName("parameters");
   const first = params?.namedChildren[0];
@@ -1308,4 +1343,22 @@ function classify(call: Node, defByNode: Map<number, Definition>): Placement {
     n = n.parent;
   }
   return { kind: "site", owner };
+}
+
+/**
+ * The name a module-level variable forwards to (parser §3.4): its traced type
+ * for `db = Database()`, or `logging.getLogger()` for a call whose return type
+ * is not visible here — the same `fn()` form the call-result references use,
+ * so a prefix-aware stage 4 joins them. Null when nothing can be said.
+ */
+export function moduleVariableAlias(
+  value: ValueInfo,
+  file: FileContext,
+  scope: Scope,
+  data: PackData,
+): string | null {
+  const traced = receiverTypeOf(value, file, scope, data.stdlibModules);
+  if (traced) return traced;
+  const factory = calleeQualified(value.callee, file);
+  return factory === null ? null : `${factory}()`;
 }
