@@ -1,0 +1,8 @@
+{
+  "grammar": "tree-sitter-swift",
+  "version": "0.7.3",
+  "source": "https://github.com/alex-pinkus/tree-sitter-swift/releases/download/0.7.3/tree-sitter-swift.wasm",
+  "sha256": "0258a7ef17303a8079ffe0748b3583d59656b5c3e8653fca7b6451b3e6689eb2",
+  "abi_version": 15,
+  "note": "Prebuilt wasm from the grammar's GitHub release. The npm package ships native prebuilds only, and building the wasm needs emscripten. Refetch and verify with: npm run grammar:fetch -w @waterslide/pack-swift"
+}
