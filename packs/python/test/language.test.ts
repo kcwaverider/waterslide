@@ -465,3 +465,24 @@ describe("module-level singletons, class constants and staticmethods", () => {
     ]);
   });
 });
+
+describe("re-exports come only from module-level imports", () => {
+  it("a deferred import inside a def is not importable from the module", async () => {
+    const pack = await getPack();
+    const r = pack.parse(
+      "repo",
+      "svc.py",
+      "from repo_a import shared\nif True:\n    from repo_b import guarded\ndef f():\n    import somelib\n    return somelib.call()\n",
+    );
+    const globals = r.provides
+      .filter((p) => p.scope === "global" && p.alias_of !== null)
+      .map((p) => p.name);
+    expect(globals).toContain("svc.shared");
+    expect(globals).toContain("svc.guarded");
+    expect(globals).not.toContain("svc.somelib");
+    // The binding itself still works inside the file.
+    expect(
+      r.edges.map((e) => (typeof e.to === "string" ? e.to : e.to.value)),
+    ).toEqual(["somelib.call"]);
+  });
+});

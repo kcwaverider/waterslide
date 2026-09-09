@@ -87,16 +87,69 @@ export async function createPythonPack(): Promise<PythonPack> {
   const data = loadPackData();
   return {
     manifest,
-    parse: (repo, path, content, options = {}) =>
-      parseFile(runtime, data, resolveOptions(options), repo, path, content),
-    compose: (results, options = {}) =>
-      compose(results, resolveOptions(options)),
+    parse: (repo, path, content, options = {}) => {
+      const opts = tryResolveOptions(options);
+      if (!opts.ok) return optionsFailure({ repo, path }, opts.error);
+      return parseFile(runtime, data, opts.value, repo, path, content);
+    },
+    compose: (results, options = {}) => {
+      const opts = tryResolveOptions(options);
+      if (!opts.ok)
+        return composeFailure(`invalid packs.python options: ${opts.error}`);
+      return compose(results, opts.value);
+    },
   };
 }
 
-/** Core applies defaults before every call; the parse here only narrows the record to our shape. */
-function resolveOptions(options: PackOptions): PythonPackOptions {
-  return PythonPackOptionsSchema.parse(options);
+/**
+ * Core applies defaults before every call; this only narrows the record to our
+ * shape. A malformed block is a diagnostic, never a throw (parser §9).
+ */
+function tryResolveOptions(
+  options: PackOptions,
+): { ok: true; value: PythonPackOptions } | { ok: false; error: string } {
+  const parsed = PythonPackOptionsSchema.safeParse(options);
+  return parsed.success
+    ? { ok: true, value: parsed.data }
+    : { ok: false, error: parsed.error.message };
+}
+
+function optionsFailure(
+  site: { repo: string; path: string },
+  error: string,
+): PackResult {
+  const result = EMPTY();
+  result.diagnostics.push(
+    diagnostic(
+      site,
+      "error",
+      "pack_failure",
+      `invalid packs.python options: ${error}; nothing emitted from this file`,
+      null,
+    ),
+  );
+  return result;
+}
+
+function composeFailure(message: string): PackPatch {
+  return {
+    nodes: [],
+    edges: [],
+    schemas: [],
+    provides: [],
+    node_updates: [],
+    diagnostics: [
+      {
+        severity: "error",
+        code: "recognizer_failure",
+        message,
+        repo: null,
+        path: null,
+        line: null,
+        pack: PACK_ID,
+      },
+    ],
+  };
 }
 
 /**
@@ -133,7 +186,12 @@ export const pack: LanguagePack = {
     }
     return ready.parse(repo, path, content, options);
   },
-  compose: (results, options) => compose(results, resolveOptions(options)),
+  compose: (results, options) => {
+    const opts = tryResolveOptions(options);
+    if (!opts.ok)
+      return composeFailure(`invalid packs.python options: ${opts.error}`);
+    return compose(results, opts.value);
+  },
 };
 
 const EMPTY = (): PackResult => ({
@@ -247,24 +305,9 @@ function compose(
   try {
     return composeFastApi(results);
   } catch (error) {
-    return {
-      nodes: [],
-      edges: [],
-      schemas: [],
-      provides: [],
-      node_updates: [],
-      diagnostics: [
-        {
-          severity: "error",
-          code: "recognizer_failure",
-          message: `fastapi compose failed: ${errorMessage(error)}; route paths are local, not composed`,
-          repo: null,
-          path: null,
-          line: null,
-          pack: PACK_ID,
-        },
-      ],
-    };
+    return composeFailure(
+      `fastapi compose failed: ${errorMessage(error)}; route paths are local, not composed`,
+    );
   }
 }
 

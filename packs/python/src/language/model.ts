@@ -198,5 +198,7 @@ export interface ImportRecord {
   /** Fully qualified target after alias resolution. */
   readonly qualified: string;
   readonly form: "import" | "from";
+  /** Outside every def and class (top-level control flow counts): importable from this module. */
+  readonly moduleLevel: boolean;
   readonly line: number;
 }

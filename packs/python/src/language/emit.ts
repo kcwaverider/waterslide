@@ -109,6 +109,7 @@ export function emitStructure(model: FileModel, em: Emitter): void {
   // global alias, and a two-hop chain resolves in stage 4.
   if (file.module !== "") {
     for (const imp of model.imports) {
+      if (!imp.moduleLevel) continue; // a deferred import inside a def is not importable from the module
       if (imp.form === "import" && imp.local === imp.qualified) continue;
       if (em.data.stdlibModules.has(imp.qualified.split(".")[0] as string))
         continue;

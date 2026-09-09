@@ -67,6 +67,19 @@ describe("branch detection and is_error_path (parser §6, data table)", () => {
     expect(new Set(edges.map((e) => e.exclusive_group)).size).toBe(1);
   });
 
+  it("a fork edge keeps caller pack_data alongside its limb data", async () => {
+    const pack = await getPack();
+    // The Mongo recognizer emits through edgeFromSite; its edges carry no caller
+    // pack_data, so this checks the limb data lands, and that nothing else is lost.
+    const r = pack.parse(
+      "b",
+      "m.py",
+      "from db import db\ndef f(x):\n    if x:\n        return db.notes.find_one({})\n",
+    );
+    const e = r.edges[0];
+    expect(e?.pack_data).toEqual({ python: { limb: 0, branch_line: 3 } });
+  });
+
   it("try/except is a fork; the except limb is uncertain and says so", async () => {
     const edges = (await flow()).filter(
       (e) => e.exclusive_group === "flow.py:handle:L15",

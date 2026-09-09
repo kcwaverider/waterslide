@@ -142,6 +142,10 @@ function collectImports(
     if (!cap) continue;
     const stmt = cap.node;
     const line = lineStart(stmt);
+    const moduleLevel = isModuleLevelStatement(stmt);
+    const push = (r: Omit<ImportRecord, "moduleLevel">): void => {
+      records.push({ ...r, moduleLevel });
+    };
     if (stmt.type === "import_statement") {
       for (const item of stmt.namedChildren) {
         if (item.type === "dotted_name") {
@@ -153,7 +157,7 @@ function collectImports(
             qualified: local,
             line,
           });
-          records.push({ local, qualified: local, form: "import", line });
+          push({ local, qualified: local, form: "import", line });
         } else if (item.type === "aliased_import") {
           const name = item.childForFieldName("name");
           const alias = item.childForFieldName("alias");
@@ -163,7 +167,7 @@ function collectImports(
             qualified: name.text,
             line,
           });
-          records.push({
+          push({
             local: alias.text,
             qualified: name.text,
             form: "import",
@@ -214,7 +218,7 @@ function collectImports(
             qualified,
             line,
           });
-          records.push({ local: item.text, qualified, form: "from", line });
+          push({ local: item.text, qualified, form: "from", line });
         } else if (item.type === "aliased_import") {
           const name = item.childForFieldName("name");
           const alias = item.childForFieldName("alias");
@@ -225,12 +229,25 @@ function collectImports(
             qualified,
             line,
           });
-          records.push({ local: alias.text, qualified, form: "from", line });
+          push({ local: alias.text, qualified, form: "from", line });
         }
       }
     }
   }
   return records;
+}
+
+/** True when no def, class or lambda encloses the statement; `if`/`try` at module level still count. */
+function isModuleLevelStatement(stmt: Node): boolean {
+  for (let n = stmt.parent; n; n = n.parent) {
+    if (
+      n.type === "function_definition" ||
+      n.type === "class_definition" ||
+      n.type === "lambda"
+    )
+      return false;
+  }
+  return true;
 }
 
 function joinModule(moduleName: string, name: string): string {

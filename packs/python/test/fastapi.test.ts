@@ -313,6 +313,91 @@ describe("compose: cross-file prefix composition (decision items 1 and 2)", () =
     expect(b).toBe(a);
   });
 
+  it("keeps every stacked route decorator: one http provide per decorator, label from the first", async () => {
+    const pack = await getPack();
+    const r = pack.parse(
+      "r",
+      "app.py",
+      'from fastapi import FastAPI\napp = FastAPI()\n\n@app.get("/items")\n@app.get("/items/")\ndef items():\n    return []\n',
+    );
+    const node = r.nodes.find((n) => n.id.endsWith("#items"));
+    expect(node?.label).toBe("GET /items");
+    expect(readFastApi(node?.pack_data)).toEqual({
+      kind: "route",
+      routes: [
+        { methods: ["GET"], path: "/items", path_literal: true },
+        { methods: ["GET"], path: "/items/", path_literal: true },
+      ],
+    });
+    const patch = pack.compose([
+      { repo: "r", path: "app.py", result: r, pack_data: null },
+    ]);
+    expect(patch.provides.map((p) => p.name).sort()).toEqual([
+      "GET /items",
+      "GET /items/",
+    ]);
+  });
+
+  it("composes both sides of a mount cycle from the app regardless of route order", async () => {
+    const pack = await getPack();
+    const src = [
+      "from fastapi import FastAPI, APIRouter",
+      "app = FastAPI()",
+      "a = APIRouter()",
+      "b = APIRouter()",
+      "",
+      '@b.get("/y")',
+      "def y():",
+      "    return 1",
+      "",
+      '@a.get("/x")',
+      "def x():",
+      "    return 1",
+      "",
+      'app.include_router(a, prefix="/a")',
+      'a.include_router(b, prefix="/b")',
+      'b.include_router(a, prefix="/loop")',
+      "",
+    ].join("\n");
+    const r = pack.parse("r", "cyc.py", src);
+    const patch = pack.compose([
+      { repo: "r", path: "cyc.py", result: r, pack_data: null },
+    ]);
+    expect(patch.diagnostics.map((d) => d.code)).toContain(
+      "router_mount_cycle",
+    );
+    const labels = Object.fromEntries(
+      patch.node_updates.map((u) => [u.node_id.split("#")[1], u.label]),
+    );
+    expect(labels["x"]).toMatch(/^GET \/a(\/b\/loop)*\/x$/);
+    expect(labels["y"]).toMatch(/^GET \/a\/b(\/loop\/b)*\/y$/);
+    expect(patch.provides.map((p) => p.name)).toContain("GET /a/b/y");
+  });
+
+  it("finds Depends inside Annotated[...]", async () => {
+    const pack = await getPack();
+    const r = pack.parse(
+      "r",
+      "app.py",
+      "from typing import Annotated\nfrom fastapi import APIRouter, Depends\nfrom auth import get_db\nrouter = APIRouter()\n\n@router.get('/x')\ndef x(db: Annotated[str, Depends(get_db)]):\n    return db\n",
+    );
+    const dep = r.edges.find((e) => e.label === "Depends");
+    expect(typeof dep?.to === "string" ? dep.to : dep?.to.value).toBe(
+      "auth.get_db",
+    );
+  });
+
+  it("turns a malformed options block into a diagnostic rather than a throw", async () => {
+    const pack = await getPack();
+    const r = pack.parse("r", "x.py", "x = 1\n", { source_roots: "server" });
+    expect(r.nodes).toEqual([]);
+    expect(r.diagnostics.map((d) => d.code)).toEqual(["pack_failure"]);
+    const patch = pack.compose([], { source_roots: 7 });
+    expect(patch.diagnostics.map((d) => d.code)).toEqual([
+      "recognizer_failure",
+    ]);
+  });
+
   it("reports an unmounted router and an unresolvable mount instead of guessing a path", async () => {
     const pack = await getPack();
     const orphan = pack.parse(

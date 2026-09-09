@@ -15,14 +15,26 @@ const SERVER = { source_roots: ["server"] };
  * tapistree checkout is present: `WATERSLIDE_TAPISTREE=/path` or a sibling
  * checkout at `../tapistree`. Skipped, loudly, otherwise.
  */
+const EXPLICIT = process.env["WATERSLIDE_TAPISTREE"];
 const TAPISTREE =
-  process.env["WATERSLIDE_TAPISTREE"] ??
+  EXPLICIT ??
   resolve(
     fileURLToPath(new URL("../../..", import.meta.url)),
     "..",
     "tapistree",
   );
 const present = existsSync(join(TAPISTREE, "server", "main.py"));
+if (EXPLICIT !== undefined && !present) {
+  // An explicit path that does not hold the backend is a misconfiguration, not a skip.
+  throw new Error(
+    `WATERSLIDE_TAPISTREE=${resolve(EXPLICIT)} has no server/main.py`,
+  );
+}
+if (EXPLICIT === undefined && !present) {
+  console.warn(
+    `tapistree gate skipped: no checkout at ${TAPISTREE} (set WATERSLIDE_TAPISTREE to run it)`,
+  );
+}
 
 /**
  * Hand count of FastAPI route decorators in tapistree's `server/` tree at commit

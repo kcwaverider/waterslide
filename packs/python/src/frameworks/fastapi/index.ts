@@ -82,10 +82,15 @@ export const FastApiPackDataSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("router"), prefix: z.string().nullable() }),
   z.strictObject({
     kind: z.literal("route"),
-    methods: z.array(z.string()),
-    path: z.string(),
-    /** False when the decorator path is not a string literal: nothing can match it. */
-    path_literal: z.boolean(),
+    /** One entry per stacked route decorator, in source order. */
+    routes: z.array(
+      z.strictObject({
+        methods: z.array(z.string()),
+        path: z.string(),
+        /** False when the decorator path is not a string literal: nothing can match it. */
+        path_literal: z.boolean(),
+      }),
+    ),
   }),
   z.strictObject({ kind: z.literal("route_edge") }),
   z.strictObject({ kind: z.literal("mount"), prefix: z.string().nullable() }),
@@ -238,19 +243,21 @@ function emitRoutes(
       }
 
       const routeId = em.nodeIdFor(def);
+      // A handler may carry several route decorators; keep every one, label by the first.
+      const prior = readFastApi(em.getNode(routeId)?.pack_data);
+      const routes = [
+        ...(prior?.kind === "route" ? prior.routes : []),
+        { methods, path, path_literal: literal !== null },
+      ];
+      const head = routes[0] as (typeof routes)[number];
       em.annotateNode(routeId, {
         kind: "endpoint",
-        label: routeLabel(methods, path),
+        label: routeLabel(head.methods, head.path),
         tier: em.defaultTier("endpoint"),
         is_entry_point: true,
         entry_point_kind: "http_route",
         tags: [TAG_ROUTE],
-        pack_data: fastapiData({
-          kind: "route",
-          methods,
-          path,
-          path_literal: literal !== null,
-        }),
+        pack_data: fastapiData({ kind: "route", routes }),
       });
 
       if (!router) {
@@ -260,6 +267,7 @@ function emitRoutes(
         );
         continue;
       }
+      if (prior?.kind === "route") continue; // one router → handler edge per handler; the decorators are in pack_data
 
       const kwargs = keywordArguments(deco.childForFieldName("arguments"));
       const responseModel = kwargs.get("response_model");
@@ -341,6 +349,12 @@ function emitDepends(model: FileModel, em: Emitter): void {
     for (const p of params?.namedChildren ?? []) {
       const value = p.childForFieldName("value");
       if (value) emitDependsCall(model, em, def, value, scope);
+      // `Annotated[T, Depends(x)]`: the dependency sits in the type, not the default.
+      const type = p.childForFieldName("type");
+      if (type && /^Annotated\[/.test(type.text)) {
+        for (const call of type.descendantsOfType("call"))
+          emitDependsCall(model, em, def, call, scope);
+      }
     }
     for (const deco of def.decorators) {
       if (deco.type !== "call") continue;

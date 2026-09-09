@@ -233,15 +233,22 @@ export class Emitter {
         line_end: lineEnd(at),
       },
       // Which limb this edge came from, so the suite can check that edges
-      // sharing an ordinal share a limb (A6 item 2). Pack-private; core strips it.
-      ...(limb
+      // sharing an ordinal share a limb (A6 item 2). Merged under `python`
+      // with whatever the caller supplied; pack-private, core strips it.
+      ...(limb || spec.pack_data !== undefined
         ? {
-            pack_data: {
-              python: {
-                limb: limb.index,
-                branch_line: lineStart(limb.statement),
-              },
-            },
+            pack_data: limb
+              ? {
+                  ...(spec.pack_data ?? {}),
+                  python: {
+                    ...(isRecord(spec.pack_data?.["python"])
+                      ? spec.pack_data["python"]
+                      : {}),
+                    limb: limb.index,
+                    branch_line: lineStart(limb.statement),
+                  },
+                }
+              : spec.pack_data,
           }
         : {}),
     };
@@ -327,6 +334,10 @@ export class Emitter {
       diagnostics: this.diagnostics,
     };
   }
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 export interface EdgeSpec {

@@ -183,11 +183,15 @@ export function composeFastApi(results: readonly PerFileResult[]): PackPatch {
   // Full prefixes per router: every path from an app down, FastAPI order
   // (parent prefixes, then include_router prefix, then the router's own prefix).
   const memo = new Map<string, string[] | null>();
+  // A result computed with a branch removed by the cycle guard depends on
+  // where the walk entered the cycle; it must not be cached (review round 2).
+  const cycleTainted = new Set<string>();
   const prefixesFor = (id: string, stack: string[]): string[] | null => {
     const known = memo.get(id);
     if (known !== undefined) return known;
     const router = routers.get(id) as Router;
     if (stack.includes(id)) {
+      for (const tainted of stack) cycleTainted.add(tainted);
       diagnostics.push(
         diag(
           "error",
@@ -243,7 +247,7 @@ export function composeFastApi(results: readonly PerFileResult[]): PackPatch {
         }
       }
     }
-    memo.set(id, result);
+    if (!cycleTainted.has(id)) memo.set(id, result);
     return result;
   };
 
@@ -266,7 +270,9 @@ export function composeFastApi(results: readonly PerFileResult[]): PackPatch {
       );
       continue;
     }
-    if (!parsed.path_literal) continue; // already diagnosed per file
+    // Every stacked decorator is a route; non-literal paths were diagnosed per file.
+    const literalRoutes = parsed.routes.filter((x) => x.path_literal);
+    if (literalRoutes.length === 0) continue;
     const prefixes = prefixesFor(r.routerId, []);
     if (prefixes === null) {
       if (!unmountedReported.has(r.routerId)) {
@@ -282,33 +288,39 @@ export function composeFastApi(results: readonly PerFileResult[]): PackPatch {
       }
       continue;
     }
-    const composed = prefixes.map((p) => p + parsed.path);
+    const first = literalRoutes[0] as (typeof literalRoutes)[number];
+    const firstComposed = prefixes.map((p) => p + first.path);
     nodePatches.push({
       node_id: r.routeId,
       add_sources: [],
-      label: routeLabel(parsed.methods, composed[0] as string),
+      label: routeLabel(first.methods, firstComposed[0] as string),
     });
-    if (composed.length > 1) {
+    const reachable = literalRoutes.flatMap((x) =>
+      prefixes.map((p) => p + x.path),
+    );
+    if (reachable.length > 1) {
       diagnostics.push(
         diag(
           "info",
           "route_mounted_multiple",
-          `route ${r.routeId} is reachable at ${composed.join(", ")}; label shows the first`,
+          `route ${r.routeId} is reachable at ${reachable.join(", ")}; label shows the first`,
           r,
         ),
       );
     }
-    for (const path of composed) {
-      for (const method of parsed.methods) {
-        httpProvides.push({
-          ref_kind: "http",
-          name: `${method} ${path}`,
-          node_id: r.routeId,
-          alias_of: null,
-          visibility: "public",
-          scope: "global",
-          scope_path: null,
-        });
+    for (const x of literalRoutes) {
+      for (const path of prefixes.map((p) => p + x.path)) {
+        for (const method of x.methods) {
+          httpProvides.push({
+            ref_kind: "http",
+            name: `${method} ${path}`,
+            node_id: r.routeId,
+            alias_of: null,
+            visibility: "public",
+            scope: "global",
+            scope_path: null,
+          });
+        }
       }
     }
   }
