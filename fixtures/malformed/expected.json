@@ -186,8 +186,8 @@
   },
   "second-span-repo-unknown.json": {
     "code": "E_SOURCE_REPO",
-    "path": "$.nodes[1].sources[0].repo",
-    "why": "a multi-span node whose second span names a repo not in repos[]; invariant 19 applies to every element, not only sources[0]"
+    "path": "$.nodes[1].sources[2].repo",
+    "why": "a multi-span node whose last span names a repo not in repos[] (named to sort last); invariant 19 applies to every element, not only sources[0]"
   },
   "no-span-matches-id-path.json": {
     "code": "E_ID_FORMAT",

@@ -62,7 +62,7 @@ coincidence of index is not worth breaking either fixture to avoid.
 | `duplicate-repo-name.json` | `E_DUPLICATE_ID` | repos[] lists the same repo name twice (invariant 1) |
 | `self-parent.json` | `E_PARENT_CYCLE` | a node whose parent is itself; the parent chain must be a tree (invariant 20) |
 | `unsorted-sources.json` | `E_CANONICAL_ORDER` | two spans equal on repo, path and line_start are ordered by line_end descending; the span sort key is total (invariant 17, §7.2) |
-| `second-span-repo-unknown.json` | `E_SOURCE_REPO` | a multi-span node whose second span names a repo not in repos[]; invariant 19 applies to every element, not only sources[0] |
+| `second-span-repo-unknown.json` | `E_SOURCE_REPO` | a multi-span node whose last span names a repo not in repos[] (named to sort last); invariant 19 applies to every element, not only sources[0] |
 | `no-span-matches-id-path.json` | `E_ID_FORMAT` | a multi-span node where no span's path is the path in the id; the id must name the declaring file (invariant 18) |
 | `wrong-type.json` | `E_TYPE` | is_entry_point is the string "yes" instead of a boolean |
 | `unknown-key.json` | `E_UNKNOWN_KEY` | node carries a key the model does not define |
