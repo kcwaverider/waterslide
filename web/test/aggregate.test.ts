@@ -24,7 +24,7 @@ describe("semantic zoom aggregation (UI §2.2, graph model §2.3)", () => {
     expect(d.get("mongo:ledger.entries")).toBe(0);
   });
 
-  it("names levels by the predominant kind that has children, coarsest first", () => {
+  it("names levels by what the nodes with children ARE in the hierarchy, coarsest first", () => {
     expect(levelsOf(load("single-repo-minimal.json").nodes)).toEqual([
       { depth: 0, name: "services" },
       { depth: 1, name: "modules" },
@@ -33,6 +33,62 @@ describe("semantic zoom aggregation (UI §2.2, graph model §2.3)", () => {
     expect(levelsOf(load("derived-ids.json").nodes).map((l) => l.name)).toEqual(
       ["modules", "functions"],
     );
+  });
+
+  it("tells directories from files, and methods from functions, by position in the chain", () => {
+    const base = load("single-repo-minimal.json")
+      .nodes[0] as CanonicalGraph["nodes"][number];
+    const mk = (
+      id: string,
+      kind: CanonicalGraph["nodes"][number]["kind"],
+      parent: string | null,
+    ): CanonicalGraph["nodes"][number] => ({
+      ...base,
+      id,
+      kind,
+      label: id,
+      parent,
+      sources: [],
+    });
+    const nodes = [
+      mk("svc:repo", "service", null),
+      mk("r:server", "module", "svc:repo"),
+      mk("r:server/api", "module", "r:server"),
+      mk("r:server/api/notes.py", "module", "r:server/api"),
+      mk("r:server/api/notes.py#Svc", "class", "r:server/api/notes.py"),
+      mk(
+        "r:server/api/notes.py#Svc.run",
+        "function",
+        "r:server/api/notes.py#Svc",
+      ),
+      mk(
+        "r:server/api/notes.py#Svc.run.inner",
+        "function",
+        "r:server/api/notes.py#Svc.run",
+      ),
+      mk("mongo:db.notes", "collection", null),
+    ];
+    expect(levelsOf(nodes).map((l) => l.name)).toEqual([
+      "services",
+      "directories",
+      "directories (2)",
+      "modules",
+      "classes",
+      "methods",
+      "inner functions",
+    ]);
+  });
+
+  it("never names two adjacent levels identically", () => {
+    for (const f of [
+      "single-repo-minimal.json",
+      "derived-ids.json",
+      "band-skip.json",
+    ]) {
+      const names = levelsOf(load(f).nodes).map((l) => l.name);
+      for (let i = 1; i < names.length; i++)
+        expect(names[i]).not.toBe(names[i - 1]);
+    }
   });
 
   it("the deepest level is the graph itself", () => {
