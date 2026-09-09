@@ -585,6 +585,8 @@ export function emitDeclarations(ctx: FileContext): void {
     ctx.provides.push({
       name: t.qualified,
       node_id: t.node_id,
+      alias_of: null,
+      ref_kind: "symbol",
       visibility: visibilityOf(visibilityModifier(t.decl)),
       scope: "global",
       scope_path: null,
@@ -636,6 +638,8 @@ export function emitDeclarations(ctx: FileContext): void {
     ctx.provides.push({
       name: o.qualified,
       node_id: o.node_id,
+      alias_of: null,
+      ref_kind: "symbol",
       visibility,
       scope: "global",
       scope_path: null,
@@ -647,6 +651,8 @@ export function emitDeclarations(ctx: FileContext): void {
       ctx.provides.push({
         name: plain,
         node_id: o.node_id,
+        alias_of: null,
+        ref_kind: "symbol",
         visibility,
         scope: "global",
         scope_path: null,
@@ -684,7 +690,18 @@ export function collectImports(ctx: FileContext): void {
       names.find((c) => TYPE_NODE_KINDS.has(c.type)) ??
       ta.childForFieldName("value");
     if (alias !== undefined && target !== null && target !== undefined) {
-      ctx.typealiases.set(alias.text, typeRef(target).base);
+      const targetName = typeRef(target).base;
+      ctx.typealiases.set(alias.text, targetName);
+      // A typealias is a name that forwards to another name (parser §3.4 alias_of).
+      ctx.provides.push({
+        name: alias.text,
+        node_id: null,
+        alias_of: targetName,
+        ref_kind: "symbol",
+        visibility: visibilityOf(visibilityModifier(ta)),
+        scope: "global",
+        scope_path: null,
+      });
     }
   }
 }

@@ -8,7 +8,7 @@
  * Swift `provides` names are not path-derived, so they are untouched except
  * for their `node_id`.
  */
-import type { PerFileResult } from "./compose.js";
+import type { SwiftPerFileResult } from "./compose.js";
 
 /** A node id prefix ends at the string end, at `#` (member), or at `/` (branch group suffix). */
 function idBoundary(rest: string): boolean {
@@ -16,10 +16,10 @@ function idBoundary(rest: string): boolean {
 }
 
 export function rePath(
-  result: PerFileResult,
+  result: SwiftPerFileResult,
   repo: string,
   path: string,
-): PerFileResult {
+): SwiftPerFileResult {
   const oldPrefix = `${result.repo}:${result.path}`;
   const newPrefix = `${repo}:${path}`;
   const oldSchema = `sch:${oldPrefix}#`;
@@ -58,14 +58,18 @@ export function rePath(
   const rewritten = walk({
     result: result.result,
     state: result.state,
-  }) as Pick<PerFileResult, "result" | "state">;
-  rewritten.state.repo = repo;
-  rewritten.state.path = path;
+  }) as Pick<SwiftPerFileResult, "result" | "state">;
+  if (rewritten.state !== undefined) {
+    rewritten.state.repo = repo;
+    rewritten.state.path = path;
+  }
   // The module node's label is the file basename, which is path-derived.
   const moduleNode = rewritten.result.nodes.find((n) => n.id === newPrefix);
   if (moduleNode !== undefined) {
     const i = path.lastIndexOf("/");
     moduleNode.label = i < 0 ? path : path.slice(i + 1);
   }
-  return { repo, path, result: rewritten.result, state: rewritten.state };
+  return rewritten.state === undefined
+    ? { repo, path, result: rewritten.result }
+    : { repo, path, result: rewritten.result, state: rewritten.state };
 }

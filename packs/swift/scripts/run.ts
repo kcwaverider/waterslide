@@ -8,13 +8,16 @@
  * §1.3), runs the per-file pass in discovery order, sorts results by (repo,
  * path) byte-wise as core will, runs compose, applies the patch, then
  * assembles a canonical graph so core's validator can judge the output.
- * Stand-in targets for UnresolvedRefs are minted HERE, by the driver, so the
- * graph has two endpoints per edge; core mints the real `unknown` nodes at
- * stage 4 (amendment B1). The pack itself never mints a target.
+ * `unknown` target nodes for UnresolvedRefs are minted HERE, by the driver,
+ * with core's id encoder, so the graph has two endpoints per edge. In the
+ * pipeline core mints them at stage 4 (amendment B1); the pack never does.
  */
 import {
+  callSiteCompare,
   edgeId,
   serializeCanonical,
+  unknownNodeId,
+  unknownNodeLabel,
   validate,
   type CanonicalGraph,
   type Edge,
@@ -30,7 +33,7 @@ import {
   composeWithReport,
   formatSummary,
   SwiftPack,
-  type PerFileResult,
+  type SwiftPerFileResult,
 } from "../src/index.js";
 
 const EXCLUDED_DIRS =
@@ -73,12 +76,6 @@ export function shuffle<T>(xs: T[], seed: number): T[] {
 const byteCmp = (a: string, b: string): number =>
   Buffer.compare(Buffer.from(a, "utf8"), Buffer.from(b, "utf8"));
 
-function standInId(kind: string, value: string): string {
-  // Driver-only. Core's real form is `unknown:{ref_kind}/{value}` (B1); the
-  // frozen validator does not know that scope yet, so `ext:` carries it here.
-  return `ext:unresolved-${kind}/${value.replace(/\//g, "~")}`;
-}
-
 export interface Assembled {
   graph: CanonicalGraph;
   merged: ReturnType<typeof applyPatch>;
@@ -86,7 +83,7 @@ export interface Assembled {
 }
 
 export function assemble(
-  results: PerFileResult[],
+  results: readonly SwiftPerFileResult[],
   repoName: string,
   commit: string,
 ): Assembled {
@@ -100,7 +97,8 @@ export function assemble(
   const standIns = new Map<string, GraphNode>();
   const collapsed = new Map<string, { edge: Edge; conditions: Set<string> }>();
   for (const pe of merged.edges) {
-    const to = resolveTo(pe, standIns);
+    const fromTier = nodes.get(pe.from)?.tier ?? "domain";
+    const to = resolveTo(pe, standIns, fromTier);
     const key = edgeId({
       from: pe.from,
       to,
@@ -141,10 +139,7 @@ export function assemble(
     e.source_count += 1;
     if (
       pe.source !== null &&
-      (e.source === null ||
-        pe.source.line_start < e.source.line_start ||
-        (pe.source.line_start === e.source.line_start &&
-          byteCmp(pe.source.path, e.source.path) < 0))
+      (e.source === null || callSiteCompare(pe.source, e.source) < 0)
     ) {
       e.source = pe.source;
     }
@@ -169,19 +164,23 @@ export function assemble(
   return { graph, merged, report };
 }
 
-function resolveTo(pe: PartialEdge, standIns: Map<string, GraphNode>): string {
+function resolveTo(
+  pe: PartialEdge,
+  standIns: Map<string, GraphNode>,
+  fromTier: GraphNode["tier"],
+): string {
   if (typeof pe.to === "string") return pe.to;
-  const id = standInId(pe.to.ref_kind, pe.to.value);
+  const id = unknownNodeId(pe.to.ref_kind, pe.to.value);
   if (!standIns.has(id)) {
     standIns.set(id, {
       id,
-      kind: "external_service",
-      label: `? ${pe.to.value}`,
-      tier: "external",
+      kind: "unknown",
+      label: unknownNodeLabel(pe.to.ref_kind, pe.to.value),
+      tier: fromTier,
       parent: null,
       sources: [],
       confidence: "inferred",
-      confidence_reason: `driver stand-in for an UnresolvedRef (${pe.to.ref_kind}); core mints the real unknown node at stage 4`,
+      confidence_reason: `unresolved ${pe.to.ref_kind} reference \`${pe.to.value}\` from ${pe.from} (driver-minted; core mints this at stage 4)`,
       is_entry_point: false,
       entry_point_kind: null,
       is_infrastructure: false,
@@ -208,11 +207,15 @@ export async function runTree(
   repoName: string,
   root: string,
   order: "sorted" | number,
-): Promise<{ assembled: Assembled; bytes: string; results: PerFileResult[] }> {
+): Promise<{
+  assembled: Assembled;
+  bytes: string;
+  results: SwiftPerFileResult[];
+}> {
   const pack = new SwiftPack();
   let files = discover(root).sort(byteCmp);
   if (order !== "sorted") files = shuffle(files, order);
-  const results: PerFileResult[] = [];
+  const results: SwiftPerFileResult[] = [];
   for (const f of files) {
     const path = relative(root, f).split("\\").join("/");
     const analysis = await pack.analyze(

@@ -36,9 +36,7 @@ export function formatSummary(
 
   const http = merged.edges.filter((e) => e.kind === "http_request");
   const httpResolved = http.filter(
-    (e) =>
-      unresolved(e)?.value !== "{unresolved}" &&
-      unresolved(e)?.hints?.unresolved !== true,
+    (e) => unresolved(e)?.value !== "{unresolved}",
   );
   const httpCertain = http.filter((e) => e.confidence === "certain");
   lines.push("");
@@ -50,8 +48,9 @@ export function formatSummary(
   for (const e of httpResolved) {
     const ref = unresolved(e);
     if (ref === null) continue;
-    const method = String(ref.hints?.method ?? "?");
-    const key = `${method} ${ref.value}${ref.hints?.query === undefined ? "" : `?${String(ref.hints.query)}`}`;
+    const hints = ref.ref_kind === "http" ? ref.hints : undefined;
+    const method = hints?.method ?? "?";
+    const key = `${method} ${ref.value}${hints?.query === undefined || hints.query === null ? "" : `?${hints.query}`}`;
     paths.set(key, (paths.get(key) ?? 0) + 1);
   }
   for (const [k, v] of [...paths.entries()].sort((a, b) => byteCmp(a[0], b[0])))

@@ -6,7 +6,12 @@
  * Candidate in the per-file state; compose finishes it. A call whose receiver
  * type cannot be determined from the file is counted, not guessed.
  */
-import type { PartialEdge, UnresolvedRef } from "@waterslide/core";
+import type {
+  HttpHints,
+  PartialEdge,
+  SymbolHints,
+  UnresolvedRef,
+} from "@waterslide/core";
 import type { Node, Query } from "web-tree-sitter";
 import { diag, ownerAt, type FileContext, type Owner } from "../context.js";
 import type {
@@ -266,15 +271,12 @@ export function httpEdgeFrom(
   boundLabel: string | null,
   line: number,
 ): PartialEdge {
-  const hints: Record<string, unknown> = { method: res.method, via: res.via };
-  if (res.rendered.base_url_expr !== null)
-    hints.base_url_expr = res.rendered.base_url_expr;
-  if (res.rendered.query !== null) hints.query = res.rendered.query;
-  if (res.rendered.no_literal) {
-    hints.unresolved = true;
-    hints.template =
-      res.rendered.path === "{unresolved}" ? null : res.rendered.path;
-  }
+  const method = res.method.startsWith("{") ? null : res.method.toUpperCase();
+  const hints: HttpHints = {
+    method,
+    base_url_expr: res.rendered.base_url_expr,
+    query: res.rendered.query,
+  };
   const to: UnresolvedRef = {
     ref_kind: "http",
     value: res.rendered.no_literal ? "{unresolved}" : res.rendered.path,
@@ -297,7 +299,7 @@ export function httpEdgeFrom(
     ...base,
     to,
     kind: "http_request",
-    label: `${res.method} ${to.value}`,
+    label: `${method ?? "?"} ${to.value}`,
     confidence: "inferred",
     confidence_reason:
       base.confidence_reason === null
@@ -694,8 +696,7 @@ function pushCandidate(
         ? member
         : `${typeName}.${member}`;
   const e = baseEdge(ctx, owner, call, member ?? typeName ?? "?");
-  const hints: Record<string, unknown> = { arity: args.length };
-  if (typeName !== null) hints.receiver_type = typeName;
+  const hints: SymbolHints = { arity: args.length, receiver_type: typeName };
   e.to = { ref_kind: "symbol", value, hints, source_line: lineStart(call) };
   if (receiver !== null && !receiver.certain && receiver.reason !== null) {
     e.confidence = "inferred";

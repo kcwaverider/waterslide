@@ -12,7 +12,7 @@
  * same body. A path that cannot be rebuilt is never guessed: the ref carries
  * `{unresolved}` plus a reason naming what stopped it.
  */
-import type { PartialEdge, UnresolvedRef } from "@waterslide/core";
+import type { HttpHints, PartialEdge, UnresolvedRef } from "@waterslide/core";
 import type { Node } from "web-tree-sitter";
 import { diag, ownerAt, type FileContext, type Owner } from "../context.js";
 import type {
@@ -551,17 +551,13 @@ function emitDirectSend(
   let ref: UnresolvedRef;
   let confidence: PartialEdge["confidence"] = "certain";
   let reason: string | null = null;
-  let method = "GET";
+  let method: string | null = "GET"; // URLRequest's default; null only when a helper leaves it to callers
   if (construction === null) {
     const origin = describeOrigin(ctx, owner, v);
-    ref = {
-      ref_kind: "http",
-      value: "{unresolved}",
-      hints: { method, unresolved: true, url_expr: requestExpr.text },
-      source_line: line,
-    };
+    const hints: HttpHints = { method, base_url_expr: null, query: null };
+    ref = { ref_kind: "http", value: "{unresolved}", hints, source_line: line };
     confidence = "inferred";
-    reason = `URL passed to \`${call.text.split("(")[0] ?? call.text}\` is a runtime value: ${origin}; no path literal in local scope`;
+    reason = `URL passed to \`${call.text.split("(")[0] ?? call.text}\` is a runtime value: ${origin}; no path literal in local scope (expression: \`${requestExpr.text.replace(/\s+/g, " ")}\`)`;
     diag(
       ctx,
       "warning",
@@ -571,16 +567,16 @@ function emitDirectSend(
     );
   } else {
     const rendered = renderUrl(construction.parts, () => null);
-    method = methodText(construction.method) ?? "GET";
-    const hints: Record<string, unknown> = { method };
-    if (rendered.base_url_expr !== null)
-      hints.base_url_expr = rendered.base_url_expr;
-    if (rendered.query !== null) hints.query = rendered.query;
+    const m = methodText(construction.method);
+    method = m === null ? "GET" : m.startsWith("{") ? null : m.toUpperCase();
+    const hints: HttpHints = {
+      method,
+      base_url_expr: rendered.base_url_expr,
+      query: rendered.query,
+    };
     if (rendered.no_literal) {
-      hints.unresolved = true;
-      hints.template = rendered.path === "{unresolved}" ? null : rendered.path;
       confidence = "inferred";
-      reason = `URL is built from ${describeParts(construction.parts)} with no literal path text; only callers can supply the path`;
+      reason = `URL is built from ${describeParts(construction.parts)} with no literal path text; only callers can supply the path${rendered.path === "{unresolved}" ? "" : ` (template \`${rendered.path}\`)`}`;
       diag(
         ctx,
         "warning",
@@ -612,13 +608,18 @@ function emitDirectSend(
       confidence = "inferred";
       reason = `${reason === null ? "" : `${reason}; `}query string \`${rendered.query ?? ""}\` inferred from a local built with a \`?\`-prefixed literal`;
     }
-    ref = { ref_kind: "http", value: rendered.path, hints, source_line: line };
+    ref = {
+      ref_kind: "http",
+      value: rendered.no_literal ? "{unresolved}" : rendered.path,
+      hints,
+      source_line: line,
+    };
   }
   const edge: PartialEdge = {
     from: owner.node_id,
     to: ref,
     kind: "http_request",
-    label: `${method} ${ref.value}`,
+    label: `${method ?? "?"} ${ref.value}`,
     schema_id: null,
     response_schema_id: null,
     confidence,

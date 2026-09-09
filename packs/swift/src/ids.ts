@@ -1,18 +1,10 @@
 /**
- * Identity and hashing helpers. Node ids follow graph model §1; spanHash
- * follows the definition being pinned in core (decisions item 6c):
- * `sha256:` + first 16 lowercase hex of SHA-256 over the NFC-normalized UTF-8
- * bytes of the span's exact source text. Swap to core's export when it lands.
+ * Identity helpers. Node ids follow graph model §1. `spanHash` is core's
+ * export (decisions item 6c): one implementation, every pack calls it.
  */
-import { createHash } from "node:crypto";
-import type { Visibility } from "@waterslide/core";
+import { spanHash, type Visibility } from "@waterslide/core";
 
-export function spanHash(text: string): string {
-  const digest = createHash("sha256")
-    .update(text.normalize("NFC"), "utf8")
-    .digest("hex");
-  return `sha256:${digest.slice(0, 16)}`;
-}
+export { spanHash };
 
 export function moduleId(repo: string, path: string): string {
   return `${repo}:${path}`;

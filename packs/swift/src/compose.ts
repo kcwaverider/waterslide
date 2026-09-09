@@ -13,14 +13,14 @@
 import {
   DEFAULT_TIER_BY_KIND,
   type Diagnostic,
-  type EntryPointKind,
   type Node as GraphNode,
   type NodeKind,
+  type NodeUpdate,
+  type PackPatch,
   type PackResult,
   type PartialEdge,
-  type PayloadSchema,
-  type Provide,
-  type SourceSpan,
+  type PerFileResult,
+  type SymbolHints,
 } from "@waterslide/core";
 import { codeId, moduleId } from "./ids.js";
 import { httpEdgeFrom } from "./recognizers/calls.js";
@@ -39,32 +39,18 @@ import type {
   TypeFact,
 } from "./state.js";
 
-export interface PerFileResult {
-  repo: string;
-  path: string;
-  result: PackResult;
-  state: SwiftFileState;
+/**
+ * Core's `PerFileResult` is `{ repo, path, result }`. The Swift pack needs one
+ * more thing per file to do cross-file work: the pack-private state recorded
+ * by the per-file pass (extension spans with hashes, helper bodies, cross-file
+ * call sites). Until the contract carries it, `compose` accepts results that
+ * happen to have it and reports every file that does not.
+ */
+export interface SwiftPerFileResult extends PerFileResult {
+  state?: SwiftFileState;
 }
 
-export interface NodeUpdate {
-  id: string;
-  add_sources?: SourceSpan[];
-  parent?: string;
-  kind?: NodeKind;
-  label?: string;
-  is_entry_point?: boolean;
-  entry_point_kind?: EntryPointKind | null;
-  tags?: string[];
-}
-
-export interface PackPatch {
-  nodes: GraphNode[];
-  edges: PartialEdge[];
-  schemas: PayloadSchema[];
-  provides: Provide[];
-  diagnostics: Diagnostic[];
-  node_updates: NodeUpdate[];
-}
+export type { NodeUpdate, PackPatch } from "@waterslide/core";
 
 /** Coverage figures the run summary prints (handoff §6 item 6). */
 export interface ComposeReport {
@@ -83,7 +69,7 @@ const byteCmp = (a: string, b: string): number =>
   Buffer.compare(Buffer.from(a, "utf8"), Buffer.from(b, "utf8"));
 
 interface RepoIndex {
-  types: Map<string, { file: PerFileResult; fact: TypeFact }>;
+  types: Map<string, { file: SwiftPerFileResult; fact: TypeFact }>;
   /** `${type}#${member}` (type "" for top level) → facts. */
   functions: Map<string, FunctionFact[]>;
   /** Properties contributed by extensions, by type name. */
@@ -98,11 +84,12 @@ function fkey(type: string | null, member: string): string {
 }
 
 function buildIndex(
-  results: PerFileResult[],
+  results: readonly SwiftPerFileResult[],
   diagnostics: Diagnostic[],
 ): Map<string, RepoIndex> {
   const repos = new Map<string, RepoIndex>();
   for (const r of results) {
+    if (r.state === undefined) continue;
     let idx = repos.get(r.repo);
     if (idx === undefined) {
       idx = {
@@ -233,11 +220,11 @@ function encodedType(args: Candidate["args"]): string | null {
   return null;
 }
 
-export function compose(results: PerFileResult[]): PackPatch {
+export function compose(results: readonly SwiftPerFileResult[]): PackPatch {
   return composeWithReport(results).patch;
 }
 
-export function composeWithReport(results: PerFileResult[]): {
+export function composeWithReport(results: readonly SwiftPerFileResult[]): {
   patch: PackPatch;
   report: ComposeReport;
 } {
@@ -261,19 +248,22 @@ export function composeWithReport(results: PerFileResult[]): {
   const repos = buildIndex(results, patch.diagnostics);
   const httpTypes = new Set<string>();
   for (const r of results)
-    for (const id of r.state.http_types) httpTypes.add(id);
+    for (const id of r.state?.http_types ?? []) httpTypes.add(id);
 
   // --- Extensions (item 2) --------------------------------------------------
   const minted = new Map<string, string>(); // `${repo}|${type}` → node id
   for (const r of results) {
     const idx = repos.get(r.repo);
-    if (idx === undefined) continue;
+    if (idx === undefined || r.state === undefined) continue;
     for (const ext of r.state.extensions) {
       const declared = idx.types.get(ext.type_name);
       let typeNodeId: string;
       if (declared !== undefined) {
         typeNodeId = declared.fact.node_id;
-        patch.node_updates.push({ id: typeNodeId, add_sources: [ext.span] });
+        patch.node_updates.push({
+          node_id: typeNodeId,
+          add_sources: [ext.span],
+        });
         report.extensions_merged++;
       } else {
         const key = `${r.repo}|${ext.type_name}`;
@@ -300,6 +290,8 @@ export function composeWithReport(results: PerFileResult[]): {
           patch.provides.push({
             name: ext.type_name,
             node_id: typeNodeId,
+            alias_of: null,
+            ref_kind: "symbol",
             visibility: "module",
             scope: "global",
             scope_path: null,
@@ -308,15 +300,21 @@ export function composeWithReport(results: PerFileResult[]): {
           report.extensions_minted++;
         } else {
           typeNodeId = existing;
-          patch.node_updates.push({ id: typeNodeId, add_sources: [ext.span] });
+          patch.node_updates.push({
+            node_id: typeNodeId,
+            add_sources: [ext.span],
+          });
         }
       }
       for (const member of ext.member_ids) {
-        patch.node_updates.push({ id: member, parent: typeNodeId });
+        patch.node_updates.push({
+          node_id: member,
+          add_sources: [],
+          parent: typeNodeId,
+        });
       }
       for (const f of ext.functions) {
         if (
-          r.state.http_types.length > 0 &&
           r.result.edges.some(
             (e) => e.from === f.node_id && e.kind === "http_request",
           )
@@ -330,7 +328,7 @@ export function composeWithReport(results: PerFileResult[]): {
   // --- Candidates -----------------------------------------------------------
   for (const r of results) {
     const idx = repos.get(r.repo);
-    if (idx === undefined) continue;
+    if (idx === undefined || r.state === undefined) continue;
     const facts = factsIndex(idx);
     const externals = new Map<string, number>();
     for (const c of r.state.candidates) {
@@ -422,11 +420,26 @@ export function composeWithReport(results: PerFileResult[]): {
   }
 
   // --- client_service (item 7) -----------------------------------------------
+  // A type whose members reach HTTP only through a helper in another file is
+  // known here, but `NodeUpdate` carries no `kind`, so the reclassification is
+  // unrepresentable in a PackPatch. Reported rather than silently dropped; the
+  // per-file pass already marks types with a direct send.
+  const stillClass: string[] = [];
   for (const id of [...httpTypes].sort(byteCmp)) {
     let kind: NodeKind | undefined;
     for (const idx of repos.values()) kind ??= idx.kinds.get(id);
-    if (kind === "class")
-      patch.node_updates.push({ id, kind: "client_service" });
+    if (kind === "class") stillClass.push(id);
+  }
+  if (stillClass.length > 0) {
+    patch.diagnostics.push({
+      severity: "warning",
+      code: "kind_update_unrepresentable",
+      message: `${String(stillClass.length)} type(s) issue HTTP requests only through a helper and should be client_service (decisions item 7), but NodeUpdate cannot change kind; left as class: ${stillClass.map((id) => id.split("#")[1] ?? id).join(", ")}`,
+      repo: null,
+      path: null,
+      line: null,
+      pack: "swift",
+    });
   }
 
   patch.nodes.sort((a, b) => byteCmp(a.id, b.id));
@@ -442,8 +455,10 @@ function symbolEdge(
   receiverType: string | null,
   reason: string | null = null,
 ): PartialEdge {
-  const hints: Record<string, unknown> = { arity: c.args.length };
-  if (receiverType !== null) hints.receiver_type = receiverType;
+  const hints: SymbolHints = {
+    arity: c.args.length,
+    receiver_type: receiverType,
+  };
   const e: PartialEdge = {
     ...c.edge,
     to: {
@@ -468,7 +483,7 @@ function tryHttp(
   c: Candidate,
   facts: FactsIndex,
   patch: PackPatch,
-  r: PerFileResult,
+  r: SwiftPerFileResult,
   report: ComposeReport,
 ): PartialEdge | null {
   const line = c.edge.source?.line_start ?? 1;
@@ -522,7 +537,7 @@ function tryHttp(
 
 /** Merge per-file results and a patch into one five-return result (for the driver and tests). */
 export function applyPatch(
-  results: PerFileResult[],
+  results: readonly SwiftPerFileResult[],
   patch: PackPatch,
 ): PackResult {
   const nodes = new Map<string, GraphNode>();
@@ -542,12 +557,12 @@ export function applyPatch(
   }
   for (const n of patch.nodes) nodes.set(n.id, structuredClone(n));
   for (const u of patch.node_updates) {
-    const n = nodes.get(u.id);
+    const n = nodes.get(u.node_id);
     if (n === undefined) {
       out.diagnostics.push({
         severity: "error",
         code: "recognizer_failure",
-        message: `compose update targets unknown node ${u.id}`,
+        message: `compose update targets unknown node ${u.node_id}`,
         repo: null,
         path: null,
         line: null,
@@ -555,15 +570,13 @@ export function applyPatch(
       });
       continue;
     }
-    if (u.add_sources !== undefined) n.sources.push(...u.add_sources);
+    n.sources.push(...u.add_sources);
     if (u.parent !== undefined) n.parent = u.parent;
-    if (u.kind !== undefined) n.kind = u.kind;
     if (u.label !== undefined) n.label = u.label;
     if (u.is_entry_point !== undefined) n.is_entry_point = u.is_entry_point;
     if (u.entry_point_kind !== undefined)
       n.entry_point_kind = u.entry_point_kind;
     if (u.tags !== undefined) n.tags = u.tags;
-    if (u.kind !== undefined) n.tier = DEFAULT_TIER_BY_KIND[u.kind] ?? n.tier;
   }
   out.nodes = [...nodes.values()].sort((a, b) => byteCmp(a.id, b.id));
   out.edges.push(...patch.edges);

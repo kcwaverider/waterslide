@@ -16,7 +16,7 @@ import {
   pack,
   rePath,
   spanHash,
-  type PerFileResult,
+  type SwiftPerFileResult,
 } from "../src/index.js";
 import { assemble, shuffle } from "../scripts/run.js";
 
@@ -28,13 +28,17 @@ async function fileResult(
   repo: string,
   path: string,
   content: string,
-): Promise<PerFileResult> {
+): Promise<SwiftPerFileResult> {
   const a = await swift.analyze(repo, path, content);
   return { repo, path, result: a.result, state: a.state };
 }
 
 function ref(e: PartialEdge): UnresolvedRef | null {
   return typeof e.to === "string" ? null : e.to;
+}
+
+function httpHints(r: UnresolvedRef | null | undefined) {
+  return r?.ref_kind === "http" ? r.hints : undefined;
 }
 
 describe("manifest and module export", () => {
@@ -45,7 +49,7 @@ describe("manifest and module export", () => {
   });
 
   it("returns exactly the five contract returns from parse()", async () => {
-    const r = await pack.parse("k", "Kitchen.swift", kitchen);
+    const r = await pack.parse("k", "Kitchen.swift", kitchen, {});
     expect(Object.keys(r).sort()).toEqual([
       "diagnostics",
       "edges",
@@ -59,7 +63,7 @@ describe("manifest and module export", () => {
 
 describe("language recognizers", () => {
   it("emits the module node, every type and function, with nesting as parent", async () => {
-    const r = await pack.parse("k", "Kitchen.swift", kitchen);
+    const r = await pack.parse("k", "Kitchen.swift", kitchen, {});
     const ids = new Set(r.nodes.map((n) => n.id));
     expect(ids.has("k:Kitchen.swift")).toBe(true);
     expect(ids.has("k:Kitchen.swift#NoteService")).toBe(true);
@@ -75,7 +79,7 @@ describe("language recognizers", () => {
   });
 
   it("disambiguates overloads by parameter labels, then ordinal, and provides the plain name for both", async () => {
-    const r = await pack.parse("k", "Kitchen.swift", kitchen);
+    const r = await pack.parse("k", "Kitchen.swift", kitchen, {});
     const ids = r.nodes
       .map((n) => n.id)
       .filter((id) => id.includes("APIClient.request"));
@@ -91,7 +95,7 @@ describe("language recognizers", () => {
   });
 
   it("maps access modifiers to visibility: default module, private → private", async () => {
-    const r = await pack.parse("k", "Kitchen.swift", kitchen);
+    const r = await pack.parse("k", "Kitchen.swift", kitchen, {});
     const multipart = r.provides.find(
       (p) => p.name === "NoteService.multipart",
     );
@@ -101,7 +105,7 @@ describe("language recognizers", () => {
   });
 
   it("merges a same-file extension into the declared type: one node, two spans, members parented", async () => {
-    const r = await pack.parse("k", "Kitchen.swift", kitchen);
+    const r = await pack.parse("k", "Kitchen.swift", kitchen, {});
     const ns = r.nodes.find((n) => n.id === "k:Kitchen.swift#NoteService");
     expect(ns?.sources).toHaveLength(2);
     const archive = r.nodes.find(
@@ -111,7 +115,7 @@ describe("language recognizers", () => {
   });
 
   it("emits Codable types as schemas with declaration-order fields and in-file refs", async () => {
-    const r = await pack.parse("k", "Kitchen.swift", kitchen);
+    const r = await pack.parse("k", "Kitchen.swift", kitchen, {});
     const note = r.schemas.find((s) => s.id === "sch:k:Kitchen.swift#Note");
     expect(note?.fields.map((f) => f.name)).toEqual([
       "id",
@@ -124,7 +128,7 @@ describe("language recognizers", () => {
   });
 
   it("resolves typealias, self context and in-file receivers to string targets", async () => {
-    const r = await pack.parse("k", "Kitchen.swift", kitchen);
+    const r = await pack.parse("k", "Kitchen.swift", kitchen, {});
     const reload = r.edges.find((e) =>
       e.from.endsWith("#NotesViewModel.reload"),
     );
@@ -136,7 +140,7 @@ describe("language recognizers", () => {
   });
 
   it("marks @main App conformers as app_launch entry points", async () => {
-    const r = await pack.parse("k", "Kitchen.swift", kitchen);
+    const r = await pack.parse("k", "Kitchen.swift", kitchen, {});
     const app = r.nodes.find((n) => n.id === "k:Kitchen.swift#KitchenApp");
     expect(app?.is_entry_point).toBe(true);
     expect(app?.entry_point_kind).toBe("app_launch");
@@ -145,7 +149,7 @@ describe("language recognizers", () => {
 
 describe("SwiftUI entry points (items 8, 9)", () => {
   it("emits every handler closure as a ui_handler entry point with a stable ordinal id", async () => {
-    const r = await pack.parse("k", "Kitchen.swift", kitchen);
+    const r = await pack.parse("k", "Kitchen.swift", kitchen, {});
     const handlers = r.nodes.filter((n) => n.kind === "ui_handler");
     expect(
       handlers.every(
@@ -172,7 +176,7 @@ describe("SwiftUI entry points (items 8, 9)", () => {
   });
 
   it("attributes calls inside a handler closure to the handler, not the view", async () => {
-    const r = await pack.parse("k", "Kitchen.swift", kitchen);
+    const r = await pack.parse("k", "Kitchen.swift", kitchen, {});
     const e = r.edges.find((x) => x.from.endsWith("#NotesView.task[0]"));
     expect(e?.to).toBe("k:Kitchen.swift#NotesViewModel.reload");
   });
@@ -180,50 +184,46 @@ describe("SwiftUI entry points (items 8, 9)", () => {
 
 describe("URL reconstruction (items 3, 10, 11)", () => {
   it("reads a literal path at the call site as certain, with method and base URL expression", async () => {
-    const r = await pack.parse("k", "Kitchen.swift", kitchen);
+    const r = await pack.parse("k", "Kitchen.swift", kitchen, {});
     const e = r.edges.find(
       (x) => x.from.endsWith("#NoteService.login") && x.kind === "http_request",
     );
     const to = e === undefined ? null : ref(e);
     expect(to?.value).toBe("/api/auth/token");
-    expect(to?.hints?.method).toBe("POST");
-    expect(to?.hints?.base_url_expr).toBe("apiClient.baseURL");
+    expect(httpHints(to)?.method).toBe("POST");
+    expect(httpHints(to)?.base_url_expr).toBe("apiClient.baseURL");
     expect(e?.confidence).toBe("certain");
   });
 
   it("follows the Endpoint helper two hops and reports the path as inferred with a reason naming the hops", async () => {
-    const r = await pack.parse("k", "Kitchen.swift", kitchen);
+    const r = await pack.parse("k", "Kitchen.swift", kitchen, {});
     const get = r.edges.find(
       (x) => x.from.endsWith("#NoteService.get") && x.kind === "http_request",
     );
     const to = get === undefined ? null : ref(get);
     expect(to?.value).toBe("/api/notes/{id}");
-    expect(to?.hints?.method).toBe("GET");
-    expect(to?.hints?.via).toEqual([
-      "APIClient.request(_:)[0]",
-      "Endpoint.request",
-    ]);
+    expect(httpHints(to)?.method).toBe("GET");
     expect(get?.confidence).toBe("inferred");
     expect(get?.confidence_reason).toContain("Endpoint.request");
     const archive = r.edges.find(
       (x) =>
         x.from.endsWith("#NoteService.archive") && x.kind === "http_request",
     );
-    expect(ref(archive as PartialEdge)?.hints?.method).toBe("POST");
+    expect(httpHints(ref(archive as PartialEdge))?.method).toBe("POST");
   });
 
   it("splits a query string out of the path into hints.query", async () => {
-    const r = await pack.parse("k", "Kitchen.swift", kitchen);
+    const r = await pack.parse("k", "Kitchen.swift", kitchen, {});
     const list = r.edges.find(
       (x) => x.from.endsWith("#NoteService.list") && x.kind === "http_request",
     );
     const to = list === undefined ? null : ref(list);
     expect(to?.value).toBe("/api/notes");
-    expect(to?.hints?.query).toBe("archived=false");
+    expect(httpHints(to)?.query).toBe("archived=false");
   });
 
   it("never guesses: a runtime URL is {unresolved} with a reason naming what stopped it", async () => {
-    const r = await pack.parse("k", "Kitchen.swift", kitchen);
+    const r = await pack.parse("k", "Kitchen.swift", kitchen, {});
     const send = r.edges.find(
       (x) =>
         x.from.endsWith("#APIClient.request(_:)[1]") &&
@@ -231,7 +231,6 @@ describe("URL reconstruction (items 3, 10, 11)", () => {
     );
     const to = send === undefined ? null : ref(send);
     expect(to?.value).toBe("{unresolved}");
-    expect(to?.hints?.unresolved).toBe(true);
     expect(send?.confidence).toBe("inferred");
     expect(send?.confidence_reason).toContain("parameter");
     expect(r.diagnostics.some((d) => d.code === "url_unresolved")).toBe(true);
@@ -251,7 +250,7 @@ class Svc { let c = Client()
   func deep() async throws { _ = try await c.viaWrapper(Endpoint(path: "/deep")) }
   func shallow() async throws { _ = try await c.request(Endpoint(path: "/shallow")) }
 }`;
-    const r = await pack.parse("k", "Hops.swift", src);
+    const r = await pack.parse("k", "Hops.swift", src, {});
     const shallow = r.edges.find(
       (e) => e.from.endsWith("#Svc.shallow") && e.kind === "http_request",
     );
@@ -271,7 +270,7 @@ class Svc { let c = Client()
 
 describe("branch detection and the error-path table (§6)", () => {
   it("groups alternatives, numbers them in source order, and marks guard-else and catch limbs as error paths", async () => {
-    const r = await pack.parse("k", "Kitchen.swift", kitchen);
+    const r = await pack.parse("k", "Kitchen.swift", kitchen, {});
     const login = r.edges.filter(
       (e) => e.from.endsWith("#NoteService.login") && e.kind === "call",
     );
@@ -309,7 +308,7 @@ describe("branch detection and the error-path table (§6)", () => {
   });
 
   it("produces no group for a branch point whose edges sit in one limb only", async () => {
-    const r = await pack.parse("k", "Kitchen.swift", kitchen);
+    const r = await pack.parse("k", "Kitchen.swift", kitchen, {});
     const reload = r.edges.find((e) =>
       e.from.endsWith("#NotesViewModel.reload"),
     );
@@ -325,6 +324,7 @@ describe("a pack never throws (§9)", () => {
       "k",
       "Broken.swift",
       "struct A { func f() { let x = }\nclass B { func g() {} }\n",
+      {},
     );
     expect(
       r.diagnostics.some(
@@ -335,7 +335,7 @@ describe("a pack never throws (§9)", () => {
   });
 
   it("emits only the module node and an empty_file diagnostic for an empty file", async () => {
-    const r = await pack.parse("k", "Empty.swift", "");
+    const r = await pack.parse("k", "Empty.swift", "", {});
     expect(r.nodes.map((n) => n.id)).toEqual(["k:Empty.swift"]);
     expect(r.diagnostics.some((d) => d.code === "empty_file")).toBe(true);
   });
@@ -345,6 +345,7 @@ describe("a pack never throws (§9)", () => {
       "k",
       "Odd.swift",
       "class C { func f() { let h = { print(1) }\n h()\n foo()() } }\n",
+      {},
     );
     expect(r.nodes.some((n) => n.id === "k:Odd.swift#C.f")).toBe(true);
     expect(r.diagnostics.some((d) => d.code === "unsupported_construct")).toBe(
@@ -354,7 +355,7 @@ describe("a pack never throws (§9)", () => {
 
   it("survives garbage without throwing", async () => {
     await expect(
-      pack.parse("k", "G.swift", " ￿{{{{ ))) import"),
+      pack.parse("k", "G.swift", " ￿{{{{, {}))) import", {}),
     ).resolves.toBeDefined();
   });
 });
@@ -403,7 +404,7 @@ describe("compose: extensions across files and helper resolution across files", 
     expect(merged.nodes.filter((n) => n.label === "Color")).toHaveLength(1);
   });
 
-  it("reconstructs a path through a helper declared in another file and marks the type client_service", async () => {
+  it("reconstructs a path through a helper declared in another file and reports the client_service change it cannot express", async () => {
     const client = `struct Endpoint { let path: String; let method: String
   var request: URLRequest { var r = URLRequest(url: URL(string: APIClient.shared.baseURL + path)!); r.httpMethod = method; return r } }
 class APIClient { static let shared = APIClient(); var baseURL = "https://x"
@@ -422,18 +423,22 @@ class MemoryService { private let apiClient = APIClient.shared
     const http = patch.edges.find((e) => e.kind === "http_request");
     const to = http === undefined ? null : ref(http);
     expect(to?.value).toBe("/api/memories/memory/{id}");
-    expect(to?.hints?.method).toBe("GET");
-    expect(to?.hints?.base_url_expr).toBe("APIClient.shared.baseURL");
+    expect(httpHints(to)?.method).toBe("GET");
+    expect(httpHints(to)?.base_url_expr).toBe("APIClient.shared.baseURL");
     expect(http?.confidence).toBe("inferred");
     expect(http?.response_schema_id).toBe(
       "sch:r:Services/MemoryService.swift#Memory",
     );
-    const merged = applyPatch(results, patch);
+    // Item 7 wants MemoryService reclassified, but NodeUpdate carries no kind:
+    // the pack reports what it cannot express rather than dropping it.
     expect(
-      merged.nodes.find(
-        (n) => n.id === "r:Services/MemoryService.swift#MemoryService",
-      )?.kind,
-    ).toBe("client_service");
+      patch.diagnostics.some(
+        (d) =>
+          d.code === "kind_update_unrepresentable" &&
+          d.message.includes("MemoryService"),
+      ),
+    ).toBe(true);
+    const merged = applyPatch(results, patch);
     // The consumed Endpoint construction carries no edge of its own.
     expect(
       merged.edges.filter((e) => e.from.endsWith("#MemoryService.getMemory")),
@@ -477,12 +482,14 @@ describe("spanHash (item 6c)", () => {
 });
 
 describe("determinism and the validator (handoff §6 items 1 and 2)", () => {
-  async function parseAll(order: "sorted" | number): Promise<PerFileResult[]> {
+  async function parseAll(
+    order: "sorted" | number,
+  ): Promise<SwiftPerFileResult[]> {
     let files = readdirSync(FIXTURES)
       .filter((f) => f.endsWith(".swift"))
       .sort();
     if (order !== "sorted") files = shuffle(files, order);
-    const out: PerFileResult[] = [];
+    const out: SwiftPerFileResult[] = [];
     for (const f of files)
       out.push(
         await fileResult("fx", f, readFileSync(join(FIXTURES, f), "utf8")),
@@ -517,7 +524,7 @@ describe("determinism and the validator (handoff §6 items 1 and 2)", () => {
   });
 
   it("never emits an edge id itself: PartialEdge carries no id, so core derives them", async () => {
-    const r = await pack.parse("k", "Kitchen.swift", kitchen);
+    const r = await pack.parse("k", "Kitchen.swift", kitchen, {});
     expect(r.edges.every((e) => !("id" in e))).toBe(true);
     const e = r.edges.find((x) => typeof x.to === "string");
     expect(e).toBeDefined();

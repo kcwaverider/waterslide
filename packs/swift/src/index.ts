@@ -7,19 +7,14 @@ import {
   assertPackCompatible,
   type LanguagePack,
   type PackManifest,
+  type PackOptions,
+  type PackPatch,
   type PackResult,
+  type PerFileResult,
 } from "@waterslide/core";
 import { analyzeFile, type FileAnalysis } from "./analyze.js";
-import { compose, type PackPatch, type PerFileResult } from "./compose.js";
+import { compose, type SwiftPerFileResult } from "./compose.js";
 import { rePath } from "./repath.js";
-
-/**
- * This pack's resolved block from config.yaml, defaults applied by core
- * (addendum). Swift declares no options yet. Options arrive per call and are
- * never held as instance state: one pack instance may serve repos with
- * different options.
- */
-export type SwiftPackOptions = Record<string, never>;
 
 export const manifest: PackManifest = {
   id: "swift",
@@ -41,9 +36,9 @@ export class SwiftPack implements LanguagePack {
     repo_name: string,
     path: string,
     content: string,
-    options?: SwiftPackOptions,
+    options: PackOptions,
   ): Promise<PackResult> {
-    void options; // no Swift options exist yet; optional until core's interface carries the parameter
+    void options; // Swift declares no options yet; they arrive per call and are never stored
     return (await analyzeFile(repo_name, path, content)).result;
   }
 
@@ -57,7 +52,7 @@ export class SwiftPack implements LanguagePack {
   }
 
   /** Cross-file pass (decisions item 1). `results` must arrive sorted by (repo, path). */
-  compose(results: PerFileResult[], options?: SwiftPackOptions): PackPatch {
+  compose(results: PerFileResult[], options: PackOptions): PackPatch {
     void options;
     return compose(results);
   }
@@ -67,10 +62,10 @@ export class SwiftPack implements LanguagePack {
     result: PerFileResult,
     repo: string,
     path: string,
-    options?: SwiftPackOptions,
+    options: PackOptions,
   ): PerFileResult {
     void options;
-    return rePath(result, repo, path);
+    return rePath(result as SwiftPerFileResult, repo, path);
   }
 }
 
@@ -80,12 +75,7 @@ export const pack: LanguagePack = new SwiftPack();
 export { analyzeFile } from "./analyze.js";
 export type { FileAnalysis } from "./analyze.js";
 export { applyPatch, compose, composeWithReport } from "./compose.js";
-export type {
-  ComposeReport,
-  NodeUpdate,
-  PackPatch,
-  PerFileResult,
-} from "./compose.js";
+export type { ComposeReport, SwiftPerFileResult } from "./compose.js";
 export { spanHash } from "./ids.js";
 export { rePath } from "./repath.js";
 export { formatSummary } from "./summary.js";
