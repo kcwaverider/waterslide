@@ -140,10 +140,18 @@ export function buildViewerHtml(
   #status { color: #555; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #stage { position: absolute; top: 37px; bottom: 0; left: 0; right: 0; }
   #stage svg { display: block; width: 100%; height: 100%; }
-  .legend { display: flex; gap: 10px; font-size: 11px; color: #555; }
-  .legend span::before { content: ""; display: inline-block; width: 26px; border-top: 2px solid #666; margin-right: 4px; vertical-align: middle; }
+  .legend { display: flex; gap: 10px; font-size: 11px; color: #555; align-items: center; flex-wrap: wrap; }
+  .legend .line::before { content: ""; display: inline-block; width: 22px; border-top: 2px solid #666; margin-right: 4px; vertical-align: middle; }
   .legend .inferred::before { border-top-style: dashed; }
   .legend .annotated::before { border-top-style: dotted; }
+  .legend .sep { color: #bbb; }
+  .legend .swatch::before { content: ""; display: inline-block; width: 14px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; box-sizing: border-box; }
+  .legend .unchanged::before { background: hsl(212 55% 91%); border: 1px solid hsl(212 40% 58%); }
+  .legend .modified::before { background: hsl(212 62% 44%); border: 1px solid hsl(212 65% 26%); }
+  .legend .new::before { background: hsl(212 62% 44%); border: 1px solid hsl(212 65% 26%); box-shadow: inset 0 0 0 1.5px hsl(212 62% 44%), inset 0 0 0 2.5px #fff; }
+  .legend .absent::before { background: #f1f1f1; border: 1px dashed #8a8a8a; }
+  .legend .broken-mark { color: hsl(0 72% 42%); font-weight: 700; }
+  .legend .skips-mark { background: #f2c14e; color: #3a2a00; border-radius: 8px; padding: 0 6px; font-size: 10px; font-weight: 600; }
   .node.selected > rect:first-of-type { stroke: #111; stroke-width: 3; }
   .edge.selected > path:first-of-type { stroke-width: 3.5; }
   #panel { position: absolute; top: 49px; right: 12px; bottom: 12px; width: 360px; overflow: auto; background: #fff; border: 1px solid #ccc; border-radius: 8px; box-shadow: 0 4px 18px rgba(0,0,0,.12); padding: 12px 14px; box-sizing: border-box; }
@@ -175,7 +183,13 @@ export function buildViewerHtml(
 <div id="bar">
   <h1>waterslide</h1>
   <div id="status"></div>
-  <div class="legend"><span>certain</span><span class="inferred">inferred</span><span class="annotated">annotated</span></div>
+  <div class="legend" title="Hue is the node's kind. Saturation is change state since your last baseline. Line style is confidence. Red with a warning icon is a broken edge.">
+    <span class="line">certain</span><span class="line inferred">inferred</span><span class="line annotated">annotated</span>
+    <span class="sep">|</span>
+    <span class="swatch unchanged">unchanged</span><span class="swatch modified">modified</span><span class="swatch new">new</span><span class="swatch absent">missing</span>
+    <span class="sep">|</span>
+    <span><span class="broken-mark">▲!</span> broken</span><span><span class="skips-mark">skips N</span> bands bypassed</span>
+  </div>
   <label>open <input id="file" type="file" accept=".json,application/json"></label>
 </div>
 <div id="stage"></div>
