@@ -216,6 +216,70 @@ describe("the two rough edges the core track named", () => {
   });
 });
 
+describe("sibling adjacency (UI §1.4)", () => {
+  it("keeps nodes that share a parent contiguous within a band, in every fixture", () => {
+    for (const f of fixtures) {
+      const layout = layoutGraph(load(f));
+      for (const band of BAND_ORDER) {
+        const row = layout.nodes
+          .filter((n) => !n.external && n.node.tier === band)
+          .sort((a, b) => a.x - b.x);
+        const seen = new Set<string>();
+        let last: string | null = null;
+        for (const n of row) {
+          const p = n.node.parent ?? `root:${n.node.id}`;
+          if (p !== last) {
+            expect(seen.has(p), `${f}: ${p} split in band ${band}`).toBe(false);
+            seen.add(p);
+            last = p;
+          }
+        }
+      }
+    }
+  });
+
+  it("a parent drawn in the same band sits beside its children", () => {
+    const layout = layoutGraph(load("derived-ids.json"));
+    const x = (id: string): number =>
+      layout.nodes.find((n) => n.node.id === id)?.x ?? Number.NaN;
+    const file = "tapistree:api/services/note_service.py";
+    const fns = layout.nodes
+      .filter((n) => n.node.parent === file)
+      .map((n) => n.x);
+    const lo = Math.min(...fns, x(file));
+    const hi = Math.max(...fns, x(file));
+    const between = layout.nodes.filter(
+      (n) =>
+        !n.external &&
+        n.node.tier === "domain" &&
+        n.x >= lo &&
+        n.x <= hi &&
+        n.node.parent !== file &&
+        n.node.id !== file,
+    );
+    expect(between).toEqual([]);
+  });
+
+  it("marks same-band edges and only those", () => {
+    for (const f of fixtures) {
+      const layout = layoutGraph(load(f));
+      const at = new Map(layout.nodes.map((n) => [n.node.id, n] as const));
+      for (const le of layout.edges) {
+        const a = at.get(le.edge.from);
+        const b = at.get(le.edge.to);
+        const expected =
+          a !== undefined &&
+          b !== undefined &&
+          a !== b &&
+          !a.external &&
+          !b.external &&
+          a.node.tier === b.node.tier;
+        expect(le.sameBand).toBe(expected);
+      }
+    }
+  });
+});
+
 describe("edge geometry and fork points (UI §3.3)", () => {
   it("every edge's control points match its path and its midpoint is t = 0.5", () => {
     for (const f of fixtures)

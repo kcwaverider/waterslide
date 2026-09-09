@@ -380,7 +380,10 @@ export function renderGraph(
     const e = le.edge;
     const edge = edges
       .append("g")
-      .attr("class", `edge${e.is_broken ? " broken" : ""}`)
+      .attr(
+        "class",
+        `edge${e.is_broken ? " broken" : ""}${le.sameBand ? " same-band" : ""}`,
+      )
       .attr("data-id", e.id)
       .style("cursor", "pointer")
       .on("click", (ev: MouseEvent) => {

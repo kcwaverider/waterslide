@@ -188,6 +188,9 @@ export function buildViewerHtml(
   #controls label { font-size: 12px; color: #555; display: flex; align-items: center; gap: 3px; }
   #hide-unresolved-label { font-weight: 600; color: #333; }
   #stage { flex: 1; position: relative; min-width: 0; }
+  /* Whole-system mode: a same-band edge is a call within one depth, and at scale they pile into a wall over the row. They rest dimmed and come forward on hover, when selected, or in flow mode (§5.2's vocabulary, extended). */
+  svg:not(.flow) .edge.same-band { opacity: .22; }
+  svg:not(.flow) .edge.same-band:hover, svg:not(.flow) .edge.same-band.selected, svg:not(.flow) .edge.same-band.travelled { opacity: 1; }
   /* Flow mode (§5.2): outside the blast radius dims; nothing is hidden. */
   svg.flow .node.dim, svg.flow .edge.dim, svg.flow .badge-holder.dim { opacity: .18; }
   /* §7.5: the untravelled side of a fork is drawn, dimmed. */

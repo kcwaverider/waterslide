@@ -121,6 +121,8 @@ export interface LayoutEdge {
   /** The point at t = 0.5, where badges sit. */
   readonly mx: number;
   readonly my: number;
+  /** Both ends in one band and not a self-loop: the edge arcs over or under its row. */
+  readonly sameBand: boolean;
 }
 
 /** Unit tangent along a layout edge at t; the direction of travel. */
@@ -260,6 +262,55 @@ export function layoutGraph(graph: {
     for (const band of inBand) sweep(band);
     for (const band of [...inBand].reverse()) sweep(band);
   }
+
+  // §1.4: minimise crossings, THEN keep siblings adjacent. Within a band,
+  // nodes that share an ancestor stay together: the sort key is the mean
+  // barycenter rank of each ancestor group from the root down, then the
+  // node's own rank, then its id. A file's functions sit beside the file and
+  // beside each other, so a call inside one file is a short hop rather than
+  // an arc across the whole row. Deterministic, and the barycenter result is
+  // preserved between and within groups.
+  const parentOf = new Map(nodes.map((n) => [n.id, n.parent] as const));
+  const chainOf = (id: string): string[] => {
+    const chain: string[] = [];
+    const seen = new Set<string>([id]);
+    let up = parentOf.get(id) ?? null;
+    while (up !== null && parentOf.has(up) && !seen.has(up)) {
+      seen.add(up);
+      chain.unshift(up);
+      up = parentOf.get(up) ?? null;
+    }
+    return chain;
+  };
+  for (const band of inBand) {
+    const groupRank = new Map<string, number>();
+    const groupSum = new Map<string, { sum: number; count: number }>();
+    for (const n of band)
+      for (const anc of chainOf(n.id)) {
+        const g = groupSum.get(anc) ?? { sum: 0, count: 0 };
+        g.sum += rank.get(n.id) as number;
+        g.count += 1;
+        groupSum.set(anc, g);
+      }
+    for (const [anc, g] of groupSum) groupRank.set(anc, g.sum / g.count);
+    const keyOf = (n: Node): number[] => [
+      ...chainOf(n.id).map((anc) => groupRank.get(anc) as number),
+      rank.get(n.id) as number,
+    ];
+    const keys = new Map(band.map((n) => [n.id, keyOf(n)] as const));
+    band.sort((a, b) => {
+      const ka = keys.get(a.id) as number[];
+      const kb = keys.get(b.id) as number[];
+      // A node is ordered with its own ancestors: compare the shared prefix,
+      // then the shorter chain (the ancestor) comes first.
+      for (let i = 0; i < Math.min(ka.length, kb.length); i++) {
+        const d = (ka[i] as number) - (kb[i] as number);
+        if (d !== 0) return d;
+      }
+      return ka.length - kb.length || byteCompare(a.id, b.id);
+    });
+  }
+  rerank();
 
   // The column runs top to bottom beside the bands, so an edge into it
   // crosses another when its band-side end is deeper but its column-side end
@@ -419,6 +470,7 @@ function edgePath(edge: Edge, a: LayoutNode, b: LayoutNode): LayoutEdge {
       { x: ax, y: sy + dir * lift },
       { x: bx, y: ty + dir * lift },
       { x: bx, y: ty },
+      true,
     );
   }
   const down = b.y > a.y;
@@ -445,6 +497,7 @@ function cubic(
   p1: Point,
   p2: Point,
   p3: Point,
+  sameBand = false,
 ): LayoutEdge {
   const n = (v: number): string => String(v);
   const le = {
@@ -452,6 +505,6 @@ function cubic(
     d: `M ${n(p0.x)} ${n(p0.y)} C ${n(p1.x)} ${n(p1.y)}, ${n(p2.x)} ${n(p2.y)}, ${n(p3.x)} ${n(p3.y)}`,
     p: [p0, p1, p2, p3] as const,
   };
-  const mid = bezierPoint({ ...le, mx: 0, my: 0 }, 0.5);
-  return { ...le, mx: mid.x, my: mid.y };
+  const mid = bezierPoint({ ...le, mx: 0, my: 0, sameBand: false }, 0.5);
+  return { ...le, mx: mid.x, my: mid.y, sameBand };
 }
