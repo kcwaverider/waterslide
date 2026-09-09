@@ -54,9 +54,22 @@ const Boto3ServiceSchema = z.discriminatedUnion("kind", [
     queue_kwarg: z.string(),
   }),
 ]);
+const HttpClientSchema = z.strictObject({
+  module: z.string(),
+  constructors: z.array(z.string()),
+  /** `requests.get(url)`: the module itself exposes the verbs. */
+  module_functions: z.boolean(),
+});
+export type HttpClient = z.infer<typeof HttpClientSchema>;
+
 export const VendorTableSchema = z.strictObject({
   $comment: z.string().optional(),
   vendors: z.array(VendorSchema),
+  http_clients: z.strictObject({
+    $comment: z.string().optional(),
+    clients: z.array(HttpClientSchema),
+    methods: z.record(z.string(), z.string().nullable()),
+  }),
   boto3: z.strictObject({
     module: z.string(),
     factories: z.array(z.string()),

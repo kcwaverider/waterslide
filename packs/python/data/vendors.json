@@ -48,7 +48,43 @@
         "publish_methods": ["publish", "publish_batch"],
         "queue_kwarg": "TopicArn",
         "subscribe_methods": []
+      },
+      "lambda": {
+        "kind": "external",
+        "vendor": "aws",
+        "surface": "lambda"
       }
+    }
+  },
+  "http_clients": {
+    "$comment": "Generic HTTP clients (A10 item 2). The vendor is in the URL, not the library, so a call through one of these never becomes a vendor: it becomes an `http` UnresolvedRef carrying the method, the recoverable path, and `base_url_expr` naming what the path was appended to. Constructors are claimed as configuration. `methods` maps the call name to an HTTP method; null means the method is the call's first argument (`request(method, url)`).",
+    "clients": [
+      {
+        "module": "httpx",
+        "constructors": ["Client", "AsyncClient"],
+        "module_functions": true
+      },
+      {
+        "module": "aiohttp",
+        "constructors": ["ClientSession", "ClientTimeout"],
+        "module_functions": false
+      },
+      {
+        "module": "requests",
+        "constructors": ["Session"],
+        "module_functions": true
+      }
+    ],
+    "methods": {
+      "get": "GET",
+      "post": "POST",
+      "put": "PUT",
+      "patch": "PATCH",
+      "delete": "DELETE",
+      "head": "HEAD",
+      "options": "OPTIONS",
+      "request": null,
+      "stream": null
     }
   }
 }
