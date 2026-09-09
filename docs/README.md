@@ -24,6 +24,7 @@ once.
 | `04-ui-layout.md` | Animation model, layout, zoom, visual encoding, view modes | M2 and M4 |
 | `05-parser-pipeline.md` | Six-stage pipeline, language pack interface, recognizers | M1 |
 | `06-policy-checks.md` | Missing middleware, data egress, band-skipping | M5 |
+| `07-what-it-shows.md` | The observations the map makes legible. Descriptive, not a work list | When asking what the tool is for, or why not a sequence diagram. Not tied to a milestone |
 
 ## Ground rules
 
