@@ -18,7 +18,7 @@
       "label": "Cohere Embed",
       "tier": "external",
       "parent": null,
-      "source": null,
+      "sources": [],
       "confidence": "certain",
       "confidence_reason": null,
       "is_entry_point": false,
@@ -32,7 +32,7 @@
       "label": "notes",
       "tier": "store",
       "parent": null,
-      "source": null,
+      "sources": [],
       "confidence": "inferred",
       "confidence_reason": null,
       "is_entry_point": false,
@@ -46,13 +46,15 @@
       "label": "NoteService.swift",
       "tier": "ui_logic",
       "parent": null,
-      "source": {
-        "repo": "tapistree-ios",
-        "path": "Sources/Services/NoteService.swift",
-        "line_start": 1,
-        "line_end": 120,
-        "hash": "sha256:be7ea0d110454fbb"
-      },
+      "sources": [
+        {
+          "repo": "tapistree-ios",
+          "path": "Sources/Services/NoteService.swift",
+          "line_start": 1,
+          "line_end": 120,
+          "hash": "sha256:be7ea0d110454fbb"
+        }
+      ],
       "confidence": "certain",
       "confidence_reason": null,
       "is_entry_point": false,
@@ -66,13 +68,15 @@
       "label": "NoteService.update",
       "tier": "ui_logic",
       "parent": "tapistree-ios:Sources/Services/NoteService.swift",
-      "source": {
-        "repo": "tapistree-ios",
-        "path": "Sources/Services/NoteService.swift",
-        "line_start": 80,
-        "line_end": 96,
-        "hash": "sha256:f816b3f29061a269"
-      },
+      "sources": [
+        {
+          "repo": "tapistree-ios",
+          "path": "Sources/Services/NoteService.swift",
+          "line_start": 80,
+          "line_end": 96,
+          "hash": "sha256:f816b3f29061a269"
+        }
+      ],
       "confidence": "certain",
       "confidence_reason": null,
       "is_entry_point": false,
@@ -86,13 +90,15 @@
       "label": "note_repo",
       "tier": "data_access",
       "parent": null,
-      "source": {
-        "repo": "tapistree",
-        "path": "api/repositories/note_repo.py",
-        "line_start": 1,
-        "line_end": 70,
-        "hash": "sha256:6e576d8e896fde60"
-      },
+      "sources": [
+        {
+          "repo": "tapistree",
+          "path": "api/repositories/note_repo.py",
+          "line_start": 1,
+          "line_end": 70,
+          "hash": "sha256:6e576d8e896fde60"
+        }
+      ],
       "confidence": "certain",
       "confidence_reason": null,
       "is_entry_point": false,
@@ -106,13 +112,15 @@
       "label": "NoteRepository.save",
       "tier": "data_access",
       "parent": "tapistree:api/repositories/note_repo.py",
-      "source": {
-        "repo": "tapistree",
-        "path": "api/repositories/note_repo.py",
-        "line_start": 22,
-        "line_end": 35,
-        "hash": "sha256:23215d6f720f216d"
-      },
+      "sources": [
+        {
+          "repo": "tapistree",
+          "path": "api/repositories/note_repo.py",
+          "line_start": 22,
+          "line_end": 35,
+          "hash": "sha256:23215d6f720f216d"
+        }
+      ],
       "confidence": "certain",
       "confidence_reason": null,
       "is_entry_point": false,
@@ -126,13 +134,15 @@
       "label": "notes router",
       "tier": "api",
       "parent": null,
-      "source": {
-        "repo": "tapistree",
-        "path": "api/routers/notes.py",
-        "line_start": 1,
-        "line_end": 90,
-        "hash": "sha256:ac4abe4ba61574e5"
-      },
+      "sources": [
+        {
+          "repo": "tapistree",
+          "path": "api/routers/notes.py",
+          "line_start": 1,
+          "line_end": 90,
+          "hash": "sha256:ac4abe4ba61574e5"
+        }
+      ],
       "confidence": "certain",
       "confidence_reason": null,
       "is_entry_point": false,
@@ -146,13 +156,15 @@
       "label": "PUT /notes/{id}",
       "tier": "api",
       "parent": "tapistree:api/routers/notes.py",
-      "source": {
-        "repo": "tapistree",
-        "path": "api/routers/notes.py",
-        "line_start": 42,
-        "line_end": 58,
-        "hash": "sha256:8a84e406c08ac959"
-      },
+      "sources": [
+        {
+          "repo": "tapistree",
+          "path": "api/routers/notes.py",
+          "line_start": 42,
+          "line_end": 58,
+          "hash": "sha256:8a84e406c08ac959"
+        }
+      ],
       "confidence": "certain",
       "confidence_reason": null,
       "is_entry_point": true,
@@ -168,13 +180,15 @@
       "label": "note_service",
       "tier": "domain",
       "parent": null,
-      "source": {
-        "repo": "tapistree",
-        "path": "api/services/note_service.py",
-        "line_start": 1,
-        "line_end": 140,
-        "hash": "sha256:7807b67547cec2a3"
-      },
+      "sources": [
+        {
+          "repo": "tapistree",
+          "path": "api/services/note_service.py",
+          "line_start": 1,
+          "line_end": 140,
+          "hash": "sha256:7807b67547cec2a3"
+        }
+      ],
       "confidence": "certain",
       "confidence_reason": null,
       "is_entry_point": false,
@@ -188,13 +202,15 @@
       "label": "NoteService.reject",
       "tier": "domain",
       "parent": "tapistree:api/services/note_service.py",
-      "source": {
-        "repo": "tapistree",
-        "path": "api/services/note_service.py",
-        "line_start": 54,
-        "line_end": 61,
-        "hash": "sha256:9d8e3ca2a17801e1"
-      },
+      "sources": [
+        {
+          "repo": "tapistree",
+          "path": "api/services/note_service.py",
+          "line_start": 54,
+          "line_end": 61,
+          "hash": "sha256:9d8e3ca2a17801e1"
+        }
+      ],
       "confidence": "certain",
       "confidence_reason": null,
       "is_entry_point": false,
@@ -208,13 +224,15 @@
       "label": "NoteService.update",
       "tier": "domain",
       "parent": "tapistree:api/services/note_service.py",
-      "source": {
-        "repo": "tapistree",
-        "path": "api/services/note_service.py",
-        "line_start": 30,
-        "line_end": 52,
-        "hash": "sha256:07fc3c2d33aa6952"
-      },
+      "sources": [
+        {
+          "repo": "tapistree",
+          "path": "api/services/note_service.py",
+          "line_start": 30,
+          "line_end": 52,
+          "hash": "sha256:07fc3c2d33aa6952"
+        }
+      ],
       "confidence": "certain",
       "confidence_reason": null,
       "is_entry_point": false,

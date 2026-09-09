@@ -14,13 +14,15 @@
       "label": "notes router",
       "tier": "api",
       "parent": null,
-      "source": {
-        "repo": "tapistree",
-        "path": "api/routers/notes.py",
-        "line_start": 1,
-        "line_end": 90,
-        "hash": "sha256:74c95604043427f0"
-      },
+      "sources": [
+        {
+          "repo": "tapistree",
+          "path": "api/routers/notes.py",
+          "line_start": 1,
+          "line_end": 90,
+          "hash": "sha256:74c95604043427f0"
+        }
+      ],
       "confidence": "certain",
       "confidence_reason": null,
       "is_entry_point": false,
@@ -34,13 +36,15 @@
       "label": "POST /notes/{id}/archive",
       "tier": "api",
       "parent": "tapistree:api/routers/notes.py",
-      "source": {
-        "repo": "tapistree",
-        "path": "api/routers/notes.py",
-        "line_start": 60,
-        "line_end": 72,
-        "hash": "sha256:0eb3e36bfb24dcd9"
-      },
+      "sources": [
+        {
+          "repo": "tapistree",
+          "path": "api/routers/notes.py",
+          "line_start": 60,
+          "line_end": 72,
+          "hash": "sha256:0eb3e36bfb24dcd9"
+        }
+      ],
       "confidence": "certain",
       "confidence_reason": null,
       "is_entry_point": true,
@@ -54,7 +58,7 @@
       "label": "ArchiveService.archive",
       "tier": "domain",
       "parent": null,
-      "source": null,
+      "sources": [],
       "confidence": "inferred",
       "confidence_reason": "present in previous parse, absent now; edge from api/routers/notes.py still references it",
       "is_entry_point": false,
@@ -68,13 +72,15 @@
       "label": "note_service",
       "tier": "domain",
       "parent": null,
-      "source": {
-        "repo": "tapistree",
-        "path": "api/services/note_service.py",
-        "line_start": 1,
-        "line_end": 140,
-        "hash": "sha256:348c658682ae8701"
-      },
+      "sources": [
+        {
+          "repo": "tapistree",
+          "path": "api/services/note_service.py",
+          "line_start": 1,
+          "line_end": 140,
+          "hash": "sha256:348c658682ae8701"
+        }
+      ],
       "confidence": "certain",
       "confidence_reason": null,
       "is_entry_point": false,
@@ -88,13 +94,15 @@
       "label": "NoteService.summary",
       "tier": "domain",
       "parent": "tapistree:api/services/note_service.py",
-      "source": {
-        "repo": "tapistree",
-        "path": "api/services/note_service.py",
-        "line_start": 70,
-        "line_end": 88,
-        "hash": "sha256:761b7ad8ad439b28"
-      },
+      "sources": [
+        {
+          "repo": "tapistree",
+          "path": "api/services/note_service.py",
+          "line_start": 70,
+          "line_end": 88,
+          "hash": "sha256:761b7ad8ad439b28"
+        }
+      ],
       "confidence": "certain",
       "confidence_reason": null,
       "is_entry_point": false,

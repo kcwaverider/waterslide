@@ -108,7 +108,7 @@
     },
     {
       "id": "tapistree:api/repositories/note_repo.py#NoteRepository.save",
-      "kind": "tombstone",
+      "kind": "repository",
       "label": "NoteRepository.save",
       "tier": "data_access",
       "parent": "tapistree:api/repositories/note_repo.py",
@@ -121,8 +121,8 @@
           "hash": "sha256:23215d6f720f216d"
         }
       ],
-      "confidence": "inferred",
-      "confidence_reason": "present in previous parse, absent now",
+      "confidence": "certain",
+      "confidence_reason": null,
       "is_entry_point": false,
       "entry_point_kind": null,
       "is_infrastructure": false,
@@ -161,7 +161,7 @@
           "repo": "tapistree",
           "path": "api/routers/notes.py",
           "line_start": 42,
-          "line_end": 58,
+          "line_end": 41,
           "hash": "sha256:8a84e406c08ac959"
         }
       ],

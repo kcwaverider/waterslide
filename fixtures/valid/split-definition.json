@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "tier_config_hash": "sha256:e3b0c44298fc1c14",
+  "repos": [
+    {
+      "name": "tapistree-ios",
+      "commit": "89abcdef0123456789abcdef0123456789abcdef"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "tapistree-ios:Sources/Models/Note.swift",
+      "kind": "module",
+      "label": "Note.swift",
+      "tier": "ui_logic",
+      "parent": null,
+      "sources": [
+        {
+          "repo": "tapistree-ios",
+          "path": "Sources/Models/Note.swift",
+          "line_start": 1,
+          "line_end": 60,
+          "hash": "sha256:92f062858c473630"
+        }
+      ],
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "tapistree-ios:Sources/Models/Note.swift#Note",
+      "kind": "class",
+      "label": "Note",
+      "tier": "ui_logic",
+      "parent": "tapistree-ios:Sources/Models/Note.swift",
+      "sources": [
+        {
+          "repo": "tapistree-ios",
+          "path": "Sources/Extensions/Note+JSON.swift",
+          "line_start": 3,
+          "line_end": 28,
+          "hash": "sha256:428c3ef2bb284491"
+        },
+        {
+          "repo": "tapistree-ios",
+          "path": "Sources/Models/Note.swift",
+          "line_start": 5,
+          "line_end": 40,
+          "hash": "sha256:2510e106e73760f8"
+        }
+      ],
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "tapistree-ios:Sources/Services/NoteService.swift",
+      "kind": "module",
+      "label": "NoteService.swift",
+      "tier": "ui_logic",
+      "parent": null,
+      "sources": [
+        {
+          "repo": "tapistree-ios",
+          "path": "Sources/Services/NoteService.swift",
+          "line_start": 1,
+          "line_end": 120,
+          "hash": "sha256:be7ea0d110454fbb"
+        }
+      ],
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "tapistree-ios:Sources/Services/NoteService.swift#NoteService.update",
+      "kind": "client_service",
+      "label": "NoteService.update",
+      "tier": "ui_logic",
+      "parent": "tapistree-ios:Sources/Services/NoteService.swift",
+      "sources": [
+        {
+          "repo": "tapistree-ios",
+          "path": "Sources/Services/NoteService.swift",
+          "line_start": 80,
+          "line_end": 96,
+          "hash": "sha256:f816b3f29061a269"
+        }
+      ],
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_c2838bec1ba9ef50",
+      "from": "tapistree-ios:Sources/Services/NoteService.swift#NoteService.update",
+      "to": "tapistree-ios:Sources/Models/Note.swift#Note",
+      "kind": "call",
+      "label": "toJSON",
+      "schema_id": null,
+      "response_schema_id": null,
+      "confidence": "certain",
+      "confidence_reason": null,
+      "condition": null,
+      "exclusive_group": null,
+      "is_error_path": false,
+      "source": {
+        "repo": "tapistree-ios",
+        "path": "Sources/Services/NoteService.swift",
+        "line_start": 86,
+        "line_end": null
+      },
+      "source_count": 1,
+      "branch_ordinal": null,
+      "is_broken": false,
+      "broken_reason": null,
+      "skips_tiers": []
+    }
+  ],
+  "schemas": []
+}

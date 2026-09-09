@@ -14,13 +14,15 @@
       "label": "handlers",
       "tier": "domain",
       "parent": null,
-      "source": {
-        "repo": "tapistree",
-        "path": "api/workers/handlers.py",
-        "line_start": 1,
-        "line_end": 80,
-        "hash": "sha256:f885d41a92fec84c"
-      },
+      "sources": [
+        {
+          "repo": "tapistree",
+          "path": "api/workers/handlers.py",
+          "line_start": 1,
+          "line_end": 80,
+          "hash": "sha256:f885d41a92fec84c"
+        }
+      ],
       "confidence": "certain",
       "confidence_reason": null,
       "is_entry_point": false,
@@ -34,13 +36,15 @@
       "label": "dispatch → café handlers",
       "tier": "domain",
       "parent": "tapistree:api/workers/handlers.py",
-      "source": {
-        "repo": "tapistree",
-        "path": "api/workers/handlers.py",
-        "line_start": 5,
-        "line_end": 30,
-        "hash": "sha256:db8d1b6d64e4ec90"
-      },
+      "sources": [
+        {
+          "repo": "tapistree",
+          "path": "api/workers/handlers.py",
+          "line_start": 5,
+          "line_end": 30,
+          "hash": "sha256:db8d1b6d64e4ec90"
+        }
+      ],
       "confidence": "certain",
       "confidence_reason": null,
       "is_entry_point": false,
@@ -54,13 +58,15 @@
       "label": "indexer",
       "tier": "domain",
       "parent": null,
-      "source": {
-        "repo": "tapistree",
-        "path": "api/workers/indexer.py",
-        "line_start": 1,
-        "line_end": 60,
-        "hash": "sha256:70fa78e5ae555639"
-      },
+      "sources": [
+        {
+          "repo": "tapistree",
+          "path": "api/workers/indexer.py",
+          "line_start": 1,
+          "line_end": 60,
+          "hash": "sha256:70fa78e5ae555639"
+        }
+      ],
       "confidence": "certain",
       "confidence_reason": null,
       "is_entry_point": false,
@@ -74,13 +80,15 @@
       "label": "Indexer — run",
       "tier": "domain",
       "parent": "tapistree:api/workers/indexer.py",
-      "source": {
-        "repo": "tapistree",
-        "path": "api/workers/indexer.py",
-        "line_start": 12,
-        "line_end": 40,
-        "hash": "sha256:acba25512100f80b"
-      },
+      "sources": [
+        {
+          "repo": "tapistree",
+          "path": "api/workers/indexer.py",
+          "line_start": 12,
+          "line_end": 40,
+          "hash": "sha256:acba25512100f80b"
+        }
+      ],
       "confidence": "certain",
       "confidence_reason": null,
       "is_entry_point": true,
@@ -97,7 +105,7 @@
       "label": "note.indexed",
       "tier": "store",
       "parent": null,
-      "source": null,
+      "sources": [],
       "confidence": "certain",
       "confidence_reason": null,
       "is_entry_point": false,

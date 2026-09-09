@@ -5,8 +5,9 @@ validator can be tested against known-bad input with a specific expected error.
 `expected.json` maps each file to the error code and JSON path the validator must
 report; the test in `core/test/validate.test.ts` asserts both.
 
-Most are a single mutation of `fixtures/valid/derived-ids.json`; the two
-`skips-tiers-into-*` files start from other valid fixtures, and a few carry a
+Most are a single mutation of `fixtures/valid/derived-ids.json`; a few start
+from other valid fixtures (`skips-tiers-into-topic`, `skips-tiers-into-tombstone`,
+`tombstone-certain`, `duplicate-skips-tier`), and a few carry a
 second edit whose only purpose is to keep every *other* invariant satisfied, so
 that exactly one rule fails (`fork-without-source.json` also zeroes
 `source_count`; `tombstone-with-source.json` also sets an inferred confidence;
@@ -34,7 +35,7 @@ coincidence of index is not worth breaking either fixture to avoid.
 | `entry-point-without-kind.json` | `E_ENTRY_POINT_KIND` | is_entry_point true with entry_point_kind null (invariant 7) |
 | `broken-without-reason.json` | `E_BROKEN_REASON` | is_broken true with broken_reason null (invariant 8) |
 | `fork-without-source.json` | `E_FORK_SOURCE` | edge in an exclusive_group with source null (invariant 9) |
-| `tombstone-with-source.json` | `E_TOMBSTONE_SOURCE` | tombstone node that still carries a source (invariant 10) |
+| `tombstone-with-source.json` | `E_TOMBSTONE_SOURCE` | tombstone node that still carries a defining span (invariant 10) |
 | `missing-key.json` | `E_MISSING_KEY` | broken_reason key omitted instead of null (invariant 12, §2.5) |
 | `source-count-mismatch.json` | `E_SOURCE_COUNT` | source non-null but source_count 0 (invariant 13) |
 | `branch-ordinal-without-group.json` | `E_BRANCH_ORDINAL` | branch_ordinal set on an edge with no exclusive_group (invariant 14) |
@@ -43,6 +44,10 @@ coincidence of index is not worth breaking either fixture to avoid.
 | `wrong-schema-version.json` | `E_SCHEMA_VERSION` | schema_version 2 against a version 1 model; must fail loudly (handoff §5.2) |
 | `canonical-with-volatile.json` | `E_VOLATILE_SHAPE` | parsed_at present in a graph validated as canonical shape (graph model §7.3) |
 | `line-start-zero.json` | `E_RANGE` | line_start 0; line numbers are 1-based, so the model's positive lower bound rejects it |
+| `line-end-before-start.json` | `E_RANGE` | a span whose line_end precedes its line_start; a pack must not repair this with null (invariant 21) |
+| `span-repo-unknown.json` | `E_SOURCE_REPO` | a node span whose repo is not in repos[]; invariant 19 applies per element of sources |
+| `tombstone-certain.json` | `E_TOMBSTONE_CONFIDENCE` | a tombstone claiming confidence certain; it appears nowhere in source, so it is always inferred (invariant 22) |
+| `duplicate-skips-tier.json` | `E_DUPLICATE_VALUE` | skips_tiers lists domain twice; the coupling metric would count one skip as two, so duplicates are rejected rather than deduplicated (invariant 23) |
 | `unsorted-edges.json` | `E_CANONICAL_ORDER` | edges[0] and edges[1] swapped; canonical shape requires byte-wise ascending id order (invariant 17) |
 | `unsorted-tags.json` | `E_CANONICAL_ORDER` | tags out of ascending order; scalar arrays are sorted in canonical shape (invariant 17) |
 | `non-nfc-string.json` | `E_CANONICAL_NFC` | label contains a decomposed (NFD) character; canonical shape requires NFC (invariant 17) |

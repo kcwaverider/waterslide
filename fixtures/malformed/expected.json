@@ -56,8 +56,8 @@
   },
   "tombstone-with-source.json": {
     "code": "E_TOMBSTONE_SOURCE",
-    "path": "$.nodes[5].source",
-    "why": "tombstone node that still carries a source (invariant 10)"
+    "path": "$.nodes[5].sources",
+    "why": "tombstone node that still carries a defining span (invariant 10)"
   },
   "missing-key.json": {
     "code": "E_MISSING_KEY",
@@ -96,8 +96,28 @@
   },
   "line-start-zero.json": {
     "code": "E_RANGE",
-    "path": "$.nodes[7].source.line_start",
+    "path": "$.nodes[7].sources[0].line_start",
     "why": "line_start 0; line numbers are 1-based, so the model's positive lower bound rejects it"
+  },
+  "line-end-before-start.json": {
+    "code": "E_RANGE",
+    "path": "$.nodes[7].sources[0]",
+    "why": "a span whose line_end precedes its line_start; a pack must not repair this with null (invariant 21)"
+  },
+  "span-repo-unknown.json": {
+    "code": "E_SOURCE_REPO",
+    "path": "$.nodes[7].sources[0].repo",
+    "why": "a node span whose repo is not in repos[]; invariant 19 applies per element of sources"
+  },
+  "tombstone-certain.json": {
+    "code": "E_TOMBSTONE_CONFIDENCE",
+    "path": "$.nodes[2].confidence",
+    "why": "a tombstone claiming confidence certain; it appears nowhere in source, so it is always inferred (invariant 22)"
+  },
+  "duplicate-skips-tier.json": {
+    "code": "E_DUPLICATE_VALUE",
+    "path": "$.edges[3].skips_tiers[1]",
+    "why": "skips_tiers lists domain twice; the coupling metric would count one skip as two, so duplicates are rejected rather than deduplicated (invariant 23)"
   },
   "unsorted-edges.json": {
     "code": "E_CANONICAL_ORDER",
