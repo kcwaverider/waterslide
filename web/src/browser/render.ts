@@ -10,6 +10,7 @@ import {
   type LayoutEdge,
 } from "../layout.js";
 import {
+  BROKEN_RED,
   changeStateOf,
   confidenceDash,
   nodeStyle,
@@ -64,13 +65,15 @@ function drawEdgeText(
   const e = le.edge;
   if (e.label !== null && e.label.length > 0) {
     const t = e.condition === null ? 0.5 : 0.62;
-    placeText(layer, le, t, e.label)
+    // At the midpoint the label must clear whatever badges sit there.
+    const clear = e.condition === null ? badgeWidth(e) / 2 : 0;
+    placeText(layer, le, t, e.label, clear)
       .attr("class", "edge-label")
       .attr("font-size", 11)
       .attr("fill", "#444");
   }
   if (e.condition !== null) {
-    placeText(layer, le, 0.3, e.condition.expr)
+    placeText(layer, le, 0.3, e.condition.expr, 0)
       .attr("class", "edge-condition")
       .attr("font-size", 10.5)
       .attr("font-style", "italic")
@@ -88,12 +91,13 @@ function placeText(
   le: LayoutEdge,
   t: number,
   text: string,
+  clear: number,
 ): D3.Selection<SVGTextElement, unknown, null, undefined> {
   const at = bezierPoint(le, t);
   const tan = bezierTangent(le, t);
   const steep = Math.abs(tan.y) > Math.abs(tan.x);
   const self = le.edge.from === le.edge.to;
-  const offset = 9;
+  const offset = 9 + (steep ? clear : clear > 0 ? 8 : 0);
   let x = at.x;
   let y = at.y;
   let anchor = "middle";
@@ -120,6 +124,81 @@ function placeText(
     .text(text);
 }
 
+/**
+ * Badges at the edge midpoint. §3.4: a broken edge gets a warning icon —
+ * icon, not colour alone — and §1.5: a band-skipping edge gets a badge naming
+ * how many bands it bypassed. An edge can carry both, so they sit side by
+ * side rather than sharing a slot. Both are text or shape first, colour second.
+ */
+function badgeWidth(e: Edge): number {
+  const skips = e.skips_tiers.length;
+  const pillW = skips > 0 ? `skips ${String(skips)}`.length * 6.2 + 12 : 0;
+  const iconW = e.is_broken ? 18 : 0;
+  return iconW + (e.is_broken && skips > 0 ? 6 : 0) + pillW;
+}
+
+function drawEdgeBadges(
+  layer: D3.Selection<SVGGElement, unknown, null, undefined>,
+  le: LayoutEdge,
+): void {
+  const e = le.edge;
+  const skips = e.skips_tiers.length;
+  const skipText = skips > 0 ? `skips ${String(skips)}` : "";
+  const pillW = skips > 0 ? skipText.length * 6.2 + 12 : 0;
+  const iconW = e.is_broken ? 18 : 0;
+  const gap = e.is_broken && skips > 0 ? 6 : 0;
+  let x = le.mx - badgeWidth(e) / 2;
+  if (e.is_broken) {
+    const icon = layer
+      .append("g")
+      .attr("class", "badge broken")
+      .attr("transform", `translate(${String(x + 9)},${String(le.my)})`);
+    icon
+      .append("path")
+      .attr("d", "M 0 -9 L 9 7 L -9 7 Z")
+      .attr("fill", BROKEN_RED)
+      .attr("stroke", "#fff")
+      .attr("stroke-width", 1.5)
+      .attr("stroke-linejoin", "round");
+    icon
+      .append("text")
+      .attr("text-anchor", "middle")
+      .attr("y", 5.5)
+      .attr("font-size", 10)
+      .attr("font-weight", 700)
+      .attr("fill", "#fff")
+      .text("!");
+    icon.append("title").text(`broken: ${e.broken_reason ?? ""}`);
+    x += iconW + gap;
+  }
+  if (skips > 0) {
+    const pill = layer
+      .append("g")
+      .attr("class", "badge skips")
+      .attr("transform", `translate(${String(x)},${String(le.my)})`);
+    pill
+      .append("rect")
+      .attr("x", 0)
+      .attr("y", -8)
+      .attr("width", pillW)
+      .attr("height", 16)
+      .attr("rx", 8)
+      .attr("fill", "#f2c14e")
+      .attr("stroke", "#fff")
+      .attr("stroke-width", 1.5);
+    pill
+      .append("text")
+      .attr("x", pillW / 2)
+      .attr("y", 3.5)
+      .attr("text-anchor", "middle")
+      .attr("font-size", 10)
+      .attr("font-weight", 600)
+      .attr("fill", "#3a2a00")
+      .text(skipText);
+    pill.append("title").text(`skips ${e.skips_tiers.join(", ")} (UI §1.5)`);
+  }
+}
+
 function forkTooltip(edges: readonly LayoutEdge[]): string {
   const group = edges[0]?.edge.exclusive_group ?? "";
   const lines = [
@@ -134,10 +213,17 @@ function forkTooltip(edges: readonly LayoutEdge[]): string {
   return lines.join("\n");
 }
 
+/** What the reader clicked. The inspection panel (§8) consumes it. */
+export type Selection =
+  | { readonly type: "node"; readonly id: string }
+  | { readonly type: "edge"; readonly id: string }
+  | { readonly type: "none" };
+
 export function renderGraph(
   root: HTMLElement,
   graph: GraphLike,
   changeState: ChangeStateMap = {},
+  onSelect: (selection: Selection) => void = () => undefined,
 ): Layout {
   const layout = layoutGraph(graph);
   root.replaceChildren();
@@ -151,18 +237,23 @@ export function renderGraph(
     .style("font", "12px system-ui, sans-serif");
 
   const defs = svg.append("defs");
-  defs
-    .append("marker")
-    .attr("id", "arrow")
-    .attr("viewBox", "0 0 10 10")
-    .attr("refX", 9)
-    .attr("refY", 5)
-    .attr("markerWidth", 7)
-    .attr("markerHeight", 7)
-    .attr("orient", "auto-start-reverse")
-    .append("path")
-    .attr("d", "M 0 0 L 10 5 L 0 10 z")
-    .attr("fill", "#666");
+  for (const [id, fill] of [
+    ["arrow", "#666"],
+    ["arrow-broken", BROKEN_RED],
+  ] as const) {
+    defs
+      .append("marker")
+      .attr("id", id)
+      .attr("viewBox", "0 0 10 10")
+      .attr("refX", 9)
+      .attr("refY", 5)
+      .attr("markerWidth", 7)
+      .attr("markerHeight", 7)
+      .attr("orient", "auto-start-reverse")
+      .append("path")
+      .attr("d", "M 0 0 L 10 5 L 0 10 z")
+      .attr("fill", fill);
+  }
 
   const g = svg.append("g");
 
@@ -199,39 +290,38 @@ export function renderGraph(
     .attr("font-weight", 600)
     .text("external");
 
-  // Edges under nodes. Line style is confidence and nothing else (§3.3).
+  // Edges under nodes. Line style is confidence and nothing else (§3.3);
+  // red is is_broken and nothing else (§3.4).
   const edges = g.append("g").attr("class", "edges");
   for (const le of layout.edges) {
     const e = le.edge;
-    edges
+    const edge = edges
+      .append("g")
+      .attr("class", `edge${e.is_broken ? " broken" : ""}`)
+      .style("cursor", "pointer")
+      .on("click", (ev: MouseEvent) => {
+        ev.stopPropagation();
+        onSelect({ type: "edge", id: e.id });
+      });
+    edge
       .append("path")
       .attr("d", le.d)
       .attr("fill", "none")
-      .attr("stroke", e.is_broken ? "#c62828" : "#666")
+      .attr("stroke", e.is_broken ? BROKEN_RED : "#666")
       .attr("stroke-width", e.is_broken ? 2 : 1.4)
       .attr("stroke-dasharray", confidenceDash(e.confidence))
-      .attr("marker-end", "url(#arrow)")
+      .attr("marker-end", e.is_broken ? "url(#arrow-broken)" : "url(#arrow)");
+    // A wide invisible stroke so a thin line is clickable.
+    edge
+      .append("path")
+      .attr("d", le.d)
+      .attr("fill", "none")
+      .attr("stroke", "transparent")
+      .attr("stroke-width", 12)
       .append("title")
       .text(edgeTooltip(e));
-    drawEdgeText(edges, le);
-    if (e.skips_tiers.length > 0 || e.is_broken) {
-      const badge = edges
-        .append("g")
-        .attr("transform", `translate(${String(le.mx)},${String(le.my)})`);
-      badge
-        .append("circle")
-        .attr("r", 8)
-        .attr("fill", e.is_broken ? "#c62828" : "#f0b429")
-        .attr("stroke", "#fff");
-      badge
-        .append("text")
-        .attr("text-anchor", "middle")
-        .attr("dy", 4)
-        .attr("font-size", 10)
-        .attr("fill", "#fff")
-        .text(e.is_broken ? "!" : String(e.skips_tiers.length));
-      badge.append("title").text(edgeTooltip(e));
-    }
+    drawEdgeText(edge, le);
+    drawEdgeBadges(edge, le);
   }
 
   // Fork markers (§3.3): one where each branch point splits, whether or not
@@ -272,7 +362,12 @@ export function renderGraph(
     const box = nodes
       .append("g")
       .attr("class", `node kind-${n.kind} state-${state}`)
-      .attr("transform", `translate(${String(ln.x)},${String(ln.y)})`);
+      .attr("transform", `translate(${String(ln.x)},${String(ln.y)})`)
+      .style("cursor", "pointer")
+      .on("click", (ev: MouseEvent) => {
+        ev.stopPropagation();
+        onSelect({ type: "node", id: n.id });
+      });
     box
       .append("rect")
       .attr("width", ln.w)
@@ -321,6 +416,7 @@ export function renderGraph(
       g.attr("transform", event.transform.toString());
     });
   svg.call(zoom);
+  svg.on("click", () => onSelect({ type: "none" }));
 
   return layout;
 }
