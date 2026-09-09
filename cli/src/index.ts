@@ -82,11 +82,17 @@ class UsageError extends Error {}
 function parseJson(
   text: string,
 ): { ok: true; value: unknown } | { ok: false; error: string } {
+  let value: unknown;
   try {
-    return { ok: true, value: JSON.parse(text) as unknown };
+    value = JSON.parse(text);
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
+  // A graph is an object. `null`, an array or a scalar parse fine and would
+  // then be dereferenced by the shape check; reject them here instead.
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return { ok: false, error: "a graph must be a JSON object" };
+  return { ok: true, value };
 }
 
 function flag(args: Args, name: string): string | undefined {

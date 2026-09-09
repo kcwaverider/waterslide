@@ -263,4 +263,14 @@ describe("malformed graph files", () => {
     expect(w.stderr).toContain("bad.json: not valid JSON");
     expect(w.stderr).toContain("usage:");
   });
+
+  it("rejects JSON that is not an object with the same exit codes", async () => {
+    writeFileSync(path.join(root, "null.json"), "null");
+    writeFileSync(path.join(root, "arr.json"), "[]");
+    expect((await waterslide("validate", "null.json")).code).toBe(2);
+    expect((await waterslide("dump", "arr.json")).code).toBe(2);
+    const w = await waterslide("view", "null.json");
+    expect(w.code).toBe(1);
+    expect(w.stderr).toContain("must be a JSON object");
+  });
 });
