@@ -15,6 +15,7 @@ import {
 import { unknownNodeId, unknownNodeLabel } from "../unknown-id.js";
 import type { ResolvedPartialEdge } from "./derive-edges.js";
 import type { Corpus, EdgeOrigin, ProvideOrigin } from "./index.js";
+import { isStdlibRooted } from "./stdlib.js";
 import { vendorByHost, vendorById } from "./vendors.js";
 
 /**
@@ -49,8 +50,14 @@ export interface ResolveStats {
   ambiguous: number;
   /** References that matched nothing and were drawn to an unknown node. */
   dangling: number;
-  /** References resolved through a factory's return annotation (C9). */
+  /** References resolved through an alias-provided prefix: a factory's return annotation (C9) or a module-level singleton (C19). */
   via_factory: number;
+  /** References whose alias target is rooted in the standard library and were dropped silently (C19): no edge, no node, no diagnostic. */
+  stdlib_dropped: number;
+  /** Stdlib-rooted fork alternatives kept as dangling edges because dropping them would leave a branch_ordinal gap in their group (invariant 15, C20). */
+  stdlib_fork_kept: number;
+  /** References for which more than one prefix length matched an alias entry; the longest won. The number that says whether widening the prefix rule was safe. */
+  prefix_alias_multi: number;
   /** Unresolved references grouped by ref_kind: the coverage metric (handoff §6 item 6). */
   unresolved_by_kind: Record<RefKind, number>;
   /** Nodes minted by resolution, by kind. */
@@ -318,6 +325,9 @@ export function resolve(corpus: Corpus): ResolveOutput {
     ambiguous: 0,
     dangling: 0,
     via_factory: 0,
+    stdlib_dropped: 0,
+    stdlib_fork_kept: 0,
+    prefix_alias_multi: 0,
     unresolved_by_kind: {
       symbol: 0,
       http: 0,
@@ -340,6 +350,7 @@ export function resolve(corpus: Corpus): ResolveOutput {
   // Sorted so minted-node reasons, tiers and origins accumulate in one order
   // regardless of how the corpus was assembled.
   const edges = [...corpus.edges].sort(edgeOriginCompare);
+  const stdlibGapGroups = gapGroupsIfStdlibDropped();
 
   for (const origin of edges) {
     const e = origin.edge;
@@ -419,38 +430,189 @@ export function resolve(corpus: Corpus): ResolveOutput {
       .filter((entry) => visibleFrom(entry, origin));
   }
 
+  interface Step {
+    readonly call: string;
+    readonly targets: string[];
+    readonly files: string[];
+  }
+
+  /** How a symbol reference would resolve, computed without side effects so the fork pre-pass and the main pass agree. */
+  type SymbolPlan =
+    | {
+        kind: "resolved";
+        targets: string[];
+        candidates: IndexEntry[];
+        chain: Step[];
+        multi: boolean;
+      }
+    | { kind: "stdlib"; multi: boolean }
+    | { kind: "dangle"; why: string; multi: boolean };
+
+  function planSymbol(name: string, origin: EdgeOrigin): SymbolPlan {
+    let candidates = lookupVisible("symbol", name, origin);
+    let targets = uniqueTargets(candidates);
+    const chain: Step[] = [];
+    let multi = false;
+    if (targets.length > 0)
+      return { kind: "resolved", targets, candidates, chain, multi };
+
+    // C19 fix 1, exact form: an alias whose chain ends in the standard
+    // library resolves to nothing — the stdlib is neither a node nor a
+    // coverage gap, and the pack already treats a direct call this way.
+    const aliasTerminals = candidates
+      .filter((c) => c.terminal !== name)
+      .map((c) => c.terminal);
+    if (
+      aliasTerminals.length > 0 &&
+      aliasTerminals.every((t) => isStdlibRooted(t))
+    ) {
+      return { kind: "stdlib", multi };
+    }
+
+    // C9 / C19.1: take the longest alias-provided prefix (split only at "."),
+    // substitute the alias target, append the remainder, retry — up to the
+    // alias depth cap, the same bound that governs alias chains.
+    let names = [name];
+    const seen = new Set(names);
+    for (let hop = 0; targets.length === 0; hop++) {
+      if (hop >= PROVIDE_ALIAS_MAX_DEPTH) {
+        return {
+          kind: "dangle",
+          multi,
+          why: `substituted alias prefixes ${String(hop)} times (${chain.map((c) => `'${c.call}'`).join(", ")}) without reaching a definition; the alias depth cap is ${String(PROVIDE_ALIAS_MAX_DEPTH)}`,
+        };
+      }
+      const hits = names
+        .map((n) => ({ n, hit: aliasPrefix(n, origin) }))
+        .filter((x) => x.hit !== null) as {
+        n: string;
+        hit: NonNullable<ReturnType<typeof aliasPrefix>>;
+      }[];
+      if (hits.length === 0) break;
+      if (hits.some((x) => x.hit.matchedPrefixes > 1)) multi = true;
+      // A terminal rooted at a stdlib module name is dropped only if nothing in
+      // the repo provides the substituted name: a first-party package called
+      // `queue` or `email` is a real target, not the standard library.
+      const providedHere = (t: string): boolean =>
+        hits.some(
+          ({ n, hit }) =>
+            hit.terminals.includes(t) &&
+            lookupVisible(
+              "symbol",
+              `${t}${n.slice(hit.call.length)}`,
+              origin,
+            ).some((entry) => entry.targets.length > 0),
+        );
+      const allTypes = [...new Set(hits.flatMap((x) => x.hit.terminals))];
+      const live = allTypes.filter(
+        (t) => !isStdlibRooted(t) || providedHere(t),
+      );
+      if (live.length === 0) return { kind: "stdlib", multi }; // the logger case
+      chain.push({
+        call: hits
+          .map((x) => x.hit.call)
+          .sort(byteCompare)
+          .join("' or '"),
+        targets: [...live].sort(byteCompare),
+        files: [...new Set(hits.flatMap((x) => x.hit.files))].sort(byteCompare),
+      });
+      const next: string[] = [];
+      for (const { n, hit } of hits) {
+        const remainder = n.slice(hit.call.length);
+        for (const t of hit.terminals) {
+          if (!live.includes(t)) continue;
+          const candidate = `${t}${remainder}`;
+          if (!seen.has(candidate)) {
+            seen.add(candidate);
+            next.push(candidate);
+          }
+        }
+      }
+      if (next.length === 0) break;
+      names = next.sort(byteCompare);
+      candidates = names.flatMap((n) => lookupVisible("symbol", n, origin));
+      targets = uniqueTargets(candidates);
+    }
+    if (targets.length > 0)
+      return { kind: "resolved", targets, candidates, chain, multi };
+    if (chain.length > 0) {
+      const last = chain[chain.length - 1] as Step;
+      return {
+        kind: "dangle",
+        multi,
+        why: `matched alias prefix '${last.call}' (target '${last.targets.join("' or '")}' from ${last.files.join(", ")}), but '${names.join("', '")}' matched no definition`,
+      };
+    }
+    const terminal = candidates.find((c) => c.terminal !== name)?.terminal;
+    const via = terminal === undefined ? "" : ` (via alias to '${terminal}')`;
+    return { kind: "dangle", multi, why: `matched no definition${via}` };
+  }
+
+  /**
+   * C20: a stdlib-rooted fork alternative is dropped only if the group's
+   * surviving ordinals stay contiguous from 0 (invariant 15). Groups where a
+   * drop would open a gap keep their stdlib alternatives as dangling edges.
+   * Decided once, per group, before any edge is resolved, so the outcome does
+   * not depend on edge order.
+   */
+  function gapGroupsIfStdlibDropped(): ReadonlySet<string> {
+    const groups = new Map<string, { all: Set<number>; kept: Set<number> }>();
+    for (const origin of edges) {
+      const e = origin.edge;
+      if (e.exclusive_group === null || e.branch_ordinal === null) continue;
+      const g = groups.get(e.exclusive_group) ?? {
+        all: new Set<number>(),
+        kept: new Set<number>(),
+      };
+      g.all.add(e.branch_ordinal);
+      const droppable =
+        typeof e.to !== "string" &&
+        e.to.ref_kind === "symbol" &&
+        nodesById.has(e.from) &&
+        planSymbol(refLookupName(e.to), origin).kind === "stdlib";
+      if (!droppable) g.kept.add(e.branch_ordinal);
+      groups.set(e.exclusive_group, g);
+    }
+    const gaps = new Set<string>();
+    for (const [name, g] of groups) {
+      if (g.kept.size === g.all.size) continue; // nothing to drop
+      const kept = [...g.kept].sort((a, b) => a - b);
+      const contiguous = kept.every((o, i) => o === i);
+      if (!contiguous) gaps.add(name);
+    }
+    return gaps;
+  }
+
   function resolveByIndex(p: Pending, from: Node): void {
     const { ref, origin } = p;
     const name = refLookupName(ref);
     let candidates = lookupVisible(ref.ref_kind, name, origin);
     let targets = uniqueTargets(candidates);
-    let factory: { call: string; terminals: string[]; files: string[] } | null =
-      null;
+    let chain: Step[] = [];
 
     if (targets.length === 0 && ref.ref_kind === "symbol") {
-      // C9: a factory-returned receiver. `services.get_s3_service().upload_bytes`
-      // is a call whose result's type the pack could not see; the defining
-      // file provides `services.get_s3_service()` as an alias of its return
-      // annotation. Longest prefix ending in "()", split at ".", one
-      // re-resolution pass, never a loop.
-      const hit = factoryPrefix(name, origin);
-      if (hit !== null) {
-        factory = hit;
-        // Every return annotation the factory was given is a candidate
-        // receiver type; the second lookup fans out over all of them and the
-        // ordinary ambiguity path reports every target.
-        candidates = hit.retargeted.flatMap((n) =>
-          lookupVisible(ref.ref_kind, n, origin),
-        );
-        targets = uniqueTargets(candidates);
-        if (targets.length === 0) {
-          dangle(
-            p,
-            from,
-            `matched factory '${hit.call}' with return annotation '${hit.terminals.join("' or '")}' (${hit.files.join(", ")}), but '${hit.retargeted.join("', '")}' matched no definition`,
-          );
+      const plan = planSymbol(name, origin);
+      if (plan.multi) stats.prefix_alias_multi += 1;
+      switch (plan.kind) {
+        case "stdlib": {
+          const group = origin.edge.exclusive_group;
+          if (group !== null && stdlibGapGroups.has(group)) {
+            stats.stdlib_fork_kept += 1;
+            dangle(
+              p,
+              from,
+              "resolves into the Python standard library, which is not drawn; kept as a dangling edge because dropping this fork alternative would leave a branch_ordinal gap in its group",
+            );
+            return;
+          }
+          stats.stdlib_dropped += 1;
           return;
         }
+        case "dangle":
+          dangle(p, from, plan.why);
+          return;
+        case "resolved":
+          ({ targets, candidates, chain } = plan);
       }
     }
 
@@ -470,12 +632,18 @@ export function resolve(corpus: Corpus): ResolveOutput {
     if (targets.length === 1) {
       stats.resolved += 1;
       const to = targets[0] as string;
-      if (factory !== null) {
+      if (chain.length > 0) {
         stats.via_factory += 1;
+        const steps = chain
+          .map(
+            (c) =>
+              `'${c.call}' → '${c.targets.join("' or '")}' (declared in ${c.files.join(", ")})`,
+          )
+          .join(", then ");
         out.push(
           downgrade(
             { ...base, to },
-            `resolved through factory '${factory.call}': its return annotation '${factory.terminals.join("' or '")}' in ${factory.files.join(", ")} names the receiver type; the annotation was not verified at the call site`,
+            `resolved through alias ${steps}; the alias names the receiver type and was not verified at the call site`,
           ),
         );
       } else if (ref.ref_kind === "http") {
@@ -517,41 +685,53 @@ export function resolve(corpus: Corpus): ResolveOutput {
     }
   }
 
-  /** Longest prefix of `name`, split at ".", ending in "()", that is provided and visible. */
-  function factoryPrefix(
+  /**
+   * Longest prefix of `name`, split only at ".", that is an alias-provided key
+   * in the index and visible from the reference. No general prefix search: a
+   * prefix counts only if a pack provided exactly that name as an alias. The
+   * longest wins; `matchedPrefixes` reports how many lengths matched so the
+   * widening can be measured.
+   */
+  function aliasPrefix(
     name: string,
     origin: EdgeOrigin,
   ): {
     call: string;
     terminals: string[];
     files: string[];
-    retargeted: string[];
+    matchedPrefixes: number;
   } | null {
+    let best: {
+      call: string;
+      terminals: string[];
+      files: string[];
+    } | null = null;
+    let matched = 0;
     for (
       let i = name.lastIndexOf(".");
       i > 0;
       i = name.lastIndexOf(".", i - 1)
     ) {
       const prefix = name.slice(0, i);
-      if (!prefix.endsWith("()")) continue;
-      const entries = lookupVisible("symbol", prefix, origin);
+      const entries = lookupVisible("symbol", prefix, origin).filter(
+        (en) => en.origin.provide.alias_of !== null,
+      );
       if (entries.length === 0) continue;
-      // Several entries for one factory name (annotated in several files, or
-      // with several return types) all count; the caller fans out over them.
-      const terminals = [...new Set(entries.map((en) => en.terminal))].sort(
-        byteCompare,
-      );
-      const files = [...new Set(entries.map((en) => originOf(en)))].sort(
-        byteCompare,
-      );
-      return {
+      matched += 1;
+      if (best !== null) continue; // a shorter prefix: counted, not used
+      // Several alias entries for one prefix (annotated in several files, or
+      // with several types) all count; the caller fans out over them.
+      best = {
         call: prefix,
-        terminals,
-        files,
-        retargeted: terminals.map((t) => `${t}${name.slice(i)}`),
+        terminals: [...new Set(entries.map((en) => en.terminal))].sort(
+          byteCompare,
+        ),
+        files: [...new Set(entries.map((en) => originOf(en)))].sort(
+          byteCompare,
+        ),
       };
     }
-    return null;
+    return best === null ? null : { ...best, matchedPrefixes: matched };
   }
 
   function resolveDatastore(p: Pending, from: Node): void {
