@@ -1,28 +1,20 @@
-import type { Diagnostic, Node as GraphNode } from "@waterslide/core";
 import type {
+  Diagnostic,
   NodeUpdate,
+  PackNode,
   PackPatch,
   PerFileResult,
   Provide,
 } from "@waterslide/core";
 import { PACK_ID } from "../../diagnostics.js";
-import {
-  LABEL_ROUTE,
-  TAG_APP,
-  TAG_PATH_DYNAMIC,
-  TAG_PREFIX,
-  TAG_PREFIX_DYNAMIC,
-  TAG_ROUTER,
-  parseMountLabel,
-  parseRouteLabel,
-  routeLabel,
-} from "./index.js";
+import { readFastApi, routeLabel } from "./index.js";
 
 /**
  * Cross-file prefix composition (parser §8, decision item 1). Runs over the
  * complete, (repo, path)-sorted set of per-file results on every parse, never
- * cached. Reads only what the per-file recognizers emitted: router/app nodes
- * (tags), mount edges (labels + refs) and route edges. Resolves mount targets
+ * cached. Reads only what the per-file recognizers emitted through
+ * `pack_data.fastapi`: router/app nodes with their own prefix, mount edges with
+ * theirs, route nodes with method and local path. Resolves mount targets
  * through the pack's own `provides`, alias chains included, then rewrites each
  * route's label to the composed path and emits one `http` provide per method.
  *
@@ -50,22 +42,20 @@ interface Mount {
 
 export function composeFastApi(results: readonly PerFileResult[]): PackPatch {
   const diagnostics: Diagnostic[] = [];
-  const nodesById = new Map<string, GraphNode>();
+  const nodesById = new Map<string, PackNode>();
   const routers = new Map<string, Router>();
   const provides = new Map<string, Provide[]>();
 
   for (const file of results) {
     for (const node of file.result.nodes) {
       nodesById.set(node.id, node);
-      const isApp = node.tags.includes(TAG_APP);
-      const isRouter = node.tags.includes(TAG_ROUTER);
-      if (isApp || isRouter) {
-        const prefixTag = node.tags.find((t) => t.startsWith(TAG_PREFIX));
+      const data = readFastApi(node.pack_data);
+      if (data && (data.kind === "app" || data.kind === "router")) {
         routers.set(node.id, {
           id: node.id,
-          isApp,
-          ownPrefix: prefixTag ? prefixTag.slice(TAG_PREFIX.length) : "",
-          dynamicPrefix: node.tags.includes(TAG_PREFIX_DYNAMIC),
+          isApp: data.kind === "app",
+          ownPrefix: data.prefix ?? "",
+          dynamicPrefix: data.prefix === null,
           repo: file.repo,
           path: file.path,
         });
@@ -142,8 +132,8 @@ export function composeFastApi(results: readonly PerFileResult[]): PackPatch {
         path: file.path,
         line: edge.source?.line_start ?? null,
       };
-      const mount = parseMountLabel(edge.label);
-      if (mount && routers.has(edge.from)) {
+      const data = readFastApi(edge.pack_data);
+      if (data?.kind === "mount" && routers.has(edge.from)) {
         let childId: string | null;
         if (typeof edge.to === "string") {
           childId = edge.to;
@@ -172,9 +162,9 @@ export function composeFastApi(results: readonly PerFileResult[]): PackPatch {
           );
           continue;
         }
-        mounts.push({ parentId: edge.from, childId, prefix: mount.prefix });
+        mounts.push({ parentId: edge.from, childId, prefix: data.prefix });
       } else if (
-        edge.label === LABEL_ROUTE &&
+        data?.kind === "route_edge" &&
         typeof edge.to === "string" &&
         routers.has(edge.from)
       ) {
@@ -264,19 +254,19 @@ export function composeFastApi(results: readonly PerFileResult[]): PackPatch {
   for (const r of routeEdges) {
     const route = nodesById.get(r.routeId);
     if (!route) continue;
-    const parsed = parseRouteLabel(route.label);
-    if (!parsed) {
+    const parsed = readFastApi(route.pack_data);
+    if (!parsed || parsed.kind !== "route") {
       diagnostics.push(
         diag(
           "error",
           "recognizer_failure",
-          `route node ${r.routeId} has a label compose cannot parse: ${route.label}`,
+          `route node ${r.routeId} carries no fastapi route data; the per-file pass and compose disagree`,
           r,
         ),
       );
       continue;
     }
-    if (route.tags.includes(TAG_PATH_DYNAMIC)) continue; // already diagnosed per file
+    if (!parsed.path_literal) continue; // already diagnosed per file
     const prefixes = prefixesFor(r.routerId, []);
     if (prefixes === null) {
       if (!unmountedReported.has(r.routerId)) {

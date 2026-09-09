@@ -5,6 +5,8 @@ import {
   type DiagnosticSeverity,
   type EdgeKind,
   type Node as GraphNode,
+  type PackData as PackDataRecord,
+  type PackNode,
   type NodeKind,
   type PartialEdge,
   type PackResult,
@@ -33,7 +35,7 @@ import { lineEnd, lineStart } from "./tree-sitter/runtime.js";
  * ordinal assignment live in exactly one place.
  */
 export class Emitter {
-  private readonly nodes = new Map<string, GraphNode>();
+  private readonly nodes = new Map<string, PackNode>();
   private readonly nodeOrder: string[] = [];
   private readonly edges: PendingEdge[] = [];
   private readonly schemas: PayloadSchema[] = [];
@@ -71,7 +73,7 @@ export class Emitter {
     };
   }
 
-  addNode(node: GraphNode): void {
+  addNode(node: PackNode): void {
     if (this.nodes.has(node.id)) return; // identity is owned by whoever emitted first
     this.nodes.set(node.id, node);
     this.nodeOrder.push(node.id);
@@ -81,7 +83,7 @@ export class Emitter {
     return this.nodes.has(id);
   }
 
-  getNode(id: string): GraphNode | undefined {
+  getNode(id: string): PackNode | undefined {
     return this.nodes.get(id);
   }
 
@@ -90,13 +92,14 @@ export class Emitter {
     id: string,
     patch: Partial<
       Pick<
-        GraphNode,
+        PackNode,
         | "kind"
         | "label"
         | "tier"
         | "is_entry_point"
         | "entry_point_kind"
         | "tags"
+        | "pack_data"
       >
     >,
   ): void {
@@ -167,6 +170,7 @@ export class Emitter {
             line_end: lineEnd(at),
           }
         : null,
+      ...(spec.pack_data !== undefined ? { pack_data: spec.pack_data } : {}),
     };
     this.edges.push({
       edge,
@@ -292,7 +296,7 @@ export class Emitter {
       }
     }
     return {
-      nodes: this.nodeOrder.map((id) => this.nodes.get(id) as GraphNode),
+      nodes: this.nodeOrder.map((id) => this.nodes.get(id) as PackNode),
       edges: this.edges.map((p) => p.edge),
       schemas: this.schemas,
       provides: this.provides,
@@ -309,6 +313,8 @@ export interface EdgeSpec {
   readonly confidence_reason: string | null;
   readonly schema_id?: string | null;
   readonly response_schema_id?: string | null;
+  /** Pack-private facts for this pack's own `compose`; core strips it after compose. */
+  readonly pack_data?: PackDataRecord;
 }
 
 export interface FixedBranch {

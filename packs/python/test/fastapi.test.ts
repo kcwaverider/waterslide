@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PerFileResult } from "@waterslide/core";
+import { readFastApi } from "../src/frameworks/fastapi/index.js";
 import { parseTree } from "./support/harness.js";
 import { fixture, getPack } from "./support/pack.js";
 import { assemble } from "./support/resolver.js";
@@ -39,13 +40,16 @@ describe("FastAPI per-file recognizers (parser §8)", () => {
     const notes = results.find(
       (r) => r.path === "server/api/endpoints/notes.py",
     )?.result;
-    const router = notes?.nodes.find((n) => n.tags.includes("fastapi:router"));
+    const router = notes?.nodes.find(
+      (n) => readFastApi(n.pack_data)?.kind === "router",
+    );
     expect(router).toMatchObject({
       id: "fx:server/api/endpoints/notes.py#router",
       kind: "class",
       tier: "domain",
+      tags: [],
+      pack_data: { fastapi: { kind: "router", prefix: "/notes" } },
     });
-    expect(router?.tags).toEqual(["fastapi:prefix=/notes", "fastapi:router"]);
     expect(notes?.provides).toContainEqual({
       ref_kind: "symbol",
       name: "api.endpoints.notes.router",
@@ -146,13 +150,13 @@ describe("FastAPI per-file recognizers (parser §8)", () => {
     });
   });
 
-  it("emits mount edges with the prefix in the label and, for imported routers, in hints", async () => {
+  it("emits mount edges with the prefix in pack_data, never in the label or hints", async () => {
     const results = await parsed();
     const main = results.find((r) => r.path === "server/main.py")?.result;
-    const mount = main?.edges.find((e) =>
-      e.label?.startsWith("include_router"),
-    );
-    expect(mount?.label).toBe('include_router(prefix="/api")');
+    const mount = main?.edges.find((e) => e.label === "include_router");
+    expect(mount?.pack_data).toEqual({
+      fastapi: { kind: "mount", prefix: "/api" },
+    });
     expect(mount?.from).toBe("fx:server/main.py#app");
     expect(mount?.to).toEqual({
       ref_kind: "symbol",
@@ -164,13 +168,11 @@ describe("FastAPI per-file recognizers (parser §8)", () => {
     const api = results.find(
       (r) => r.path === "server/api/__init__.py",
     )?.result;
-    const labels = api?.edges
-      .filter((e) => e.label?.startsWith("include_router"))
-      .map((e) => e.label);
-    expect(labels).toEqual([
-      'include_router(prefix="")',
-      'include_router(prefix="/users")',
-    ]);
+    const prefixes = api?.edges
+      .map((e) => readFastApi(e.pack_data))
+      .filter((d) => d?.kind === "mount")
+      .map((d) => (d?.kind === "mount" ? d.prefix : undefined));
+    expect(prefixes).toEqual(["", "/users"]);
   });
 
   it("app object, startup handler and middleware (decision item 9)", async () => {
@@ -178,7 +180,8 @@ describe("FastAPI per-file recognizers (parser §8)", () => {
     const main = results.find((r) => r.path === "server/main.py")?.result;
     expect(main?.nodes.find((n) => n.id.endsWith("#app"))).toMatchObject({
       kind: "service",
-      tags: ["fastapi:app"],
+      tags: [],
+      pack_data: { fastapi: { kind: "app", prefix: "" } },
     });
     expect(main?.nodes.find((n) => n.id.endsWith("#startup"))).toMatchObject({
       is_entry_point: true,

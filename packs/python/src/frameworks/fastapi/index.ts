@@ -1,4 +1,10 @@
-import type { Node as GraphNode, UnresolvedRef } from "@waterslide/core";
+import type {
+  Node as GraphNode,
+  PackData,
+  PackNode,
+  UnresolvedRef,
+} from "@waterslide/core";
+import { z } from "zod";
 import type { Node } from "web-tree-sitter";
 import { codeNodeId } from "../../language/ids.js";
 import { qualify } from "../../language/analyze.js";
@@ -23,12 +29,10 @@ import type { FrameworkRecognizer } from "../types.js";
  * FastAPI recognition (parser §8), per file. Emits:
  *
  * - a node per `X = FastAPI(...)` / `X = APIRouter(...)` object, with a
- *   `provides` entry and `fastapi:app|router` tags (`fastapi:prefix=` for the
- *   router's own prefix);
+ *   `provides` entry and its own prefix in `pack_data.fastapi`;
  * - route nodes: the handler annotated `endpoint`, `is_entry_point`, with the
  *   **local** decorator path in the label, plus a `route` edge router → handler;
- * - one mount edge per `include_router(...)`, the prefix in the label and (for
- *   an imported router) in `UnresolvedRef.hints`;
+ * - one mount edge per `include_router(...)`, the prefix in `pack_data.fastapi`;
  * - `Depends(...)` edges, startup handlers as `app_launch`, middleware nodes.
  *
  * Cross-file prefix composition is `compose.ts`; nothing here looks past the file.
@@ -58,50 +62,48 @@ const HTTP_METHODS = new Set([
   "trace",
 ]);
 
-export const TAG_APP = "fastapi:app";
-export const TAG_ROUTER = "fastapi:router";
+/** A route handler, for filtering. The only FastAPI tag that reaches the graph. */
 export const TAG_ROUTE = "fastapi:route";
-export const TAG_PATH_DYNAMIC = "fastapi:path_dynamic";
-export const TAG_PREFIX = "fastapi:prefix=";
-/** The router's own prefix is not a literal: nothing under it can be composed. */
-export const TAG_PREFIX_DYNAMIC = "fastapi:prefix_dynamic";
+/** Display label of the router → handler edge. */
 export const LABEL_ROUTE = "route";
-export const LABEL_MOUNT_PREFIX = "include_router(prefix=";
-export const LABEL_MOUNT_UNKNOWN = "include_router(prefix=?)";
+/** Display label of an `include_router` edge; the prefix travels in `pack_data`. */
+export const LABEL_MOUNT = "include_router";
 
-export function mountLabel(prefix: string | null): string {
-  return prefix === null
-    ? LABEL_MOUNT_UNKNOWN
-    : `${LABEL_MOUNT_PREFIX}${JSON.stringify(prefix)})`;
+/**
+ * What the per-file pass hands to `compose` through `pack_data.fastapi`
+ * (parser §3.3, "pack_data"): a route's methods and LOCAL path, a router's own
+ * prefix, a mount's prefix. Never label text, never tags, never hints. Core
+ * strips it after compose. `prefix: null` means "written, but not a literal".
+ */
+export const FastApiPackDataSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("app"), prefix: z.string().nullable() }),
+  z.strictObject({ kind: z.literal("router"), prefix: z.string().nullable() }),
+  z.strictObject({
+    kind: z.literal("route"),
+    methods: z.array(z.string()),
+    path: z.string(),
+    /** False when the decorator path is not a string literal: nothing can match it. */
+    path_literal: z.boolean(),
+  }),
+  z.strictObject({ kind: z.literal("route_edge") }),
+  z.strictObject({ kind: z.literal("mount"), prefix: z.string().nullable() }),
+]);
+export type FastApiPackData = z.infer<typeof FastApiPackDataSchema>;
+
+export function fastapiData(d: FastApiPackData): PackData {
+  return { fastapi: d };
 }
 
-/** Inverse of `mountLabel`: `{ prefix }` for a mount edge label, `undefined` for any other label. */
-export function parseMountLabel(
-  label: string | null,
-): { prefix: string | null } | undefined {
-  if (label === LABEL_MOUNT_UNKNOWN) return { prefix: null };
-  if (label && label.startsWith(LABEL_MOUNT_PREFIX) && label.endsWith(")")) {
-    const raw = label.slice(LABEL_MOUNT_PREFIX.length, -1);
-    try {
-      const prefix: unknown = JSON.parse(raw);
-      if (typeof prefix === "string") return { prefix };
-    } catch {
-      return undefined;
-    }
-  }
-  return undefined;
+/** The FastAPI part of a node's or edge's `pack_data`, or null when absent or not ours. */
+export function readFastApi(pd: PackData | undefined): FastApiPackData | null {
+  if (!pd || typeof pd !== "object") return null;
+  const parsed = FastApiPackDataSchema.safeParse(pd["fastapi"]);
+  return parsed.success ? parsed.data : null;
 }
 
-/** Route labels are `METHOD /path` or `GET, POST /path`. */
+/** Route labels are `METHOD /path` or `GET, POST /path` — display text only. */
 export function routeLabel(methods: readonly string[], path: string): string {
   return `${methods.join(", ")} ${path}`;
-}
-export function parseRouteLabel(
-  label: string,
-): { methods: string[]; path: string } | null {
-  const m = /^([A-Z]+(?:, [A-Z]+)*) (.*)$/s.exec(label);
-  if (!m) return null;
-  return { methods: (m[1] as string).split(", "), path: m[2] as string };
 }
 
 interface RouterObject {
@@ -155,10 +157,7 @@ function emitRouterObjects(
     }
     const statement = call.parent?.parent ?? call; // call → assignment → expression_statement
     const id = codeNodeId(model.file.repo, model.file.path, name);
-    const tags = [isApp ? TAG_APP : TAG_ROUTER];
-    if (prefix !== null && prefix !== "") tags.push(`${TAG_PREFIX}${prefix}`);
-    if (prefix === null) tags.push(TAG_PREFIX_DYNAMIC);
-    const node: GraphNode = {
+    const node: PackNode = {
       id,
       kind: isApp ? "service" : "class",
       label: `${name} (${isApp ? "FastAPI" : "APIRouter"})`,
@@ -170,7 +169,8 @@ function emitRouterObjects(
       is_entry_point: false,
       entry_point_kind: null,
       is_infrastructure: false,
-      tags: tags.sort(),
+      tags: [],
+      pack_data: fastapiData({ kind: isApp ? "app" : "router", prefix }),
     };
     em.addNode(node);
     em.addProvide({
@@ -228,9 +228,7 @@ function emitRoutes(
         null;
       const literal = stringLiteral(pathNode);
       const path = literal ?? (pathNode ? pathNode.text : "");
-      const tags = [TAG_ROUTE];
       if (literal === null) {
-        tags.push(TAG_PATH_DYNAMIC);
         em.unsupported(
           `route ${def.qualifiedName} has a non-literal path ${pathNode ? pathNode.text : "(missing)"}; it cannot be matched to clients`,
           lineStart(deco),
@@ -244,7 +242,13 @@ function emitRoutes(
         tier: em.defaultTier("endpoint"),
         is_entry_point: true,
         entry_point_kind: "http_route",
-        tags,
+        tags: [TAG_ROUTE],
+        pack_data: fastapiData({
+          kind: "route",
+          methods,
+          path,
+          path_literal: literal !== null,
+        }),
       });
 
       if (!router) {
@@ -272,6 +276,7 @@ function emitRoutes(
         confidence_reason: null,
         schema_id: requestSchemaId(def, models),
         response_schema_id,
+        pack_data: fastapiData({ kind: "route_edge" }),
       });
     }
   }
@@ -514,9 +519,10 @@ function emitMount(
   em.edgePlain(site.call, parent.id, {
     to,
     kind: "call",
-    label: mountLabel(prefix),
+    label: LABEL_MOUNT,
     confidence: "certain",
     confidence_reason: null,
+    pack_data: fastapiData({ kind: "mount", prefix }),
   });
 }
 
