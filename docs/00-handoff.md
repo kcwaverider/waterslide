@@ -1,7 +1,7 @@
 # Claude Code Handoff
 
-This is the entry point. The other six documents describe **what** to build; this
-one describes **how, in what order, and by whom** — including what runs in
+This is the entry point. The other seven documents describe **what** to build;
+this one describes **how, in what order, and by whom** — including what runs in
 parallel and what must not.
 
 Read this file completely before doing anything else.
@@ -108,7 +108,8 @@ a renderer to animate. Do not start a parallel stage before its gate passes.
 │   ├── 03-persisted-files.md
 │   ├── 04-ui-layout.md
 │   ├── 05-parser-pipeline.md
-│   └── 06-policy-checks.md
+│   ├── 06-policy-checks.md
+│   └── 07-what-it-shows.md
 ├── core/                      ← graph model, schema, validator, derivation
 ├── packs/
 │   ├── python/                ← Python language + FastAPI framework recognizers
@@ -267,12 +268,50 @@ persuasively. Make disagreement structurally impossible instead:
 - The model is **importable code**, not prose. Both packs import the same Zod
   schemas from `core/`. Drift becomes an import error, not a judgement call.
 - Emit a **JSON Schema** from the model with `z.toJSONSchema()` and commit it.
+  Committing it is not the gate; the test is. `core/test/json-schema.test.ts`
+  regenerates the schemas from the Zod source and compares each committed file
+  under `core/schema/` against the fresh output, so a hand edit to a committed
+  file fails the pre-commit hook instead of surviving until a consumer trips
+  on it. Two requirements that test does not yet meet: it must **deep-equal
+  the parsed objects**, not compare bytes — a byte comparison couples the gate
+  to formatting, and formatting is not the contract; and it must **iterate the
+  exported `JSON_SCHEMA_FILES` registry**. Today it looks up file names in the
+  registry but iterates a literal list of keys, so a schema added to the
+  registry is not pinned until someone remembers to edit the test. The
+  registry is the authority: a schema that is not in `JSON_SCHEMA_FILES` is
+  not gated, however the test iterates, so a Zod schema that is meant to be
+  emitted is added to the registry, and until the test iterates the registry,
+  to the test's key list as well. Writing it into `core/schema/` alone gates
+  nothing.
 - The **validator is the arbiter**, and runs in the pre-commit hook on every
   commit. Every track's output must pass it. Running it in CI on every PR is
   road map, not MVP — the reasoning holds unchanged if this ever gets more than
   one contributor, but a hook is enough while it has one.
-- **`core/` is privileged.** Only the orchestrating session changes it. A pack
-  that needs a model change files a request; it does not edit `core/` itself.
+- **The contract surface in `core/` is privileged.** `core/` is two zones, and
+  only one of them is privileged:
+  - **Contract surface.** Only the orchestrating session changes it. A pack
+    that needs a model change files a request; it does not edit these files
+    itself. The files: `core/src/model/` (the Zod schemas and every enum),
+    `core/src/validate.ts` (the invariant list), `core/src/edge-id.ts`,
+    `core/src/span-hash.ts`, `core/src/unknown-id.ts`,
+    `core/src/json-schema.ts` (the JSON Schema generator and its registry) and
+    the generated files under `core/schema/`. `core/src/index.ts` is contract
+    surface for anything it removes or renames; adding an export is an
+    internals change.
+  - **Internals.** The owning track's (C in Stage 2), no special ceremony.
+    The files: everything under `core/src/pipeline/` (discovery, hashing, the
+    cache, config, derivation, `rePath`, the stage-3 driver),
+    `core/src/canonical.ts` (the canonical serializer), the tests under
+    `core/test/` and the scripts under `core/scripts/`.
+
+  The contract surface is privileged because it is what every other track
+  imports. A change to it in one PR is an inconsistency the other two PRs
+  cannot see, which is the §8.2 hazard, so contract changes go through one
+  session rather than three. Internals are imported by nothing outside
+  `core/`; a change there is an ordinary change and needs no request. One
+  line in `validate.ts` needs drawing: fixing it to enforce an invariant the
+  §5 table already states is an internals change, while adding, removing or
+  reinterpreting an invariant is a contract change.
 - The graph model **version field must fail loudly** on mismatch. A thin map looks
   like a working map.
 
@@ -361,7 +400,7 @@ conflict risk is low.
 |---|---|---|
 | **A** | `packs/python/` | M0 contract only |
 | **B** | `packs/swift/` | M0 contract only |
-| **C** | `core/` internals, `cli/`, `web/` | M0 contract only |
+| **C** | `core/` internals — `core/src/pipeline/`, `core/src/canonical.ts`, `core/test/`, `core/scripts/` — plus `cli/` and `web/`. The contract surface in `core/` is not Track C's; see §5.2 | M0 contract only |
 
 ### 7.1 Track C is the sleeper
 

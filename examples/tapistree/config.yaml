@@ -1,0 +1,59 @@
+# waterslide config for ONE specific codebase: the tapistree monorepo, which
+# holds a FastAPI backend under server/ and a SwiftUI client under iOS/. It is
+# a worked example for a human reader, not a default and not a template.
+# Nothing in the tool loads this file from here.
+#
+# Empty config must produce the full map (01-scope.md, "Who reads the map").
+# Every value below is the user's choice: a tier assignment overrides the
+# default inferred from a node's kind, and an infrastructure marker is never
+# inferred. Delete any block and the map still renders; it just uses defaults.
+#
+# Shapes: tiers and infrastructure per 03-persisted-files.md §3.1 and §3.2;
+# the packs block per 05-parser-pipeline.md §3.3. Globs are repo-relative.
+#
+# Not here on purpose: capabilities, expected_middleware, policy, resolutions
+# and diagnostics. Those are M5 and nothing reads them yet.
+
+tiers:
+  order: [ui, ui_logic, api, domain, data_access, store]
+  external_column: right
+  assign:
+    # First match wins, so the client's more specific paths come first.
+    # SwiftUI client. Views draw; ViewModels hold screen state; Services and
+    # Networking issue the HTTP requests that cross into the backend.
+    - { glob: "iOS/Tapistree/Tapistree/Views/**", tier: ui }
+    - { glob: "iOS/Tapistree/Tapistree/ViewModels/**", tier: ui_logic }
+    - { glob: "iOS/Tapistree/Tapistree/Services/**", tier: ui_logic }
+    - { glob: "iOS/Tapistree/Tapistree/Networking/**", tier: ui_logic }
+    # FastAPI backend. Routers are mounted from server/main.py with per-router
+    # prefixes; the endpoint modules are the API tier, not main.py.
+    - { glob: "server/api/endpoints/**", tier: api }
+    - { glob: "server/services/**", tier: domain }
+    # Database access and the ODM document models both sit on the store side
+    # of the domain.
+    - { glob: "server/db/**", tier: data_access }
+    - { glob: "server/models/**", tier: data_access }
+
+# Sets is_infrastructure: true, which makes these nodes eligible for
+# middleware collapse. Never inferred, always declared. server/auth/ holds the
+# OAuth2 dependency (get_current_user) that every protected route takes via
+# Depends(). server/main.py is deliberately not listed: it adds the CORS
+# middleware, but it also mounts every router, and collapsing it would hide
+# the mounts.
+infrastructure:
+  - { glob: "server/auth/**" }
+
+# Per-pack options, keyed by pack id. Only the Python pack takes options today;
+# the Swift pack has none, so it has no entry.
+packs:
+  python:
+    # Repo-relative Python import roots. A file under server/ gets its module
+    # name relative to server/, so `from db.database import db` in an endpoint
+    # resolves to server/db/database.py.
+    #
+    # infra/handlers/ also holds Python (Lambda handlers) and is NOT under a
+    # source root, so those files are still parsed but are named from the
+    # repo root, e.g. infra.handlers.memory.memory. That is this codebase's
+    # choice; add "infra" here if the handlers should resolve as their own
+    # import tree instead.
+    source_roots: ["server"]
