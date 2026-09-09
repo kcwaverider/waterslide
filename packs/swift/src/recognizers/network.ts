@@ -198,7 +198,10 @@ export interface Rendered {
 export type Binder = (part: UrlPart) => ArgValue | null;
 
 export function placeholderName(text: string): string {
-  const m = /^[A-Za-z_][A-Za-z0-9_.]*/.exec(text.trim());
+  // `\(try await self.digest(of: data))` → `self.digest`: effect keywords and
+  // the surrounding call are not the name.
+  const stripped = text.trim().replace(/^(?:(?:try[?!]?|await)\s+)+/, "");
+  const m = /^[A-Za-z_][A-Za-z0-9_.]*/.exec(stripped);
   return m === null ? "expr" : m[0].replace(/\.$/, "");
 }
 
