@@ -1,5 +1,5 @@
 import type * as D3 from "d3";
-import type { Edge, Node } from "@waterslide/core";
+import type { Edge, Node, PayloadSchema } from "@waterslide/core";
 import {
   bezierPoint,
   bezierTangent,
@@ -16,6 +16,12 @@ import {
   nodeStyle,
   type ChangeStateMap,
 } from "./encoding.js";
+import {
+  describeEdge,
+  describeNode,
+  type PanelModel,
+  type PanelSchema,
+} from "./panel.js";
 
 /**
  * The renderer — UI spec §1, §3, §4 and §8. Runs in the browser as an inline
@@ -30,6 +36,7 @@ declare const d3: typeof D3;
 interface GraphLike {
   readonly nodes: readonly Node[];
   readonly edges: readonly Edge[];
+  readonly schemas?: readonly PayloadSchema[];
   readonly repos: readonly { name: string }[];
   readonly parsed_at?: string;
 }
@@ -298,6 +305,7 @@ export function renderGraph(
     const edge = edges
       .append("g")
       .attr("class", `edge${e.is_broken ? " broken" : ""}`)
+      .attr("data-id", e.id)
       .style("cursor", "pointer")
       .on("click", (ev: MouseEvent) => {
         ev.stopPropagation();
@@ -321,7 +329,6 @@ export function renderGraph(
       .append("title")
       .text(edgeTooltip(e));
     drawEdgeText(edge, le);
-    drawEdgeBadges(edge, le);
   }
 
   // Fork markers (§3.3): one where each branch point splits, whether or not
@@ -362,6 +369,7 @@ export function renderGraph(
     const box = nodes
       .append("g")
       .attr("class", `node kind-${n.kind} state-${state}`)
+      .attr("data-id", n.id)
       .attr("transform", `translate(${String(ln.x)},${String(ln.y)})`)
       .style("cursor", "pointer")
       .on("click", (ev: MouseEvent) => {
@@ -407,6 +415,22 @@ export function renderGraph(
     box.append("title").text(tooltip(n, state));
   }
 
+  // Badges above the nodes: a warning icon or skip pill is the finding, and
+  // must stay visible where an edge passes behind a node.
+  const badges = g.append("g").attr("class", "badges");
+  for (const le of layout.edges) {
+    const e = le.edge;
+    if (!e.is_broken && e.skips_tiers.length === 0) continue;
+    const holder = badges
+      .append("g")
+      .style("cursor", "pointer")
+      .on("click", (ev: MouseEvent) => {
+        ev.stopPropagation();
+        onSelect({ type: "edge", id: e.id });
+      });
+    drawEdgeBadges(holder, le);
+  }
+
   // Pan and zoom. Zoom here is magnification of the drawn picture only; the
   // semantic zoom of UI §2 is Stage 4's.
   const zoom = d3
@@ -419,6 +443,127 @@ export function renderGraph(
   svg.on("click", () => onSelect({ type: "none" }));
 
   return layout;
+}
+
+/**
+ * §8: click a node or edge and the panel describes it. The model comes from
+ * the pure panel module; this only builds DOM, with text nodes throughout so
+ * a label can never inject markup.
+ */
+export function renderPanel(el: HTMLElement, model: PanelModel | null): void {
+  el.replaceChildren();
+  if (model === null) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  const add = <K extends keyof HTMLElementTagNameMap>(
+    parent: HTMLElement,
+    tag: K,
+    className: string,
+    text?: string,
+  ): HTMLElementTagNameMap[K] => {
+    const child = document.createElement(tag);
+    if (className.length > 0) child.className = className;
+    if (text !== undefined) child.textContent = text;
+    parent.appendChild(child);
+    return child;
+  };
+  const head = add(el, "div", "panel-head");
+  add(head, "h2", "panel-title", model.title);
+  const close = add(head, "button", "panel-close", "×");
+  close.type = "button";
+  close.title = "close";
+  close.addEventListener("click", () => renderPanel(el, null));
+  add(el, "div", "panel-subtitle", model.subtitle);
+  const dl = add(el, "dl", "panel-fields");
+  for (const f of model.fields) {
+    add(dl, "dt", "", f.label);
+    add(dl, "dd", f.tone ?? "", f.value);
+  }
+  for (const schema of model.schemas)
+    renderSchema(add(el, "section", "panel-schema"), schema, add);
+  add(el, "div", "panel-address", model.address);
+}
+
+type Add = <K extends keyof HTMLElementTagNameMap>(
+  parent: HTMLElement,
+  tag: K,
+  className: string,
+  text?: string,
+) => HTMLElementTagNameMap[K];
+
+function renderSchema(el: HTMLElement, schema: PanelSchema, add: Add): void {
+  const head = add(el, "div", "schema-head");
+  add(head, "span", "schema-role", schema.role);
+  add(head, "span", "schema-name", schema.name);
+  if (schema.missing) {
+    add(el, "div", "muted", "no schema with this id in the graph");
+    return;
+  }
+  const meta: string[] = [schema.confidence];
+  if (schema.source !== null) meta.push(schema.source);
+  add(el, "div", "schema-meta muted", meta.join(" · "));
+  if (schema.confidence !== "certain")
+    add(el, "div", "reason", schema.confidence_reason ?? "");
+  if (schema.fields.length === 0) {
+    add(el, "div", "muted", "opaque payload — no fields");
+    return;
+  }
+  const list = add(el, "ul", "schema-fields");
+  for (const f of schema.fields) {
+    const li = add(list, "li", "");
+    add(li, "span", "field-name", f.name);
+    add(li, "span", "field-type", `${f.optional ? "?" : ""}${f.type}`);
+    for (const c of f.classification) add(li, "span", "field-class", c);
+    if (f.nested === "cycle")
+      add(li, "span", "muted", "(already expanded above)");
+    else if (f.nested !== null)
+      renderSchema(add(li, "div", "panel-schema nested"), f.nested, add);
+  }
+}
+
+/** Marks the selected node or edge on the map and fills the panel. */
+function select(
+  stage: HTMLElement,
+  panel: HTMLElement,
+  graph: GraphLike,
+  changeState: ChangeStateMap,
+  selection: Selection,
+): void {
+  for (const el of stage.querySelectorAll(".selected"))
+    el.classList.remove("selected");
+  if (selection.type === "none") {
+    renderPanel(panel, null);
+    return;
+  }
+  const model =
+    selection.type === "node"
+      ? describeNodeById(graph, changeState, selection.id)
+      : describeEdgeById(graph, selection.id);
+  renderPanel(panel, model);
+  for (const el of stage.querySelectorAll(
+    `[data-id="${cssEscape(selection.id)}"]`,
+  ))
+    el.classList.add("selected");
+}
+
+function describeNodeById(
+  graph: GraphLike,
+  changeState: ChangeStateMap,
+  id: string,
+): PanelModel | null {
+  const node = graph.nodes.find((n) => n.id === id);
+  return node === undefined ? null : describeNode(node, graph, changeState);
+}
+
+function describeEdgeById(graph: GraphLike, id: string): PanelModel | null {
+  const edge = graph.edges.find((e) => e.id === id);
+  return edge === undefined ? null : describeEdge(edge, graph);
+}
+
+function cssEscape(value: string): string {
+  return value.replace(/["\\]/g, "\\$&");
 }
 
 /**
@@ -449,10 +594,14 @@ export function mountViewer(): void {
   if (stage === null || status === null) return;
 
   const changeState = readChangeState();
+  const panel = document.getElementById("panel");
   const draw = (text: string, source: string): void => {
     try {
       const graph = JSON.parse(text) as GraphLike;
-      const layout = renderGraph(stage, graph, changeState);
+      if (panel !== null) renderPanel(panel, null);
+      const layout = renderGraph(stage, graph, changeState, (selection) => {
+        if (panel !== null) select(stage, panel, graph, changeState, selection);
+      });
       const legend = `${String(graph.nodes.length)} nodes · ${String(graph.edges.length)} edges · ${String(layout.bands.filter((b) => b.count > 0).length)} bands used · ${String(layout.nodes.filter((n) => n.external).length)} external`;
       status.textContent = `${source} — ${legend}${graph.parsed_at === undefined ? "" : ` — parsed ${graph.parsed_at}`}`;
     } catch (e) {

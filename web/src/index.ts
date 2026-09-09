@@ -32,6 +32,18 @@ export type {
   KindGroup,
   NodeStyle,
 } from "./browser/encoding.js";
+export {
+  describeEdge,
+  describeNode,
+  expandSchema,
+  formatLocation,
+} from "./browser/panel.js";
+export type {
+  PanelField,
+  PanelModel,
+  PanelSchema,
+  PanelSchemaField,
+} from "./browser/panel.js";
 
 const require = createRequire(import.meta.url);
 
@@ -93,6 +105,7 @@ export function buildViewerHtml(
   const modules = [
     "./layout.js",
     "./browser/encoding.js",
+    "./browser/panel.js",
     "./browser/render.js",
   ].map(readBrowserModule);
   const title = options.title ?? "waterslide";
@@ -119,6 +132,31 @@ export function buildViewerHtml(
   .legend span::before { content: ""; display: inline-block; width: 26px; border-top: 2px solid #666; margin-right: 4px; vertical-align: middle; }
   .legend .inferred::before { border-top-style: dashed; }
   .legend .annotated::before { border-top-style: dotted; }
+  .node.selected > rect:first-of-type { stroke: #111; stroke-width: 3; }
+  .edge.selected > path:first-of-type { stroke-width: 3.5; }
+  #panel { position: absolute; top: 49px; right: 12px; bottom: 12px; width: 360px; overflow: auto; background: #fff; border: 1px solid #ccc; border-radius: 8px; box-shadow: 0 4px 18px rgba(0,0,0,.12); padding: 12px 14px; box-sizing: border-box; }
+  .panel-head { display: flex; align-items: flex-start; gap: 8px; }
+  .panel-title { font-size: 15px; margin: 0; flex: 1; overflow-wrap: anywhere; }
+  .panel-close { border: none; background: none; font-size: 18px; line-height: 1; cursor: pointer; color: #666; padding: 0 2px; }
+  .panel-subtitle { color: #666; margin: 2px 0 10px; }
+  .panel-fields { display: grid; grid-template-columns: max-content 1fr; gap: 5px 10px; margin: 0; }
+  .panel-fields dt { color: #666; }
+  .panel-fields dd { margin: 0; overflow-wrap: anywhere; }
+  .panel-fields dd.reason, .panel-schema .reason { background: #fff7d6; border-left: 3px solid #e0b323; padding: 4px 8px; font-style: italic; }
+  .panel-fields dd.broken { color: hsl(0 72% 42%); font-weight: 600; }
+  .panel-fields dd.broken::before { content: "⚠ "; }
+  .muted { color: #777; font-size: 12px; }
+  .panel-schema { margin-top: 12px; padding-top: 8px; border-top: 1px solid #e5e5e5; }
+  .panel-schema.nested { margin: 4px 0 4px 12px; padding: 4px 0 0 8px; border-top: none; border-left: 2px solid #e5e5e5; }
+  .schema-head { display: flex; gap: 8px; align-items: baseline; }
+  .schema-role { text-transform: uppercase; font-size: 10px; letter-spacing: .05em; color: #666; }
+  .schema-name { font-weight: 600; }
+  .schema-fields { list-style: none; margin: 6px 0 0; padding: 0; }
+  .schema-fields li { padding: 2px 0; }
+  .field-name { font-weight: 500; }
+  .field-type { color: #555; margin-left: 6px; font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; }
+  .field-class { margin-left: 6px; font-size: 10.5px; background: #eef; color: #335; border-radius: 4px; padding: 0 5px; }
+  .panel-address { margin-top: 14px; padding-top: 8px; border-top: 1px solid #e5e5e5; font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; color: #888; overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
@@ -129,6 +167,7 @@ export function buildViewerHtml(
   <label>open <input id="file" type="file" accept=".json,application/json"></label>
 </div>
 <div id="stage"></div>
+<aside id="panel" hidden></aside>
 <script id="graph" type="application/json">${safeJson}</script>
 <script id="change-state" type="application/json">${safeChangeState}</script>
 <script>${d3}</script>
