@@ -7,6 +7,7 @@ import {
   PackRegistry,
   composePacks,
   mergeNodes,
+  mergeSchemas,
   parseFiles,
 } from "../src/pipeline/stage3.js";
 import { TmpTree } from "./helpers/tmp-tree.js";
@@ -476,5 +477,50 @@ describe("PackRegistry", () => {
     expect(registry.packFor("a/b.toy")).toBe(pack);
     expect(registry.packFor("a/b.py")).toBeNull();
     expect(registry.packFor("a.toy/README")).toBeNull();
+  });
+});
+
+describe("mergeSchemas", () => {
+  const schema = (id: string, type = "str") => ({
+    id,
+    name: id,
+    source: null,
+    confidence: "certain" as const,
+    confidence_reason: null,
+    fields: [
+      {
+        name: "x",
+        type,
+        optional: false,
+        classification: [],
+        ref_schema_id: null,
+      },
+    ],
+  });
+  const file = (path: string, ...schemas: ReturnType<typeof schema>[]) => ({
+    repo: "r",
+    path,
+    result: { nodes: [], edges: [], schemas, provides: [], diagnostics: [] },
+    pack_data: null,
+  });
+
+  it("keeps one copy of identical schemas, reports a conflicting redefinition once, and sorts by id", () => {
+    const same = mergeSchemas(
+      [file("a.py", schema("s2"), schema("s1")), file("b.py", schema("s1"))],
+      [],
+    );
+    expect(same.schemas.map((s) => s.id)).toEqual(["s1", "s2"]);
+    expect(same.diagnostics).toEqual([]);
+    const differ = mergeSchemas(
+      [file("a.py", schema("s1", "str")), file("b.py", schema("s1", "int"))],
+      [],
+    );
+    expect(differ.schemas).toHaveLength(1);
+    expect(differ.schemas[0]?.fields[0]?.type).toBe("str");
+    expect(differ.diagnostics.map((d) => d.code)).toEqual([
+      "schema_definition_conflict",
+    ]);
+    expect(differ.diagnostics[0]?.message).toContain("r:a.py");
+    expect(differ.diagnostics[0]?.message).toContain("r:b.py");
   });
 });

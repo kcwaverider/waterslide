@@ -46,13 +46,10 @@ export function rePathViolations(
       }
     }
   }
+  const moved = original.repo !== repo || original.path !== path;
   for (const d of repathed.result.diagnostics) {
-    if (
-      d.repo === original.repo &&
-      d.path === original.path &&
-      original.path !== path
-    ) {
-      out.push(`a diagnostic still names the old path`);
+    if (d.repo === original.repo && d.path === original.path && moved) {
+      out.push(`a diagnostic still names the old repo and path`);
     }
   }
   return out;
@@ -68,9 +65,11 @@ export function rePathFileDataUnchanged(
   repathed: PerFileResult,
   original: PerFileResult,
 ): boolean {
+  const moved =
+    original.repo !== repathed.repo || original.path !== repathed.path;
   return (
     repathed.pack_data !== null &&
-    original.path !== repathed.path &&
+    moved &&
     canonicalJson(repathed.pack_data) === canonicalJson(original.pack_data)
   );
 }

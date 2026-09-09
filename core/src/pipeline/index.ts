@@ -23,6 +23,7 @@ import {
   PackRegistry,
   composePacks,
   mergeNodes,
+  mergeSchemas,
   parseFiles,
   type Stage3Stats,
 } from "./stage3.js";
@@ -86,10 +87,10 @@ export async function parseSources(input: ParseSourcesInput): Promise<Corpus> {
   const stage3 = await parseFiles(files, registry, { cache, config });
   const composed = composePacks(stage3, registry, config);
   const merged = mergeNodes(composed.files, composed.additions);
+  const schemasMerged = mergeSchemas(composed.files, composed.additions);
 
   const nodes = fillParents(assignTiers(merged.nodes, config));
   const edges: EdgeOrigin[] = [];
-  const schemas: PayloadSchema[] = [];
   const provides: ProvideOrigin[] = [];
   const diagnostics: Diagnostic[] = [];
   for (const f of composed.files) {
@@ -97,7 +98,6 @@ export async function parseSources(input: ParseSourcesInput): Promise<Corpus> {
       edges.push({ edge: stripEdgePackData(edge), repo: f.repo, path: f.path });
     for (const provide of f.result.provides)
       provides.push({ provide, repo: f.repo, path: f.path });
-    schemas.push(...f.result.schemas);
     diagnostics.push(...f.result.diagnostics);
   }
   for (const a of composed.additions) {
@@ -110,12 +110,12 @@ export async function parseSources(input: ParseSourcesInput): Promise<Corpus> {
     }
     for (const provide of a.provides)
       provides.push({ provide, repo: null, path: null });
-    schemas.push(...a.schemas);
   }
   diagnostics.push(
     ...stage3.diagnostics,
     ...composed.diagnostics,
     ...merged.diagnostics,
+    ...schemasMerged.diagnostics,
   );
 
   return {
@@ -123,7 +123,7 @@ export async function parseSources(input: ParseSourcesInput): Promise<Corpus> {
     tier_config_hash: tierConfigHash(config),
     nodes,
     edges,
-    schemas,
+    schemas: schemasMerged.schemas,
     provides,
     diagnostics,
     stats: stage3.stats,

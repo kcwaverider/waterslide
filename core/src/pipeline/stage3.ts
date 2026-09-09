@@ -47,6 +47,8 @@ export const STAGE3_DIAGNOSTIC_CODES = {
   repath_pack_data_unchanged: "info",
   /** Two files emitted the same node id with differing fields; spans were merged and the first file's fields kept. */
   node_definition_conflict: "warning",
+  /** Two files emitted the same schema id with differing fields; the first file's definition kept. */
+  schema_definition_conflict: "warning",
 } as const;
 
 const EMPTY_RESULT: PackResult = {
@@ -583,4 +585,44 @@ export function mergeNodes(
     .map((v) => v.node)
     .sort((a, b) => byteCompare(a.id, b.id));
   return { nodes, diagnostics };
+}
+
+/**
+ * One schema list from many files. Graph model §4 makes schema ids unique, and
+ * a Pydantic model imported by several files is legitimately emitted by each:
+ * identical definitions collapse to one, a differing definition under the same
+ * id keeps the first (in (repo, path) order) and is reported once.
+ */
+export function mergeSchemas(
+  files: readonly PerFileResult[],
+  additions: readonly PackAdditions[],
+): { schemas: PayloadSchema[]; diagnostics: Diagnostic[] } {
+  const diagnostics: Diagnostic[] = [];
+  const byId = new Map<string, { schema: PayloadSchema; origin: string }>();
+  const consider = (schema: PayloadSchema, origin: string): void => {
+    const prior = byId.get(schema.id);
+    if (prior === undefined) {
+      byId.set(schema.id, { schema, origin });
+      return;
+    }
+    if (JSON.stringify(prior.schema) !== JSON.stringify(schema)) {
+      diagnostics.push({
+        severity: "warning",
+        code: "schema_definition_conflict",
+        message: `schema "${schema.id}" is emitted by ${prior.origin} and ${origin} with differing fields; ${prior.origin}'s definition kept`,
+        repo: null,
+        path: null,
+        line: null,
+        pack: null,
+      });
+    }
+  };
+  for (const f of files)
+    for (const s of f.result.schemas) consider(s, `${f.repo}:${f.path}`);
+  for (const a of additions)
+    for (const s of a.schemas) consider(s, `pack ${a.pack} compose`);
+  const schemas = [...byId.values()]
+    .map((v) => v.schema)
+    .sort((a, b) => byteCompare(a.id, b.id));
+  return { schemas, diagnostics };
 }

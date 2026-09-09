@@ -111,3 +111,44 @@ describe("file-level pack_data across rePath", () => {
     expect(rePathFileDataUnchanged(stale, original)).toBe(true);
   });
 });
+
+describe("repo-only moves", () => {
+  it("treats identical content at the same path in another repo as a move for both guards", async () => {
+    const content = "def a\n";
+    const original = toPerFileResult(
+      "r1",
+      "x/a.toy",
+      await makeToyPack().parse("r1", "x/a.toy", content, {}),
+    );
+    const stale = makeToyPack({ rePath: "stale-file-data" }).rePath?.(
+      original,
+      "r2",
+      "x/a.toy",
+      {},
+    );
+    if (stale === undefined) throw new Error("no rePath");
+    expect(rePathViolations(stale, "r2", "x/a.toy", original)).toEqual([]);
+    expect(rePathFileDataUnchanged(stale, original)).toBe(true);
+    // A diagnostic left naming the old repo is a violation even with the path unchanged.
+    const withDiag = {
+      ...stale,
+      result: {
+        ...stale.result,
+        diagnostics: [
+          {
+            severity: "warning" as const,
+            code: "unsupported_construct",
+            message: "m",
+            repo: "r1",
+            path: "x/a.toy",
+            line: 1,
+            pack: "toy",
+          },
+        ],
+      },
+    };
+    expect(rePathViolations(withDiag, "r2", "x/a.toy", original)).toEqual([
+      expect.stringContaining("old repo and path"),
+    ]);
+  });
+});

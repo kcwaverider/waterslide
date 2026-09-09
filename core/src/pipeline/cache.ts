@@ -120,8 +120,14 @@ export class FileParseCache implements ParseCache {
     await fs.mkdir(this.dir, { recursive: true });
     const target = this.file(key);
     const tmp = `${target}.${process.pid.toString()}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify(entry), "utf8");
-    await fs.rename(tmp, target);
+    try {
+      await fs.writeFile(tmp, JSON.stringify(entry), "utf8");
+      await fs.rename(tmp, target);
+    } catch (error) {
+      // Never leave a half-written temp file behind; the original error wins.
+      await fs.rm(tmp, { force: true }).catch(() => undefined);
+      throw error;
+    }
   }
 }
 
