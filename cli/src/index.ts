@@ -13,6 +13,7 @@ import {
   validate,
   type GraphShape,
   type LanguagePack,
+  type PackOptions,
   type RepoInput,
   type WaterslideConfig,
 } from "@waterslide/core";
@@ -31,6 +32,11 @@ const USAGE = `usage:
       --canonical          write the canonical shape (no volatile fields)
       --include-tests      include test files (excluded by default)
       --pack <module>      load an extra language pack module exporting \`pack\`
+      --pack-option <pack_id>.<option>=<value>
+                           set one pack option for this run (repeatable); a
+                           comma-separated value becomes a list where the
+                           pack's schema expects one. Flag beats config beats
+                           pack default, and changes the cache key.
       --quiet              print only the summary
   waterslide validate <graph.json> [--shape artifact|canonical]   (default artifact)
   waterslide dump [graph.json]                                   (default .waterslide/graph.json)
@@ -54,7 +60,13 @@ function parseArgs(argv: readonly string[]): Args {
     const eq = a.indexOf("=");
     const name = eq === -1 ? a.slice(2) : a.slice(2, eq);
     let value: string | undefined = eq === -1 ? undefined : a.slice(eq + 1);
-    const takesValue = ["state-dir", "pack", "shape", "out"].includes(name);
+    const takesValue = [
+      "state-dir",
+      "pack",
+      "pack-option",
+      "shape",
+      "out",
+    ].includes(name);
     if (takesValue && value === undefined) {
       value = argv[i + 1];
       i++;
@@ -77,11 +89,41 @@ function flag(args: Args, name: string): string | undefined {
 
 const BUILT_IN_PACKS = ["@waterslide/pack-python", "@waterslide/pack-swift"];
 
+interface LoadedPack {
+  readonly pack: LanguagePack;
+  /**
+   * The pack's options schema, when its module exposes one: `optionsSchema`
+   * by convention, or any export named `*OptionsSchema` with `safeParse`.
+   * Used only to coerce and validate `--pack-option` values.
+   */
+  readonly optionsSchema: ZodLike | null;
+}
+
+interface ZodLike {
+  safeParse(input: unknown): {
+    success: boolean;
+    data?: unknown;
+    error?: { issues: { path: PropertyKey[]; message: string }[] };
+  };
+}
+
+function findOptionsSchema(mod: Record<string, unknown>): ZodLike | null {
+  const isZod = (v: unknown): v is ZodLike =>
+    typeof v === "object" &&
+    v !== null &&
+    typeof (v as { safeParse?: unknown }).safeParse === "function";
+  if (isZod(mod.optionsSchema)) return mod.optionsSchema;
+  for (const [name, value] of Object.entries(mod).sort()) {
+    if (name.endsWith("OptionsSchema") && isZod(value)) return value;
+  }
+  return null;
+}
+
 async function loadPacks(
   extra: readonly string[],
   log: (s: string) => void,
-): Promise<LanguagePack[]> {
-  const packs: LanguagePack[] = [];
+): Promise<LoadedPack[]> {
+  const packs: LoadedPack[] = [];
   for (const spec of [...BUILT_IN_PACKS, ...extra]) {
     let mod: Record<string, unknown>;
     try {
@@ -104,9 +146,102 @@ async function loadPacks(
       log(`pack ${spec}: no \`pack\` export yet (stub), skipped`);
       continue;
     }
-    packs.push(pack);
+    packs.push({ pack, optionsSchema: findOptionsSchema(mod) });
   }
   return packs;
+}
+
+// ---------------------------------------------------------------------------
+// --pack-option: {pack_id}.{option.path}=value, repeatable. The value is a
+// string; the pack's own schema decides what it becomes. Candidates are tried
+// in order — the string itself, a list (comma-split, or the single value), a
+// number, a boolean — and the first the schema accepts wins. Without a schema
+// the value stays a string, or a list when it contains a comma.
+// ---------------------------------------------------------------------------
+
+export function applyPackOptions(
+  specs: readonly string[],
+  loaded: readonly LoadedPack[],
+): Record<string, PackOptions> {
+  const byPack = new Map<string, Record<string, unknown>>();
+  for (const spec of specs) {
+    const eq = spec.indexOf("=");
+    if (eq === -1)
+      throw new UsageError(
+        `--pack-option ${spec}: expected <pack_id>.<option>=<value>`,
+      );
+    const key = spec.slice(0, eq);
+    const raw = spec.slice(eq + 1);
+    const dot = key.indexOf(".");
+    if (dot <= 0 || dot === key.length - 1)
+      throw new UsageError(
+        `--pack-option ${spec}: key must be <pack_id>.<option>`,
+      );
+    const packId = key.slice(0, dot);
+    const path = key.slice(dot + 1).split(".");
+    const target = loaded.find((l) => l.pack.manifest.id === packId);
+    if (target === undefined) {
+      throw new UsageError(
+        `--pack-option ${spec}: no loaded pack is named "${packId}" (loaded: ${loaded.map((l) => l.pack.manifest.id).join(", ") || "none"})`,
+      );
+    }
+    const current = byPack.get(packId) ?? {};
+    const asList = raw.includes(",")
+      ? raw.split(",").map((s) => s.trim())
+      : [raw];
+    const candidates: unknown[] = [raw, asList];
+    if (raw.trim() !== "" && Number.isFinite(Number(raw)))
+      candidates.push(Number(raw));
+    if (raw === "true" || raw === "false") candidates.push(raw === "true");
+
+    let accepted: Record<string, unknown> | null = null;
+    let lastError = "";
+    if (target.optionsSchema === null) {
+      accepted = setPath(
+        structuredClone(current),
+        path,
+        raw.includes(",") ? asList : raw,
+      );
+    } else {
+      for (const candidate of candidates) {
+        const attempt = setPath(structuredClone(current), path, candidate);
+        const result = target.optionsSchema.safeParse(attempt);
+        if (result.success) {
+          accepted = attempt;
+          break;
+        }
+        lastError = (result.error?.issues ?? [])
+          .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
+          .join("; ");
+      }
+    }
+    if (accepted === null) {
+      throw new UsageError(
+        `--pack-option ${spec}: pack "${packId}" rejects it (${lastError || "no candidate value accepted"})`,
+      );
+    }
+    byPack.set(packId, accepted);
+  }
+  return Object.fromEntries(byPack);
+}
+
+function setPath(
+  obj: Record<string, unknown>,
+  path: readonly string[],
+  value: unknown,
+): Record<string, unknown> {
+  let cursor = obj;
+  for (const [i, key] of path.entries()) {
+    if (i === path.length - 1) {
+      cursor[key] = value;
+    } else {
+      const next = cursor[key];
+      if (typeof next !== "object" || next === null || Array.isArray(next))
+        cursor[key] = {};
+      cursor = cursor[key] as Record<string, unknown>;
+    }
+  }
+  return obj;
 }
 
 function parseRepos(specs: readonly string[]): RepoInput[] {
@@ -137,14 +272,23 @@ async function cmdParse(
   const quiet = flag(args, "quiet") === "true";
   const log = quiet ? (): void => undefined : err;
   const repos = parseRepos(args.positional);
-  const packs = await loadPacks(args.flags.get("pack") ?? [], log);
+  const loaded = await loadPacks(args.flags.get("pack") ?? [], log);
+  const packs = loaded.map((l) => l.pack);
   if (packs.length === 0) {
     err(
       "no language packs loaded; the graph will contain only what discovery finds (nothing).",
     );
   }
-  const config: WaterslideConfig =
-    flag(args, "include-tests") === "true" ? { include_tests: true } : {};
+  // Flag beats config beats pack default. Config is M3; until then the flag
+  // is the only source, and it reaches the cache key through resolvePackOptions.
+  const packOptions = applyPackOptions(
+    args.flags.get("pack-option") ?? [],
+    loaded,
+  );
+  const config: WaterslideConfig = {
+    ...(flag(args, "include-tests") === "true" ? { include_tests: true } : {}),
+    ...(Object.keys(packOptions).length > 0 ? { packs: packOptions } : {}),
+  };
   const cache =
     flag(args, "no-cache") === "true"
       ? new NullParseCache()

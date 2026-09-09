@@ -183,3 +183,68 @@ describe("waterslide parse", () => {
     expect(bad.stderr).toContain("fixed id scope");
   });
 });
+
+describe("waterslide parse --pack-option", () => {
+  const base = (): string[] => [
+    "parse",
+    `server=${root}/server`,
+    `client=${root}/client`,
+    "--pack",
+    TOY,
+    "--canonical",
+  ];
+  const graph = (): { nodes: { id: string }[] } =>
+    JSON.parse(
+      readFileSync(path.join(root, ".waterslide", "graph.json"), "utf8"),
+    ) as { nodes: { id: string }[] };
+
+  it("coerces a single value to a list where the pack's schema expects one, and changes the cache key", async () => {
+    const plain = await waterslide(...base());
+    expect(plain.code, plain.stderr).toBe(0);
+    expect(
+      graph().nodes.some((n) => n.id === "unknown:symbol:api.store.save"),
+    ).toBe(false);
+    const withRoot = await waterslide(
+      ...base(),
+      "--pack-option",
+      "toy.source_roots=api",
+    );
+    expect(withRoot.code, withRoot.stderr).toBe(0);
+    // A different option hash: nothing came from cache.
+    expect(withRoot.stdout).toMatch(/3 parsed, 0 from cache/);
+    // The toy pack now names modules without the "api." root, so the qualified
+    // call no longer matches: the option demonstrably reached the pack.
+    expect(
+      graph().nodes.some((n) => n.id === "unknown:symbol:api.store.save"),
+    ).toBe(true);
+    const list = await waterslide(
+      ...base(),
+      "--pack-option",
+      "toy.source_roots=api,lib",
+    );
+    expect(list.code, list.stderr).toBe(0);
+  });
+
+  it("is loud about an unknown pack id or an option the pack's schema rejects", async () => {
+    const unknown = await waterslide(
+      ...base(),
+      "--pack-option",
+      "nope.source_roots=x",
+    );
+    expect(unknown.code).toBe(1);
+    expect(unknown.stderr).toContain('no loaded pack is named "nope"');
+    const rejected = await waterslide(
+      ...base(),
+      "--pack-option",
+      "toy.bogus=1",
+    );
+    expect(rejected.code).toBe(1);
+    expect(rejected.stderr).toContain('pack "toy" rejects it');
+    const malformed = await waterslide(
+      ...base(),
+      "--pack-option",
+      "toy.source_roots",
+    );
+    expect(malformed.code).toBe(1);
+  });
+});
