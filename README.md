@@ -5,9 +5,10 @@ front end through API and business logic to the datastore and back out.
 
 Pick something a user can do. Watch the data travel.
 
-**Status: in development.** The design is complete and lives in [`docs/`](./docs);
-the implementation is in progress. Commands shown below describe the intended
-surface — see Install for what actually runs today.
+**Status: in development.** The design is complete and lives in [`docs/`](./docs).
+The parser, the cross-language resolver and a first renderer run today; see
+Usage. Persistence, the committed config file and the policy checks are still
+to come.
 
 ---
 
@@ -48,6 +49,12 @@ call path, with branches you can click to flip.
 | External | Cohere, Anthropic |
 | Repos | Multi-repo in a single pass |
 
+Measured on the reference codebase, a 177-file monorepo with a SwiftUI client
+and a FastAPI server: 2655 nodes and 2776 edges, of which 54 are HTTP edges
+resolved from Swift call sites to Python routes. A cold parse takes about
+three seconds and a warm one under half a second. Those are one measurement on
+one codebase, not a guarantee.
+
 ## Install
 
 Not yet published. To run from source:
@@ -59,32 +66,54 @@ npm install
 npm run build
 ```
 
-Requires Node 20+.
-
-> **Not working yet.** The CLI lands with M3. Until then `npm test` is the only
-> thing worth running.
+Requires Node 20+. `npm run build` compiles the core, both language packs, the
+CLI and the viewer. There is no global command yet; the CLI is invoked through
+`node`, as shown below.
 
 ## Usage
 
-Point it at one or more repos:
+Point `parse` at a checkout of the codebase you want mapped. The name on the
+left of the `=` is the repo name that appears in node ids; the path is wherever
+that checkout lives on your machine.
 
 ```bash
-waterslide parse myrepo=/path/to/myrepo
-waterslide parse api=/path/to/api ios-client=/path/to/ios-client
+node cli/dist/src/index.js parse myrepo=/path/to/myrepo \
+  --pack-option python.source_roots=<import-root>
 ```
 
-That writes `.waterslide/graph.json`, then:
+`--pack-option python.source_roots=<import-root>` tells the Python pack which
+repo-relative directory your imports are written relative to, which is
+whatever is on `sys.path` when the app runs. Without it every module is named
+from the repo root, most call sites match nothing, and the client-to-route
+join is lost with them. For a FastAPI app whose imports are written relative
+to `api/`, the value is `api`. If your app imports relative to the repo root,
+omit the flag. Several roots are comma-separated.
+
+That writes `.waterslide/graph.json` in the current directory and prints a
+summary: node and edge counts, resolution figures, unresolved references by
+kind, and diagnostics by code. A second run over an unchanged tree is served
+from `.waterslide/cache/`. Then:
 
 ```bash
-waterslide dump        # summary: node and edge counts, unresolved references
-waterslide validate    # check a graph against the schema
-waterslide view        # open the map in a browser
+node cli/dist/src/index.js view --open                      # write .waterslide/graph.html and open it
+node cli/dist/src/index.js dump                             # summary of the last parse
+node cli/dist/src/index.js validate .waterslide/graph.json  # check a graph against the schema
+node cli/dist/src/index.js --help                           # every command and flag
 ```
 
-Configuration is optional — `waterslide parse` with no config produces the full
-map. A `.waterslide/config.yaml` lets you declare band assignment, mark
-infrastructure, and turn on policy checks. See
-[`docs/03-persisted-files.md`](./docs/03-persisted-files.md).
+Several repos go in one command:
+`parse api=/path/to/api ios-client=/path/to/ios-client`.
+
+**Configuration.** No config produces the full map, and there is no config file
+to write yet. What can be declared today is declared as flags on `parse`:
+`--infrastructure <glob>` marks the nodes under a repo-relative glob as
+infrastructure, `--exclude <name>:<glob>` and `--include <name>:<glob>` narrow
+which files are read, `--include-tests` brings test files in, and
+`--pack-option` is repeatable. The committed `.waterslide/config.yaml` for
+tiers, infrastructure and pack options, and the policy checks, are designed in
+[`docs/03-persisted-files.md`](./docs/03-persisted-files.md) and
+[`docs/06-policy-checks.md`](./docs/06-policy-checks.md) but nothing reads them
+yet. Writing that file today does nothing.
 
 ## How it works
 
@@ -129,6 +158,7 @@ Design documents, written before any code. Start with
 | `04-ui-layout.md` | Animation model, layout, visual encoding |
 | `05-parser-pipeline.md` | Pipeline stages, language pack interface |
 | `06-policy-checks.md` | Missing middleware, data egress, band-skipping |
+| `07-what-it-shows.md` | What the map makes legible, and why not a sequence diagram |
 
 ## Stack
 

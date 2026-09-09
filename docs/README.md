@@ -65,9 +65,11 @@ node cli/dist/src/index.js --help
 
 Flags worth knowing on `parse`: `--canonical` writes the canonical shape for
 byte comparisons, `--no-cache` forces a full parse, `--state-dir <dir>` writes
-somewhere other than `./.waterslide`, and `--pack-option` is repeatable.
-
-For a bare `waterslide` command, run `npm link -w cli` from the repo root.
+somewhere other than `./.waterslide`, `--infrastructure <glob>` marks the
+nodes under a repo-relative glob as infrastructure, `--exclude <name>:<glob>`
+and `--include <name>:<glob>` narrow which files are read, and `--pack-option`
+is repeatable. There is no config file yet; `config.yaml` is designed in
+`03-persisted-files.md` and nothing reads it.
 
 ## Reading order
 
