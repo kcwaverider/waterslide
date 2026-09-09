@@ -46,6 +46,22 @@ export function spanCompare(a: SourceSpan, b: SourceSpan): number {
   );
 }
 
+/**
+ * Call-site ordering for graph model §3.3's collapse rule: the edge's `source`
+ * is the occurrence with the lowest `line_start`, then lowest `path`. The spec
+ * names those two, which is not a total order across repos or for two sites
+ * on one line, so `repo` and then `line_end` (null first) break the tie. Core
+ * exports this so no pack reimplements it.
+ */
+export function callSiteCompare(a: SourceLocation, b: SourceLocation): number {
+  return (
+    a.line_start - b.line_start ||
+    byteCompare(a.path, b.path) ||
+    byteCompare(a.repo, b.repo) ||
+    compareNullableInt(a.line_end, b.line_end)
+  );
+}
+
 function compareNullableInt(a: number | null, b: number | null): number {
   if (a === null && b === null) return 0;
   if (a === null) return -1;

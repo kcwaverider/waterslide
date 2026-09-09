@@ -226,9 +226,9 @@ against.
 | 13 | `source == null` if and only if `source_count == 0` (graph model §3.3) |
 | 14 | `branch_ordinal` non-null if and only if `exclusive_group` non-null |
 | 15 | `branch_ordinal` values are unique within each `exclusive_group` |
-| 16 | `skips_tiers` is empty when either endpoint is `external_service`, `topic` or `tombstone`, or has `tier: external` (graph model §3.4) |
+| 16 | `skips_tiers` is empty when either endpoint is `external_service`, `topic`, `tombstone` or `unknown`, or has `tier: external` (graph model §3.4) |
 | 17 | **Canonical shape only.** `nodes`, `edges`, `schemas` sorted ascending by `id` byte-wise; `repos` by `name`; `nodes[].sources` by `repo`, `path`, `line_start`, `line_end` (null first), `hash`; `skips_tiers`, `classification`, `tags` sorted ascending; every string NFC-normalized (graph model §7.2). Key order and whitespace are the serializer's, checked by byte diff |
-| 18 | Every node id is `{scope}:{locator}` with scope one of `svc`, `mongo`, `sql`, `topic`, `ext` or a name in `repos[]`; no repo is named after a fixed scope, empty, or containing `:`; for a repo-scoped node with `sources`, every span shares the id's repo and at least one span's `path` is the path in the id (graph model §1) |
+| 18 | Every node id is `{scope}:{locator}` with scope one of `svc`, `mongo`, `sql`, `topic`, `ext`, `unknown` or a name in `repos[]`; an `unknown` locator is `{ref_kind}/{value}` with a legal `ref_kind` and non-empty value; no repo is named after a fixed scope, empty, or containing `:`; for a repo-scoped node with `sources`, every span shares the id's repo and at least one span's `path` is the path in the id (graph model §1) |
 | 19 | Every `repo` on a node span (`sources[]`), edge `source` or schema `source` names a repo in `repos[]` (graph model §2.4) |
 | 20 | The `parent` chain is acyclic; no node is its own ancestor (graph model §2.3). Self-loop edges remain legal |
 | 21 | `line_end`, where non-null, is never less than `line_start` — on node spans, edge sources and schema sources (graph model §2.4). A pack must not repair this with `null` |

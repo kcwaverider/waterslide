@@ -3,8 +3,11 @@ export * from "./model/graph.js";
 export * from "./model/pack.js";
 export * from "./model/baseline.js";
 export { edgeId, edgeIdInput, type EdgeIdKey } from "./edge-id.js";
+export { spanHash } from "./span-hash.js";
 export {
   byteCompare,
+  callSiteCompare,
+  spanCompare,
   canonicalEdge,
   canonicalNode,
   canonicalSchema,

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-// Graph model §2.1 — fifteen values, six hue groups.
+// Graph model §2.1 — sixteen values, six hue groups. `unknown` shares the
+// Absence group with `tombstone`: both are a thing that is not there.
 export const NodeKindSchema = z.enum([
   "ui_view",
   "ui_handler",
@@ -17,6 +18,7 @@ export const NodeKindSchema = z.enum([
   "module",
   "service",
   "tombstone",
+  "unknown",
 ]);
 export type NodeKind = z.infer<typeof NodeKindSchema>;
 
@@ -69,6 +71,14 @@ export const RefKindSchema = z.enum([
 ]);
 export type RefKind = z.infer<typeof RefKindSchema>;
 
+// Parser pipeline §3.6 — typed `hints` members.
+export const DatastoreOperationSchema = z.enum(["read", "write"]);
+export type DatastoreOperation = z.infer<typeof DatastoreOperationSchema>;
+export const DatastoreStoreSchema = z.enum(["mongo", "sql"]);
+export type DatastoreStore = z.infer<typeof DatastoreStoreSchema>;
+export const TopicDirectionSchema = z.enum(["publish", "subscribe"]);
+export type TopicDirection = z.infer<typeof TopicDirectionSchema>;
+
 // Parser pipeline §3.4
 export const VisibilitySchema = z.enum(["public", "module", "private"]);
 export type Visibility = z.infer<typeof VisibilitySchema>;
@@ -86,12 +96,18 @@ export const RESERVED_DIAGNOSTIC_CODES = {
   recognizer_failure: "error",
   unresolved_ref: "warning",
   redundant_annotation: "warning",
+  undeclared_datastore_namespace: "warning",
+  unresolvable_provide_alias: "warning",
+  rejected_pack_patch: "error",
 } as const satisfies Record<string, DiagnosticSeverity>;
 export type ReservedDiagnosticCode = keyof typeof RESERVED_DIAGNOSTIC_CODES;
 
 /**
  * Graph model §6.1 — default tier by kind, used when no config glob matches.
  * `tombstone` has no default: it takes whatever the baseline recorded.
+ * `unknown` has no default: it inherits the tier of the referencing edge's
+ * `from` node (the shallowest, in band order, when several edges reference it)
+ * so it draws beside its caller rather than in a default band.
  */
 export const DEFAULT_TIER_BY_KIND: Readonly<Record<NodeKind, Tier | null>> = {
   ui_view: "ui",
@@ -109,15 +125,24 @@ export const DEFAULT_TIER_BY_KIND: Readonly<Record<NodeKind, Tier | null>> = {
   topic: "store",
   external_service: "external",
   tombstone: null,
+  unknown: null,
 };
 
-/** Graph model §3.4 / invariant 16 — endpoint kinds for which `skips_tiers` is always empty. */
+/**
+ * Graph model §3.4 / invariant 16 — endpoint kinds for which `skips_tiers` is
+ * always empty. `unknown` is excluded for the same reason as `tombstone`: the
+ * edge into it is already flagged and does not need a second badge.
+ */
 export const SKIPS_TIERS_EXCLUDED_KINDS: ReadonlySet<NodeKind> =
-  new Set<NodeKind>(["external_service", "topic", "tombstone"]);
+  new Set<NodeKind>(["external_service", "topic", "tombstone", "unknown"]);
 
 /**
- * Graph model §1 — the five fixed id scopes. The sixth scope form is a repo
+ * Graph model §1 — the six fixed id scopes. The seventh scope form is a repo
  * name from `repos[]`, so a repo must never be named after one of these.
+ *
+ * `unknown:{ref_kind}/{value}` is the synthetic target of a dangling edge
+ * (parser §4.2): `ref_kind` is the UnresolvedRef's kind and `value` its value
+ * verbatim, NFC-normalized, so the id is deterministic from the ref alone.
  */
 export const FIXED_ID_SCOPES: ReadonlySet<string> = new Set([
   "svc",
@@ -125,4 +150,8 @@ export const FIXED_ID_SCOPES: ReadonlySet<string> = new Set([
   "sql",
   "topic",
   "ext",
+  "unknown",
 ]);
+
+/** The scope of a synthetic dangling-reference target. */
+export const UNKNOWN_SCOPE = "unknown";

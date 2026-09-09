@@ -47,14 +47,15 @@ Format: `{scope}:{locator}`
 | SQL table | `sql:{schema}.{table}` | `sql:public.orders` |
 | Queue topic | `topic:{name}` | `topic:note.indexed` |
 | External service | `ext:{vendor}/{surface}` | `ext:cohere/embed` |
+| Unknown target | `unknown:{ref_kind}/{value}` | `unknown:symbol/memory_service.forget` |
 
 **Rules (normative):**
 
-- **Six scope prefixes exist:** `svc`, `{repo}`, `mongo`, `sql`, `topic`, `ext`.
-  The `{repo}` form covers two row kinds — code nodes and modules — since a module
+- **Seven scope prefixes exist:** `svc`, `{repo}`, `mongo`, `sql`, `topic`, `ext`,
+  `unknown`. The `{repo}` form covers two row kinds — code nodes and modules — since a module
   is just a code node whose locator has no `#qualified_name`.
-- **A repo must not be named `svc`, `mongo`, `sql`, `topic` or `ext`.** Its name
-  is an id scope, and those five are taken. A repo name is also non-empty and
+- **A repo must not be named `svc`, `mongo`, `sql`, `topic`, `ext` or `unknown`.**
+  Its name is an id scope, and those six are taken. A repo name is also non-empty and
   contains no `:`, for the same reason, and is unique within `repos[]`
   (handoff §5, invariant 1).
 - **A split definition keeps one id.** When a node has several `sources`, the id
@@ -62,12 +63,15 @@ Format: `{scope}:{locator}`
   one span's `path` is the path in the id. The validator checks both (invariant
   18).
 - **Locators are non-empty.** For `mongo`/`sql`, both sides of the `.` are
-  non-empty; for `ext`, both sides of the `/`. For repo-scoped ids the path is
+  non-empty; for `ext`, both sides of the `/`. For `unknown`, the part before the
+  first `/` is an `UnresolvedRef.ref_kind` (parser §3.6) and the part after it is
+  the ref's `value` verbatim, NFC-normalized, non-empty — so the id is
+  deterministic from the ref alone and an `http` value keeps its own slashes. For repo-scoped ids the path is
   relative, uses forward slashes, has no leading slash and no backslash, and a
   `#` is followed by a non-empty `qualified_name`.
 - **The validator checks id format** (handoff §5, invariant 18): the scope is one
-  of the five fixed prefixes or a name in `repos[]`; `mongo`/`sql` locators contain
-  a `.`, `ext` locators a `/`; and for a repo-scoped node with `sources`, every
+  of the six fixed prefixes or a name in `repos[]`; `mongo`/`sql` locators contain
+  a `.`, `ext` locators a `/`, `unknown` locators a legal `ref_kind` then `/`; and for a repo-scoped node with `sources`, every
   span's `repo` is the id's scope and at least one span's `path` is the path part
   of the locator.
 - Identity is never derived from array index or parse order.
@@ -129,7 +133,7 @@ Format: `{scope}:{locator}`
 
 `ui_view`, `ui_handler`, `client_service`, `endpoint`, `function`, `class`,
 `repository`, `middleware`, `collection`, `table`, `topic`, `external_service`,
-`module`, `service`, `tombstone`
+`module`, `service`, `tombstone`, `unknown`
 
 `kind` is what a node *is*, and drives hue. It is distinct from `tier`, which
 drives position — a `function` may sit in `domain` or in `data_access`.
@@ -137,8 +141,16 @@ drives position — a `function` may sit in `domain` or in `data_access`.
 `tombstone` is the exception to everything else in this enum: it is the only kind
 minted from `baseline.json` rather than from source, it always has
 `sources: []`, and it exists solely to give a broken edge a resolvable target.
-See §5.1. Fifteen values, six hue groups — `tombstone` shares the muted/grey
-group with nothing else, since it is the absence of a thing.
+See §5.1. Sixteen values, six hue groups — `tombstone` shares the muted/grey
+group only with `unknown`, since both are the absence of a thing.
+
+`unknown` is the synthetic target of a dangling edge (parser §4.2): a reference
+that matched nothing, drawn rather than dropped. It is minted by core, never by
+a pack; always has `sources: []`, `confidence: inferred` and a reason naming the
+reference and where it originated; and takes the tier of the referencing edge's
+`from` node — the shallowest in band order when several edges reference it — so
+it draws beside its caller. Like a tombstone it is transient: the next parse
+simply does not mint one once the reference resolves.
 
 ### 2.2 `entry_point_kind` enum
 
@@ -184,7 +196,7 @@ was `null`.
 | `path` | string | yes |
 | `line_start` | int | yes |
 | `line_end` | int \| null | yes |
-| `hash` | string | yes |
+| `hash` | string | yes | `spanHash(text)` from `core/`: `sha256:` + first 16 lowercase hex of SHA-256 over the NFC-normalized UTF-8 bytes of the span's exact source text, untrimmed. One implementation, every pack calls it — two packs hashing differently would make `baseline_hash` mean two things |
 
 **`SourceLocation`** — edges and schemas, as a single nullable `source`. A
 call site is a point, not a span; it cannot be split across files.
@@ -497,6 +509,7 @@ An edge is skipped over entirely — `skips_tiers: []` — when either endpoint 
 | `external_service` | `external` is not a depth layer (§6). Leaving the system isn't skipping a band, and edge *length* already carries that signal |
 | `topic` | A queue is transport, not depth. See below |
 | `tombstone` | It sits where the removed node sat; the edge is already flagged `is_broken` and doesn't need a second badge |
+| `unknown` | Same reasoning: a dangling edge is already the finding, and a band-skip badge on it would say nothing new |
 
 The same holds for any endpoint whose `tier` is `external` by config regardless of
 `kind`: `external` is not one of the six ordered bands, so no depth relationship
@@ -712,6 +725,7 @@ Used when no config glob matches. Config overrides any row.
 | `collection`, `table`, `topic` | `store` |
 | `external_service` | `external` |
 | `tombstone` | Whatever the baseline recorded for the node it replaces |
+| `unknown` | The tier of the referencing edge's `from` node; the shallowest in band order when several edges reference it |
 
 Three of these deserve a note, because they were the ones the table was missing:
 
