@@ -20,3 +20,164 @@ reviews:
         Specifications written before implementation and authoritative over the
         code. Prioritise internal contradictions and cross-document
         inconsistencies over prose style.
+  pre_merge_checks:
+    custom_checks:
+      - name: Spec-Code Sync
+        mode: warning
+        instructions: |
+          Determine whether this pull request changes observable behavior that the
+          specification documents in `docs/` describe, and if so, whether those
+          documents were updated in the same pull request.
+
+          The specifications are authoritative over the code: where code and spec
+          disagree the code is the bug, unless the spec is wrong, in which case the
+          spec is fixed first. Seven documents, each governing a distinct surface:
+
+          - `docs/00-handoff.md` — build order, milestones, parallel tracks, PR
+            structure, and the numbered invariant table in §5.
+          - `docs/01-scope.md` — what the tool is for, what is deliberately out of
+            scope, the static-analysis-only hard line, known blind spots.
+          - `docs/02-graph-model.md` — the load-bearing document. Node, Edge and
+            Schema entities with normative field tables; node identity (§1); edge
+            identity and its encoding (§3.3, §3.3.1); the `kind`,
+            `entry_point_kind` and edge `kind` enums; forks — `condition`,
+            `exclusive_group`, `branch_ordinal` (§3.2); `skips_tiers` (§3.4);
+            confidence and broken edges (§5); tiers and the default-tier-by-kind
+            table (§6); graph metadata (§7); volatile fields (§7.1); canonical
+            serialization (§7.2); the `CanonicalGraph` / `GraphArtifact` shapes and
+            the validator contract (§7.3); diagnostics (§10).
+          - `docs/03-persisted-files.md` — the files in `.waterslide/`: which are
+            hand-written (`annotations.yaml`, `config.yaml`, `layout.json`) and
+            which the tool writes (`positions.json`, `baseline.json`, `graph.json`,
+            `cache/`), their formats, and who owns each.
+          - `docs/04-ui-layout.md` — the animation model, layout, the two zoom
+            concepts, visual encoding, view modes, and the rejected-alternatives
+            block in §0.
+          - `docs/05-parser-pipeline.md` — the six-stage pipeline and what each
+            stage may and may not do, the language-pack interface (`parse`,
+            `compose`, `rePath`, `PackResult`, `PackPatch`, `pack_data`),
+            recognizers, caching rules, and cross-file resolution.
+          - `docs/06-policy-checks.md` — declared policy checks: missing
+            middleware, data egress, band-skipping; their semantics and how
+            findings surface.
+
+          FAIL if ALL of the following are true:
+          - The PR modifies implementation files under `core/src/`,
+            `packs/*/src/`, `cli/src/` or `web/src/`. Test files under `*/test/`,
+            dev harnesses under `*/scripts/`, and `fixtures/` are not
+            implementation.
+          - The change alters observable behavior: the graph model's output schema
+            or serialization format, CLI surface (flags, commands, arguments),
+            keys in `config.yaml` or `annotations.yaml`, the shape of any file
+            written to `.waterslide/`, the exported API of `@waterslide/core` or
+            the language-pack interface, analysis semantics (node or edge
+            identity, tier assignment, confidence, resolution, diagnostic codes),
+            policy-check behavior, or rendering behavior
+          - No file under `docs/` is modified in the same PR
+
+          PASS if ANY of the following are true:
+          - No implementation file under a workspace `src/` directory is modified
+          - The change is internal only — refactoring, renaming of non-exported
+            symbols, performance work, dependency bumps, formatting, comments,
+            logging, or test-only changes — with no change to observable behavior
+          - A file under `docs/` is modified in the same PR and the modification is
+            substantive, not merely formatting or typo fixes
+          - The PR description explicitly states that the specifications were
+            reviewed and require no change, and gives the reason
+
+          When failing, state which observable behavior changed, name the specific
+          specification document and section that appears to cover it, and quote
+          the sentence in that document that is now inaccurate.
+
+          Do not fail for missing documentation of internal implementation detail.
+          This check governs specification accuracy, not code comments.
+      - name: Output Determinism
+        mode: warning
+        instructions: |
+          The specification requires byte-identical output for identical input
+          (`docs/05-parser-pipeline.md` §0; `docs/02-graph-model.md` §7.1, §7.2).
+          Verify this pull request introduces no nondeterminism into any code path
+          that contributes to emitted output.
+
+          Output-producing code in this repository:
+          - `core/src/canonical.ts` — the serializer, and the chokepoint every
+            emitted byte passes through. `canonicalize()` strips volatile fields,
+            NFC-normalizes every string and sorts every array the spec sorts;
+            `serializeCanonical()` renders the bytes. `byteCompare`, `spanCompare`
+            and `callSiteCompare` define every ordering that reaches output.
+          - `core/src/model/graph.ts` — entity schemas, `CanonicalGraph` versus
+            `GraphArtifact`, and `VOLATILE_TOP_LEVEL_KEYS` / `VOLATILE_REPO_KEYS`.
+          - `core/src/validate.ts` — enforces canonical array order and NFC on a
+            parsed graph (invariant 17) and the shape rules of §7.3.
+          - `core/src/json-schema.ts` and `core/scripts/emit-json-schema.ts` — emit
+            the published JSON Schema files under `core/schema/`.
+          - `core/src/pipeline/` — `discover.ts` (repo walk order, repo state),
+            `hash.ts` (`canonicalJson`, `contentHash`), `stage3.ts` (parse,
+            compose, node and schema merge), `derive.ts` (tier and parent
+            derivation), `repath.ts`, `cache.ts` (a warm run must produce the same
+            corpus as a cold one), and `index.ts` (`parseSources`).
+          - `core/src/edge-id.ts`, `core/src/span-hash.ts`,
+            `core/src/unknown-id.ts` — identifiers and hashes that land verbatim in
+            emitted bytes.
+          - Language packs: `packs/python/src/emitter.ts`,
+            `packs/python/src/language/emit.ts`, `packs/python/src/index.ts`,
+            `packs/python/src/frameworks/fastapi/compose.ts`, and
+            `packs/swift/src/compose.ts`, `analyze.ts`, `ids.ts`, `summary.ts`,
+            `repath.ts`.
+          - Stage 6 (the `graph.json` writer) and the CLI do not exist yet.
+            `cli/src/index.ts` and `web/src/index.ts` are placeholders; the moment
+            either gains a body it becomes output-producing code under this check.
+
+          FAIL if the PR introduces, into output-producing code, any of:
+          - Timestamps or wall-clock reads (Date.now, new Date, performance.now)
+            whose value reaches the output
+          - Random or pseudorandom values, including UUID generation
+          - Iteration over an unordered collection (Object.keys, Set, Map,
+            directory reads) where the resulting order affects output and no
+            explicit sort is applied. The Python pack's `Emitter` keeps a parallel
+            `nodeOrder` array precisely so Map iteration order never decides
+            output; a new Map or Set whose iteration order reaches emitted bytes
+            needs the same treatment or an explicit sort.
+          - Absolute filesystem paths, hostnames, usernames, environment variables,
+            or process IDs embedded in output. Paths in the model are
+            repository-relative; `repos[].path` is an absolute checkout path and is
+            volatile for exactly this reason.
+          - Floating-point formatting without fixed precision, where platform
+            variation could alter the rendered value. The model is integers only
+            (§7.2), so introducing a float to the model is itself the change to
+            scrutinize.
+          - Concurrency or async ordering that can vary between runs and affects
+            the order of emitted elements. Packs receive per-file results sorted by
+            (repo, path) byte-wise, and `compose` relies on that order; do not
+            re-sort or parallelize in a way that changes it.
+          - Locale-aware comparison (`localeCompare`, `Intl.Collator`) or a bare
+            `Array.prototype.sort` with no comparator, on anything whose order
+            reaches output. Sorting is byte-wise on the UTF-8 encoding, never
+            locale-aware (§7.2).
+          - A string reaching output without NFC normalization, or a sort key that
+            is not total — two elements comparing equal keep input order, so the
+            same graph would serialize to different bytes (§7.2).
+
+          PASS if none of the above appear in output-producing paths, or if such a
+          value is present but demonstrably excluded from emitted output — used
+          only in logging, diagnostics, or a field the serializer omits. Two
+          existing cases are exactly that: `process.pid` in
+          `core/src/pipeline/cache.ts` names a temporary file, and `Date.now()` in
+          `packs/swift/scripts/run.ts` times a dev harness. Neither reaches output.
+
+          When failing, name the file and line, state which output field is
+          affected, and state whether a deterministic substitute exists: a content
+          hash instead of a timestamp, an explicit sort, fixed-precision
+          formatting.
+
+          Precedence note: an earlier revision of the specification required a
+          `parsed_at` timestamp in output, which appeared to conflict with the
+          byte-identical determinism requirement. It was resolved in
+          `docs/02-graph-model.md` §7.1 and §7.3, and determinism governs: the
+          requirement applies to the CANONICAL GRAPH, not to the artifact. Exactly
+          four fields are volatile — `parsed_at`, `repos[].path`, `repos[].dirty`
+          and `stats` — and they exist only in `GraphArtifact`, stripped by
+          `canonicalize()` before any byte comparison. Those four are sanctioned;
+          do not flag them. Any NEW wall-clock, random or environment-derived value
+          that reaches the canonical graph is a violation, and adding a volatile
+          field requires a §7.1 spec change in the same PR.
