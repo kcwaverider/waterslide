@@ -204,6 +204,7 @@ describe("stage 5: infrastructure (persisted-files §3.2, policy §5)", () => {
 });
 
 describe("stage 5: parents (graph model §2.3)", () => {
+  /** Every node id → its parent, so an expectation reads as the chain it asserts. */
   const parentsOf = (out: Node[]): Record<string, string | null> =>
     Object.fromEntries(out.map((n) => [n.id, n.parent]));
 
