@@ -6,6 +6,7 @@ import {
   SKIPS_TIERS_EXCLUDED_KINDS,
   UNKNOWN_SCOPE,
 } from "./model/enums.js";
+import { parseUnknownNodeId } from "./unknown-id.js";
 import {
   CanonicalGraphSchema,
   GRAPH_SCHEMA_VERSION,
@@ -61,7 +62,8 @@ export type ValidationErrorCode =
   | "E_SOURCE_COUNT"
   | "E_BRANCH_ORDINAL"
   | "E_BRANCH_ORDINAL_DUPLICATE"
-  | "E_SKIPS_TIERS_EXCLUDED";
+  | "E_SKIPS_TIERS_EXCLUDED"
+  | "E_UNKNOWN_NODE";
 
 export interface ValidationError {
   readonly code: ValidationErrorCode;
@@ -317,8 +319,10 @@ function checkInvariants(
         `parent "${node.parent}" does not resolve to a node`,
       );
     }
-    // 6. Non-certain → reason. Tombstones are covered by 22, which subsumes this.
-    if (node.kind !== "tombstone") checkReason(node, p, err);
+    // 6. Non-certain → reason. Tombstones are covered by 22 and unknown nodes
+    // by 24; both subsume this.
+    if (node.kind !== "tombstone" && node.kind !== "unknown")
+      checkReason(node, p, err);
     // 7. Entry point → kind.
     if (node.is_entry_point && node.entry_point_kind === null) {
       err(
@@ -345,6 +349,32 @@ function checkInvariants(
         `${p}.confidence`,
         `tombstone "${node.id}" must be inferred with a confidence_reason; it is reconstructed from the baseline and the parser never saw it (graph model §5.1)`,
       );
+    }
+    // 24. Unknown → no defining span, inferred, with a reason. It is minted for
+    // a reference that matched nothing, so `certain` or a source would claim
+    // the parser saw a definition it definitionally did not.
+    if (node.kind === "unknown") {
+      if (node.sources.length > 0) {
+        err(
+          "E_UNKNOWN_NODE",
+          `${p}.sources`,
+          `unknown node "${node.id}" must have sources: [] — it stands in for a reference that matched no definition (invariant 24)`,
+        );
+      }
+      if (node.confidence !== "inferred") {
+        err(
+          "E_UNKNOWN_NODE",
+          `${p}.confidence`,
+          `unknown node "${node.id}" must be inferred, not ${node.confidence}; the parser never saw its definition (invariant 24)`,
+        );
+      }
+      if (node.confidence_reason === null) {
+        err(
+          "E_UNKNOWN_NODE",
+          `${p}.confidence_reason`,
+          `unknown node "${node.id}" must carry a confidence_reason naming the unresolved reference and where it originated (invariant 24)`,
+        );
+      }
     }
     // 21. line_end never precedes line_start, per span.
     node.sources.forEach((span, j) =>
@@ -581,17 +611,13 @@ function checkNodeId(
   const locator = node.id.slice(colon + 1);
 
   if (scope === UNKNOWN_SCOPE) {
-    // `unknown:{ref_kind}/{value}` — ref_kind is a legal UnresolvedRef kind and
-    // value is non-empty. Only the first "/" separates them: an http value is a
-    // path and carries its own slashes verbatim.
-    const slash = locator.indexOf("/");
-    const refKind = slash === -1 ? locator : locator.slice(0, slash);
-    const value = slash === -1 ? "" : locator.slice(slash + 1);
-    if (!RefKindSchema.safeParse(refKind).success || value.length === 0) {
+    // `unknown:{ref_kind}:{encoded_value}` — ref_kind is a legal UnresolvedRef
+    // kind and the value is non-empty and canonically percent-encoded.
+    if (parseUnknownNodeId(node.id) === null) {
       err(
         "E_ID_FORMAT",
         `${path}.id`,
-        `node id "${node.id}" has scope "unknown" but its locator is not {ref_kind}/{value} with ref_kind one of ${RefKindSchema.options.join(", ")} and a non-empty value (graph model §1, parser §4.2)`,
+        `node id "${node.id}" has scope "unknown" but its locator is not {ref_kind}:{encoded_value} with ref_kind one of ${RefKindSchema.options.join(", ")} and a non-empty value in which ":", "/", "%" and control characters are percent-encoded (graph model §1, parser §4.2)`,
       );
     }
     return;

@@ -12,6 +12,7 @@ import {
   NodeUpdateSchema,
   PROVIDE_ALIAS_MAX_DEPTH,
   PackManifestSchema,
+  PackOptionsSchema,
   PackPatchSchema,
   PackResultSchema,
   PartialEdgeSchema,
@@ -19,6 +20,7 @@ import {
   ProvideSchema,
   UnresolvedRefSchema,
   assertPackCompatible,
+  type LanguagePack,
 } from "../src/model/pack.js";
 
 describe("pack manifest (parser §3.1)", () => {
@@ -291,6 +293,52 @@ describe("PerFileResult, PackPatch and NodeUpdate (compose hook)", () => {
 
   it("caps alias chains at eight hops", () => {
     expect(PROVIDE_ALIAS_MAX_DEPTH).toBe(8);
+  });
+
+  it("LanguagePack: options on every call, compose synchronous", () => {
+    // A compile-time check as much as a runtime one: this literal must satisfy
+    // the interface with four-argument parse and a non-Promise compose.
+    const pack: LanguagePack = {
+      manifest: {
+        id: "t",
+        version: "0",
+        graph_schema_version: 1,
+        extensions: [".t"],
+        frameworks: [],
+      },
+      parse: (_repo, _path, _content, options) => ({
+        ...empty,
+        diagnostics: [
+          {
+            severity: "info",
+            code: "saw_options",
+            message: JSON.stringify(options),
+            repo: null,
+            path: null,
+            line: null,
+            pack: "t",
+          },
+        ],
+      }),
+      compose: (results, _options) => ({
+        ...empty,
+        node_updates: results.map((r) => ({
+          node_id: `${r.repo}:${r.path}`,
+          add_sources: [],
+        })),
+      }),
+      rePath: (result, repo, path, _options) => ({ ...result, repo, path }),
+    };
+    const parsed = pack.parse("r", "a.t", "", { source_roots: ["server"] });
+    expect(parsed).not.toBeInstanceOf(Promise);
+    const patch = pack.compose?.(
+      [{ repo: "r", path: "a.t", result: empty }],
+      {},
+    );
+    expect(patch?.node_updates.map((u) => u.node_id)).toEqual(["r:a.t"]);
+    expect(
+      PackOptionsSchema.safeParse({ source_roots: ["server"] }).success,
+    ).toBe(true);
   });
 });
 

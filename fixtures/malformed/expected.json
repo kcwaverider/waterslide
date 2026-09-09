@@ -217,6 +217,26 @@
   "unknown-illegal-ref-kind.json": {
     "code": "E_ID_FORMAT",
     "path": "$.nodes[4].id",
-    "why": "an unknown-scoped id whose ref_kind 'grpc' is not an UnresolvedRef kind; the locator must be {ref_kind}/{value} (invariant 18); the edge to it is updated so only invariant 18 fires"
+    "why": "an unknown-scoped id whose ref_kind 'grpc' is not an UnresolvedRef kind; the locator must be {ref_kind}:{encoded_value} (invariant 18); the edge to it is updated so only invariant 18 fires"
+  },
+  "unknown-unencoded-value.json": {
+    "code": "E_ID_FORMAT",
+    "path": "$.nodes[5].id",
+    "why": "an unknown-scoped id whose value carries a literal '/'; ':' '/' '%' and control characters must be percent-encoded so the id splits back unambiguously (invariant 18)"
+  },
+  "unknown-with-source.json": {
+    "code": "E_UNKNOWN_NODE",
+    "path": "$.nodes[5].sources",
+    "why": "an unknown node carrying a defining span; it stands in for a reference that matched no definition, so sources must be empty (invariant 24)"
+  },
+  "unknown-certain.json": {
+    "code": "E_UNKNOWN_NODE",
+    "path": "$.nodes[4].confidence",
+    "why": "an unknown node claiming confidence certain; the parser never saw its definition, so it is always inferred (invariant 24)"
+  },
+  "unknown-without-reason.json": {
+    "code": "E_UNKNOWN_NODE",
+    "path": "$.nodes[5].confidence_reason",
+    "why": "an unknown node with confidence_reason null; it must name the unresolved reference and where it originated (invariant 24)"
   }
 }

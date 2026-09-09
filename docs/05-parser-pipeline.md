@@ -194,7 +194,12 @@ arbiter.
 
 ### 3.3 What a pack returns
 
-Called once per file, given `(repo_name, path, content)`. Returns:
+Called once per file, given `(repo_name, path, content, options)`. `options` is
+the pack's own resolved block from `config.yaml` (`packs.{id}`), defaults
+applied by core, passed on every call rather than configured once on the
+instance — an instance reused across repos with different options would
+silently carry the wrong ones. Its canonical hash is part of the cache key
+(§2.1). Returns:
 
 | Key | Type | Meaning |
 |---|---|---|
@@ -216,8 +221,8 @@ and `entry_point_kind` fields on a node, per graph model §2.
 
 | Member | Signature | Called |
 |---|---|---|
-| `compose` | `compose?(results: PerFileResult[]): PackPatch` | Once per pack, after stage 3, over every file the pack claimed |
-| `rePath` | `rePath?(result: PerFileResult, repo, path): PerFileResult` | On a cache hit whose repo or path differs from the payload's (§2.1) |
+| `compose` | `compose?(results: PerFileResult[], options: PackOptions): PackPatch` | Once per pack, after stage 3, over every file the pack claimed. **Synchronous**: async would invite concurrency inside it, and two awaits in parallel make the output order nondeterministic |
+| `rePath` | `rePath?(result: PerFileResult, repo, path, options: PackOptions): PerFileResult` | On a cache hit whose repo or path differs from the payload's (§2.1) |
 
 `PerFileResult` is `{ repo, path, result }` — one file's five returns plus where
 they came from.
@@ -427,7 +432,7 @@ client — *is* the unmatched reference. Compare against `baseline.json`:
 | Situation | Result |
 |---|---|
 | Ref unmatched, and the edge existed in baseline | `is_broken: true`, with `broken_reason` |
-| Ref unmatched, and no baseline entry | Dangling edge to a synthetic `unknown` node: id `unknown:{ref_kind}/{value}`, kind `unknown`, `inferred` with a reason naming the ref and its origin, tier inherited from the referencing edge's `from` node (graph model §1, §2.1) |
+| Ref unmatched, and no baseline entry | Dangling edge to a synthetic `unknown` node: id `unknown:{ref_kind}:{encoded_value}`, kind `unknown`, label `unresolved {ref_kind} {value}`, `inferred` with a reason naming the ref and its origin, tier inherited from the referencing edge's `from` node (graph model §1, §2.1) |
 | Ref matched, and was broken in baseline | Silently healed. No badge |
 
 ### 4.3 Ambiguous matches

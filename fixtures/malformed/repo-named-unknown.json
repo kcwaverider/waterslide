@@ -105,9 +105,9 @@
       "tags": []
     },
     {
-      "id": "unknown:http//notes/{id}/archive",
+      "id": "unknown:http:%2Fnotes%2F{id}%2Farchive",
       "kind": "unknown",
-      "label": "POST /notes/{id}/archive",
+      "label": "unresolved http /notes/{id}/archive",
       "tier": "ui_logic",
       "parent": null,
       "sources": [],
@@ -119,9 +119,9 @@
       "tags": []
     },
     {
-      "id": "unknown:symbol/memory_service.forget",
+      "id": "unknown:symbol:memory_service.forget",
       "kind": "unknown",
-      "label": "memory_service.forget",
+      "label": "unresolved symbol memory_service.forget",
       "tier": "domain",
       "parent": null,
       "sources": [],
@@ -135,9 +135,9 @@
   ],
   "edges": [
     {
-      "id": "e_e4724f0469ce36e9",
+      "id": "e_47cae39172a24a2c",
       "from": "tapistree:api/services/note_service.py#NoteService.archive",
-      "to": "unknown:symbol/memory_service.forget",
+      "to": "unknown:symbol:memory_service.forget",
       "kind": "call",
       "label": "forget",
       "schema_id": null,
@@ -160,9 +160,9 @@
       "skips_tiers": []
     },
     {
-      "id": "e_ebb68e62b8bf5dca",
+      "id": "e_de049a45a1be8d64",
       "from": "tapistree-ios:Sources/Services/NoteService.swift#NoteService.archive",
-      "to": "unknown:http//notes/{id}/archive",
+      "to": "unknown:http:%2Fnotes%2F{id}%2Farchive",
       "kind": "http_request",
       "label": "POST /notes/{id}/archive",
       "schema_id": null,

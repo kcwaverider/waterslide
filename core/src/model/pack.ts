@@ -226,6 +226,16 @@ export const PackResultSchema = z.strictObject({
 });
 export type PackResult = z.infer<typeof PackResultSchema>;
 
+/**
+ * A pack's own resolved options block from `config.yaml` (`packs.{id}`), with
+ * defaults applied by core before any call, so the pack never sees an
+ * unspecified value. Passed on every call rather than configured once on the
+ * instance: an instance reused across repos with different options would
+ * silently carry the wrong ones. Its canonical hash is part of the cache key.
+ */
+export const PackOptionsSchema = z.record(z.string(), z.unknown());
+export type PackOptions = z.infer<typeof PackOptionsSchema>;
+
 /** One file's stage-3 output together with the file it came from. */
 export const PerFileResultSchema = z.strictObject({
   repo: z.string(),
@@ -273,12 +283,15 @@ export type PackPatch = z.infer<typeof PackPatchSchema>;
 
 /**
  * The language pack contract. `parse` is called once per file and must never
- * throw (§9): failures go in `diagnostics`.
+ * throw (§9): failures go in `diagnostics`. Every call receives the pack's
+ * resolved `options`.
  *
  * `compose`, when present, is called once per parse after stage 3 with every
  * file this pack claimed, sorted by (repo, path) byte-wise. Core guarantees
  * that order and packs must not re-sort; it is what makes the output immune to
- * shuffled discovery order. It is never cached.
+ * shuffled discovery order. It is never cached, and it is synchronous on
+ * purpose: an async compose invites concurrency inside it, and two awaits in
+ * parallel would make the output order nondeterministic.
  *
  * `rePath`, when present, is called on a cache hit whose repo or path differs
  * from the cached payload's. The pack recomputes every path-derived field —
@@ -293,7 +306,13 @@ export interface LanguagePack {
     repo_name: string,
     path: string,
     content: string,
+    options: PackOptions,
   ): PackResult | Promise<PackResult>;
-  compose?(results: readonly PerFileResult[]): PackPatch | Promise<PackPatch>;
-  rePath?(result: PerFileResult, repo: string, path: string): PerFileResult;
+  compose?(results: readonly PerFileResult[], options: PackOptions): PackPatch;
+  rePath?(
+    result: PerFileResult,
+    repo: string,
+    path: string,
+    options: PackOptions,
+  ): PerFileResult;
 }
