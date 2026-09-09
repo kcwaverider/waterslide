@@ -12,7 +12,11 @@ import {
   tierConfigHash,
   type WaterslideConfig,
 } from "./config.js";
-import { assignTiers, fillParents, markInfrastructure } from "./derive.js";
+import {
+  assignTiers,
+  completeHierarchy,
+  markInfrastructure,
+} from "./derive.js";
 import {
   captureRepoState,
   discoverWithStats,
@@ -93,8 +97,11 @@ export async function parseSources(input: ParseSourcesInput): Promise<Corpus> {
   const merged = mergeNodes(composed.files, composed.additions);
   const schemasMerged = mergeSchemas(composed.files, composed.additions);
 
-  const nodes = fillParents(
-    markInfrastructure(assignTiers(merged.nodes, config), config),
+  // Hierarchy first: minted directory nodes must exist before tiers are
+  // assigned, or a config glob could never reach them.
+  const nodes = markInfrastructure(
+    assignTiers(completeHierarchy(merged.nodes), config),
+    config,
   );
   const edges: EdgeOrigin[] = [];
   const provides: ProvideOrigin[] = [];

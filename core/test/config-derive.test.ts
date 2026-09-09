@@ -7,7 +7,7 @@ import {
 } from "../src/pipeline/config.js";
 import {
   assignTiers,
-  fillParents,
+  completeHierarchy,
   markInfrastructure,
   nodeIdPath,
 } from "../src/pipeline/derive.js";
@@ -204,22 +204,156 @@ describe("stage 5: infrastructure (persisted-files §3.2, policy §5)", () => {
 });
 
 describe("stage 5: parents (graph model §2.3)", () => {
-  it("fills a null parent with the module node when it exists, and only then", () => {
-    const nodes = [
+  const parentsOf = (out: Node[]): Record<string, string | null> =>
+    Object.fromEntries(out.map((n) => [n.id, n.parent]));
+
+  it("fills a null parent on a # node with the module node when it exists, and only then", () => {
+    const out = completeHierarchy([
       node("r:a.py#f"),
       node("r:a.py", { kind: "module" }),
       node("r:b.py#g"),
       node("r:a.py#h", { parent: "svc:x" }),
       node("svc:x", { kind: "service" }),
-    ];
-    const out = fillParents(nodes);
-    expect(out.map((n) => n.parent)).toEqual([
-      "r:a.py",
-      null,
-      null,
-      "svc:x",
-      null,
     ]);
+    expect(parentsOf(out)).toEqual({
+      "r:a.py#f": "r:a.py",
+      "r:a.py": "svc:r",
+      "r:b.py#g": null, // no module node, so nothing to hang it on
+      "r:a.py#h": "svc:x", // pack-set parents win
+      "svc:x": null,
+      "svc:r": null,
+    });
+  });
+
+  it("mints one module node per directory level and a service node for the repo root", () => {
+    const out = completeHierarchy([
+      node("myrepo:server/api/endpoints/memory.py#get", { kind: "endpoint" }),
+      node("myrepo:server/api/endpoints/memory.py", { kind: "module" }),
+      node("myrepo:server/api/deps.py", { kind: "module" }),
+      node("myrepo:server/main.py", { kind: "module" }),
+    ]);
+    expect(parentsOf(out)).toEqual({
+      "myrepo:server/api/endpoints/memory.py#get":
+        "myrepo:server/api/endpoints/memory.py",
+      "myrepo:server/api/endpoints/memory.py": "myrepo:server/api/endpoints",
+      "myrepo:server/api/endpoints": "myrepo:server/api",
+      "myrepo:server/api/deps.py": "myrepo:server/api",
+      "myrepo:server/api": "myrepo:server",
+      "myrepo:server/main.py": "myrepo:server",
+      "myrepo:server": "svc:myrepo",
+      "svc:myrepo": null,
+    });
+    const dir = out.find((n) => n.id === "myrepo:server/api/endpoints");
+    expect(dir).toMatchObject({
+      kind: "module",
+      label: "endpoints",
+      tier: "domain",
+      sources: [],
+      confidence: "certain",
+      confidence_reason: null,
+      is_entry_point: false,
+      entry_point_kind: null,
+      is_infrastructure: false,
+      tags: [],
+    });
+    expect(out.find((n) => n.id === "svc:myrepo")).toMatchObject({
+      kind: "service",
+      label: "myrepo",
+      tier: "domain",
+      sources: [],
+    });
+  });
+
+  it("collapses a directory whose only child is one directory", () => {
+    const out = completeHierarchy([
+      node("r:iOS/App/App/Views/Home.swift", { kind: "module" }),
+      node("r:iOS/App/App/Models/Note.swift", { kind: "module" }),
+      node("r:iOS/App/App/Main.swift", { kind: "module" }),
+      node("r:server/main.py", { kind: "module" }),
+    ]);
+    expect(parentsOf(out)).toEqual({
+      "r:iOS/App/App/Views/Home.swift": "r:iOS/App/App/Views",
+      "r:iOS/App/App/Models/Note.swift": "r:iOS/App/App/Models",
+      "r:iOS/App/App/Main.swift": "r:iOS/App/App",
+      "r:iOS/App/App/Views": "r:iOS/App/App",
+      "r:iOS/App/App/Models": "r:iOS/App/App",
+      "r:iOS/App/App": "svc:r", // iOS and iOS/App carried nothing
+      "r:server/main.py": "r:server", // one child, but a file: kept
+      "r:server": "svc:r",
+      "svc:r": null,
+    });
+    expect(out.find((n) => n.id === "r:iOS/App/App")?.label).toBe("App");
+    expect(out.some((n) => n.id === "r:iOS")).toBe(false);
+    expect(out.some((n) => n.id === "r:iOS/App")).toBe(false);
+  });
+
+  it("leaves pack-set parents alone and never re-mints an id that exists", () => {
+    const out = completeHierarchy([
+      node("r:app/routes.py", { kind: "module", parent: "svc:ledger-api" }),
+      node("svc:ledger-api", { kind: "service" }),
+      node("r:lib/util.py", { kind: "module" }),
+      node("svc:r", { kind: "service", label: "from a pack", tier: "api" }),
+    ]);
+    expect(parentsOf(out)).toEqual({
+      "r:app/routes.py": "svc:ledger-api",
+      "svc:ledger-api": null,
+      "r:lib/util.py": "r:lib", // one child, but a file: kept
+      "r:lib": "svc:r",
+      "svc:r": null,
+    });
+    // A module a pack already parented contributes no directory nodes.
+    expect(out.some((n) => n.id === "r:app")).toBe(false);
+    expect(out.find((n) => n.id === "svc:r")).toMatchObject({
+      label: "from a pack",
+      tier: "api",
+    });
+  });
+
+  it("keeps synthetic and fixed-scope nodes parentless", () => {
+    const out = completeHierarchy([
+      node("mongo:db.notes", { kind: "collection", tier: "store" }),
+      node("ext:cohere/embed", { kind: "external_service", tier: "external" }),
+      node("unknown:symbol:x", {
+        kind: "unknown",
+        confidence: "inferred",
+        confidence_reason: "r",
+      }),
+    ]);
+    expect(out.every((n) => n.parent === null)).toBe(true);
+    expect(out).toHaveLength(3);
+  });
+
+  it("is a tree that terminates at a null root, from any input order", () => {
+    const base = [
+      node("r:a/b/c/d.py#f"),
+      node("r:a/b/c/d.py", { kind: "module" }),
+      node("r:a/b/e.py", { kind: "module" }),
+      node("r:x.py", { kind: "module" }),
+      node("s:a/b/c/d.py", { kind: "module" }),
+      node("s:a/q/w.py", { kind: "module" }),
+    ];
+    const canonical = completeHierarchy(base);
+    const byId = new Map(canonical.map((n) => [n.id, n]));
+    for (const n of canonical) {
+      const seen = new Set<string>([n.id]);
+      let cursor: Node | undefined = n;
+      while (cursor !== undefined && cursor.parent !== null) {
+        expect(seen.has(cursor.parent)).toBe(false);
+        seen.add(cursor.parent);
+        cursor = byId.get(cursor.parent);
+        expect(cursor).toBeDefined();
+      }
+    }
+    expect(canonical.map((n) => n.id)).toEqual(
+      [...canonical.map((n) => n.id)].sort(),
+    );
+    const shuffled = [base[3], base[5], base[1], base[0], base[4], base[2]];
+    expect(JSON.stringify(completeHierarchy(shuffled as Node[]))).toBe(
+      JSON.stringify(canonical),
+    );
+    expect(JSON.stringify(completeHierarchy([...base].reverse()))).toBe(
+      JSON.stringify(canonical),
+    );
   });
 });
 

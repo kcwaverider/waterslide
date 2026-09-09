@@ -69,19 +69,26 @@ describe("stages 1–3 end to end", () => {
     for (const n of corpus.nodes)
       expect(NodeSchema.safeParse(n).success).toBe(true);
     expect(corpus.nodes.map((n) => n.id)).toEqual([
+      "client:App",
       "client:App/Sync.toy",
       "client:App/Sync.toy#sync",
+      "server:api",
       "server:api/notes.toy",
       "server:api/notes.toy#create",
       "server:api/notes.toy#list",
       "server:api/store.toy",
       "server:api/store.toy#find_all",
       "server:api/store.toy#save",
+      "svc:client",
+      "svc:server",
     ]);
-    // fillParents: functions hang off their module.
-    expect(corpus.nodes.find((n) => n.id.endsWith("#sync"))?.parent).toBe(
-      "client:App/Sync.toy",
-    );
+    // completeHierarchy: function → module → directory → repo root.
+    const parentOf = (id: string): string | null | undefined =>
+      corpus.nodes.find((n) => n.id === id)?.parent;
+    expect(parentOf("client:App/Sync.toy#sync")).toBe("client:App/Sync.toy");
+    expect(parentOf("client:App/Sync.toy")).toBe("client:App");
+    expect(parentOf("client:App")).toBe("svc:client");
+    expect(parentOf("svc:client")).toBeNull();
     // A route provide and an alias provide came through with their origin file.
     expect(
       corpus.provides.find((p) => p.provide.ref_kind === "http")?.provide.name,
