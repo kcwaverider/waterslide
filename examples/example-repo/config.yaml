@@ -1,0 +1,56 @@
+# waterslide config for ONE specific codebase: a monorepo called myrepo, which
+# holds a FastAPI backend under api/ and a SwiftUI client under ios/. It is a
+# worked example for a human reader, not a default and not a template. Nothing
+# in the tool loads this file from here.
+#
+# Empty config must produce the full map (01-scope.md, "Who reads the map").
+# Every value below is the user's choice: a tier assignment overrides the
+# default inferred from a node's kind, and an infrastructure marker is never
+# inferred. Delete any block and the map still renders; it just uses defaults.
+#
+# Shapes: tiers and infrastructure per 03-persisted-files.md §3.1 and §3.2;
+# the packs block per 05-parser-pipeline.md §3.3. Globs are repo-relative.
+#
+# Not here on purpose: capabilities, expected_middleware, policy, resolutions
+# and diagnostics. Those are M5 and nothing reads them yet.
+
+tiers:
+  order: [ui, ui_logic, api, domain, data_access, store]
+  external_column: right
+  assign:
+    # First match wins, so the client's more specific paths come first.
+    # SwiftUI client. Views draw; Services issue the HTTP requests that cross
+    # into the backend.
+    - { glob: "ios/Views/**", tier: ui }
+    - { glob: "ios/Services/**", tier: ui_logic }
+    # FastAPI backend. Routers are mounted from api/main.py with per-router
+    # prefixes; the router modules are the API tier, not main.py.
+    - { glob: "api/routers/**", tier: api }
+    - { glob: "api/services/**", tier: domain }
+    - { glob: "api/repositories/**", tier: data_access }
+
+# Sets is_infrastructure: true, which makes these nodes eligible for
+# middleware collapse. Never inferred, always declared. api/deps/auth.py holds
+# the auth dependency that every protected route takes via Depends();
+# api/middleware/ holds the ASGI middleware. api/main.py is deliberately not
+# listed: it adds middleware, but it also mounts every router, and collapsing
+# it would hide the mounts.
+infrastructure:
+  - { glob: "api/middleware/**" }
+  - { glob: "api/deps/auth.py" }
+
+# Per-pack options, keyed by pack id. Only the Python pack takes options today;
+# the Swift pack has none, so it has no entry.
+packs:
+  python:
+    # Repo-relative Python import roots: the directories your imports are
+    # written relative to, i.e. what is on sys.path when the app runs. A file
+    # under api/ gets its module name relative to api/, so
+    # `from repositories.notes import NoteRepository` in a router resolves to
+    # api/repositories/notes.py. Without this, every module is named from the
+    # repo root and most call sites match nothing.
+    #
+    # A directory outside every root, say tools/, is still parsed but named
+    # from the repo root, e.g. tools.reindex. That is this codebase's choice;
+    # add "tools" here if that code should resolve as its own import tree.
+    source_roots: ["api"]

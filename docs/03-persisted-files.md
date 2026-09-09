@@ -53,8 +53,8 @@ only works if positions are shared and authoritative. Change state comes from
 {
   "schema_version": 1,
   "positions": {
-    "tapistree:api/routers/notes.py#update_note": { "x": 420, "y": null, "pinned": true },
-    "mongo:tapistree.notes":                      { "x": 380, "y": null, "pinned": false }
+    "myrepo:api/routers/notes.py#update_note": { "x": 420, "y": null, "pinned": true },
+    "mongo:myrepo.notes":                      { "x": 380, "y": null, "pinned": false }
   }
 }
 ```
@@ -212,8 +212,8 @@ context for whoever reads the map next.
 ```yaml
 # ILLUSTRATIVE ONLY
 manual_edges:
-  - from: "tapistree:api/workers/registry.py#register_all"
-    to:   "tapistree:api/workers/reindex.py#handle_reindex"
+  - from: "myrepo:api/workers/registry.py#register_all"
+    to:   "myrepo:api/workers/reindex.py#handle_reindex"
     kind: call
     reason: "handlers registered by directory scan at startup; no literal keys"
 
@@ -223,7 +223,7 @@ classifications:
     classification: [free_text, may_contain_pii]
 
 notes:
-  - node: "mongo:tapistree.embeddings"
+  - node: "mongo:myrepo.embeddings"
     text: "Vectors only. Source text lives in notes collection."
 ```
 

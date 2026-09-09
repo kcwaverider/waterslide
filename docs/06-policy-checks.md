@@ -149,7 +149,7 @@ capabilities:
       - { decorator: "api.deps.auth.authenticated" }
   - name: request_logging
     satisfied_by:
-      - { middleware_node: "tapistree:api/middleware/logging.py#LoggingMiddleware" }
+      - { middleware_node: "myrepo:api/middleware/logging.py#LoggingMiddleware" }
 ```
 
 The `middleware_node` matcher is the interesting one, because it's satisfied
@@ -214,10 +214,10 @@ expected_middleware:
     require: [auth, request_logging]
     severity: warn
     exempt:
-      - node: "tapistree:api/routers/health.py#healthz"
+      - node: "myrepo:api/routers/health.py#healthz"
         capability: "*"
         reason: "load balancer probe; must answer before any middleware initialises"
-      - node: "tapistree:api/routers/webhooks.py#stripe_webhook"
+      - node: "myrepo:api/routers/webhooks.py#stripe_webhook"
         capability: auth
         reason: "authenticated by signature verification, not session auth"
 ```
@@ -351,7 +351,7 @@ band_skip:
     max_bands: 1
     severity: warn
     exempt:
-      - subject: "tapistree:ios/Views/DebugView.swift#dumpAll"
+      - subject: "myrepo:ios/Views/DebugView.swift#dumpAll"
         reason: "debug-only screen, not shipped in release builds"
 ```
 
@@ -441,7 +441,7 @@ written, and shouldn't develop one.
   false-satisfying via a long unrelated path.
 - Egress: is per-field classification workable at scale, or does it need
   inheritance — classify a schema once, override per field? Depends on how many
-  schemas `tapistree` actually has.
+  schemas the reference codebase actually has.
 - Where do findings live between runs? Nowhere, currently — they recompute every
   parse, which is right. But "this finding is new since I last looked" would need
   them in `baseline.json`.

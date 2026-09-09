@@ -23,10 +23,10 @@ npm run build
 viewer. The CLI is not linked as a global command, so it is invoked through
 `node`. Point `parse` at a checkout of the codebase you want mapped. The name
 on the left of the `=` is the repo name that appears in node ids; the path is
-wherever that checkout lives on your machine. It is not part of this repo.
+wherever that checkout lives on your machine.
 
 ```sh
-node cli/dist/src/index.js parse <repo-name>=<path/to/checkout> \
+node cli/dist/src/index.js parse myrepo=/path/to/myrepo \
   --pack-option python.source_roots=<import-root>
 ```
 
@@ -42,10 +42,10 @@ directory that Python imports are written relative to, so that a call site's
 root, most Python call sites match nothing, and the resolved count drops
 sharply. The client-to-route join goes with it: an `include_router` mount is
 an import reference too, and when it fails to resolve its routes keep their
-local paths, so the client's full URLs match nothing. For a FastAPI app that
-lives under `server/`, the value is `server`; use whatever directory your own
-layout puts on `sys.path`. `examples/tapistree/config.yaml` shows the same
-value as a config block.
+local paths, so the client's full URLs match nothing. For a FastAPI app whose
+imports are written relative to `api/`, the value is `api`; use whatever
+directory your own layout puts on `sys.path`.
+`examples/example-repo/config.yaml` shows the same value as a config block.
 
 ```sh
 node cli/dist/src/index.js view --open
