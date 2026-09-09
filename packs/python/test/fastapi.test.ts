@@ -47,7 +47,7 @@ describe("FastAPI per-file recognizers (parser §8)", () => {
       id: "fx:server/api/endpoints/notes.py#router",
       kind: "class",
       tier: "domain",
-      tags: [],
+      tags: ["fastapi:router"],
       pack_data: { fastapi: { kind: "router", prefix: "/notes" } },
     });
     expect(notes?.provides).toContainEqual({
@@ -180,7 +180,7 @@ describe("FastAPI per-file recognizers (parser §8)", () => {
     const main = results.find((r) => r.path === "server/main.py")?.result;
     expect(main?.nodes.find((n) => n.id.endsWith("#app"))).toMatchObject({
       kind: "service",
-      tags: [],
+      tags: ["fastapi:app"],
       pack_data: { fastapi: { kind: "app", prefix: "" } },
     });
     expect(main?.nodes.find((n) => n.id.endsWith("#startup"))).toMatchObject({
@@ -326,8 +326,8 @@ describe("compose: cross-file prefix composition (decision items 1 and 2)", () =
       'from fastapi import FastAPI\nfrom elsewhere import ghost_router\napp = FastAPI()\napp.include_router(ghost_router, prefix="/g")\n',
     );
     const patch = pack.compose([
-      { repo: "r", path: "main.py", result: main },
-      { repo: "r", path: "orphan.py", result: orphan },
+      { repo: "r", path: "main.py", result: main, pack_data: null },
+      { repo: "r", path: "orphan.py", result: orphan, pack_data: null },
     ]);
     expect(patch.diagnostics.map((d) => d.code).sort()).toEqual([
       "router_not_mounted",

@@ -4,6 +4,7 @@ import type { PartialEdge } from "@waterslide/core";
 import { fixture, getPack } from "./support/pack.js";
 import { parseTree } from "./support/harness.js";
 import { assemble } from "./support/resolver.js";
+import { ordinalLimbViolations } from "./support/ordinals.js";
 
 const target = (e: PartialEdge): string =>
   typeof e.to === "string" ? e.to : e.to.value;
@@ -189,5 +190,7 @@ describe("branch detection and is_error_path (parser §6, data table)", () => {
       const distinct = [...new Set(ords)].sort((a, b) => a - b);
       expect(distinct).toEqual(distinct.map((_, i) => i));
     }
+    // A6 item 2: a shared ordinal always means one limb.
+    expect(ordinalLimbViolations(results)).toEqual([]);
   });
 });

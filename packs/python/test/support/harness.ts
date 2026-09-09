@@ -57,6 +57,7 @@ export function parseTree(
       readFileSync(join(root, path), "utf8"),
       options,
     ),
+    pack_data: null, // file-level pack scratch; this pack keeps none
   }));
 }
 

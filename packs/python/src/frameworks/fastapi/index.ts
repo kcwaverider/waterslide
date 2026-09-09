@@ -62,7 +62,9 @@ const HTTP_METHODS = new Set([
   "trace",
 ]);
 
-/** A route handler, for filtering. The only FastAPI tag that reaches the graph. */
+/** Framework roles, for filtering (tags are the user-facing filter channel). */
+export const TAG_APP = "fastapi:app";
+export const TAG_ROUTER = "fastapi:router";
 export const TAG_ROUTE = "fastapi:route";
 /** Display label of the router → handler edge. */
 export const LABEL_ROUTE = "route";
@@ -169,7 +171,7 @@ function emitRouterObjects(
       is_entry_point: false,
       entry_point_kind: null,
       is_infrastructure: false,
-      tags: [],
+      tags: [isApp ? TAG_APP : TAG_ROUTER],
       pack_data: fastapiData({ kind: isApp ? "app" : "router", prefix }),
     };
     em.addNode(node);

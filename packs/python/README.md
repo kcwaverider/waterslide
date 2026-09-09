@@ -52,8 +52,9 @@ Per file: the handler node becomes an `endpoint` entry point with the **local**
 decorator path in its label, a `route` edge links it to its router node, and
 each `include_router(...)` becomes a mount edge. The facts compose needs — a
 route's methods and local path, a router's own prefix, a mount's prefix — travel
-in `pack_data.fastapi` (typed by `FastApiPackDataSchema`), never in label text
-or tags; core strips `pack_data` after compose.
+in `pack_data.fastapi` (typed by `FastApiPackDataSchema`), never in label text;
+`fastapi:app`, `fastapi:router` and `fastapi:route` remain as filter tags. Core
+strips `pack_data` after compose.
 `compose(results, options)` then walks mounts from every `FastAPI()` app,
 resolves imported router names through the pack's own `provides` (alias chains
 included, PEP 562 `__getattr__` maps too), rewrites labels to the composed path,

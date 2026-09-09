@@ -6,6 +6,7 @@ import { formatUnresolved, summarizeUnresolved } from "../src/index.js";
 import { parseTree, shuffle, walkPython } from "./support/harness.js";
 import { getPack } from "./support/pack.js";
 import { assemble } from "./support/resolver.js";
+import { ordinalLimbViolations } from "./support/ordinals.js";
 
 const SERVER = { source_roots: ["server"] };
 
@@ -53,16 +54,13 @@ describe.skipIf(!present)("tapistree Python backend (M1 gate)", () => {
     );
     expect(failures).toEqual([]);
 
-    // Item 1: all invariants. TEMPORARY: the 2026-09-09 amendment drops
-    // invariant 15's uniqueness clause (edges from one alternative share an
-    // ordinal); until core's validator lands that change, only that code is
-    // tolerated here. Delete the filter when it does.
-    const errors = assembled.validation.ok
-      ? []
-      : assembled.validation.errors.filter(
-          (e) => e.code !== "E_BRANCH_ORDINAL_DUPLICATE",
-        );
-    expect(errors, JSON.stringify(errors.slice(0, 5), null, 2)).toEqual([]);
+    // Item 1: all invariants, invariant 15 in its contiguity form included.
+    expect(
+      assembled.validation.ok,
+      JSON.stringify(assembled.validation.errors?.slice(0, 5), null, 2),
+    ).toBe(true);
+    // Item 2 of A6: edges sharing an ordinal come from one limb.
+    expect(ordinalLimbViolations(results)).toEqual([]);
 
     // Item 3: every route, against the hand count.
     const routes = assembled.graph.nodes.filter(

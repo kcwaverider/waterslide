@@ -232,6 +232,18 @@ export class Emitter {
         line_start: lineStart(at),
         line_end: lineEnd(at),
       },
+      // Which limb this edge came from, so the suite can check that edges
+      // sharing an ordinal share a limb (A6 item 2). Pack-private; core strips it.
+      ...(limb
+        ? {
+            pack_data: {
+              python: {
+                limb: limb.index,
+                branch_line: lineStart(limb.statement),
+              },
+            },
+          }
+        : {}),
     };
     this.edges.push({ edge, limb, fixed });
   }
