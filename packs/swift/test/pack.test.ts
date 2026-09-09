@@ -747,6 +747,49 @@ describe("protocol requirements, dispatch fan-out and closure slots (item 2)", (
   });
 });
 
+describe("review of #24: Self in extensions, cross-file static properties, table validation", () => {
+  it("resolves a static call through `Self` inside a cross-file extension", async () => {
+    const decl = `struct Config {\n  static func probe(_ s: String) -> Bool { true }\n}\n`;
+    const ext = `extension Config {\n  func detect() { _ = Self.probe("x") }\n}\n`;
+    const results = [
+      await fileResult("r", "Config.swift", decl),
+      await fileResult("r", "Config+Detect.swift", ext),
+    ];
+    const merged = applyPatch(results, compose(results));
+    const e = merged.edges.find(
+      (x) => x.from === "r:Config+Detect.swift#Config.detect",
+    );
+    expect(e).toBeDefined();
+    expect(typeof e?.to === "string" ? e?.to : e?.to.value).toMatch(
+      /Config\.probe$/,
+    );
+  });
+
+  it("resolves a call through a static property declared in another file's extension of an in-file type", async () => {
+    const a = `final class Svc {\n  func run() {}\n  func go() { Svc.shared.run() }\n}\n`;
+    const b = `extension Svc {\n  static let shared = Svc()\n}\n`;
+    const results = [
+      await fileResult("r", "Svc.swift", a),
+      await fileResult("r", "Svc+Shared.swift", b),
+    ];
+    const merged = applyPatch(results, compose(results));
+    const e = merged.edges.find((x) => x.from === "r:Svc.swift#Svc.go");
+    expect(e).toBeDefined();
+    expect(typeof e?.to === "string" ? e?.to : e?.to.value).toMatch(
+      /Svc\.run$/,
+    );
+  });
+
+  it("still does not guess when the static member is declared nowhere", async () => {
+    const a = `final class Svc {\n  func run() {}\n  func go() { Svc.mystery.run() }\n}\n`;
+    const results = [await fileResult("r", "Svc.swift", a)];
+    const merged = applyPatch(results, compose(results));
+    expect(merged.edges.some((x) => x.from === "r:Svc.swift#Svc.go")).toBe(
+      false,
+    );
+  });
+});
+
 describe("rePath (amendment B3)", () => {
   it("recomputes every path-derived field and nothing else", async () => {
     const before = await fileResult("k", "Old/Kitchen.swift", kitchen);

@@ -109,10 +109,12 @@ interface RepoIndex {
   schemaByType: Map<string, string>;
 }
 
+/** Index key for a function: `${type}#${member}`, empty type for top level. */
 function fkey(type: string | null, member: string): string {
   return `${type ?? ""}#${member}`;
 }
 
+/** One index per repo over every file with state: types, functions, extension properties and conformances, node kinds, schema ids. */
 function buildIndex(
   files: readonly FileWithState[],
   diagnostics: Diagnostic[],
@@ -168,6 +170,7 @@ function buildIndex(
   return repos;
 }
 
+/** The repo index as the FactsIndex the URL helper walk consumes. */
 function factsIndex(idx: RepoIndex): FactsIndex {
   return {
     functions: (typeName, member) =>
@@ -235,6 +238,7 @@ function resolveChain(c: Candidate, idx: RepoIndex): Resolved | null {
   return { type_name: cur, form, reason };
 }
 
+/** Schema id for a Codable type name declared in this repo, or null. */
 function schemaFor(
   idx: RepoIndex,
   typeName: string | null | undefined,
@@ -243,6 +247,7 @@ function schemaFor(
   return idx.schemaByType.get(typeName) ?? null;
 }
 
+/** The type passed to `JSONEncoder().encode(...)` anywhere in the arguments, for the request schema. */
 function encodedType(args: Candidate["args"]): string | null {
   const walk = (v: ArgValue): string | null => {
     if (v.kind === "encoded") return v.type_name ?? null;
@@ -259,10 +264,12 @@ function encodedType(args: Candidate["args"]): string | null {
   return null;
 }
 
+/** The contract-facing cross-file pass; `composeWithReport` also returns the coverage figures. */
 export function compose(results: readonly PerFileResult[]): PackPatch {
   return composeWithReport(results).patch;
 }
 
+/** Run the cross-file pass and return the patch plus the figures the summary prints. */
 export function composeWithReport(results: readonly PerFileResult[]): {
   patch: PackPatch;
   report: ComposeReport;
@@ -649,6 +656,7 @@ function isNoise(fact: TypeFact, idx: RepoIndex, member: string): boolean {
   return isStdlibSequenceMember(member);
 }
 
+/** A candidate as a symbol-ref edge, downgraded to inferred when the receiver chain needed an assumption. */
 function symbolEdge(
   c: Candidate,
   value: string,
@@ -678,6 +686,7 @@ function symbolEdge(
   return e;
 }
 
+/** Resolve a candidate through its callees into an http edge, or null when no callee builds a URL from the arguments. */
 function tryHttp(
   callees: FunctionFact[],
   c: Candidate,

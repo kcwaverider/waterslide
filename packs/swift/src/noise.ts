@@ -5,23 +5,42 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { z } from "zod";
 import { packRoot } from "./parser.js";
 import type { TypeRef } from "./tree.js";
 
-interface NoiseTable {
-  collection_wrappers: Record<string, string>;
-  synthesized_static_members: Record<string, string>;
-  view_like_conformances: { names: string[] };
-  view_modifiers: { names: string[] };
-  stdlib_sequence_members: { names: string[] };
-}
+const NameList = z.object({ names: z.array(z.string()) });
+const NoiseTableSchema = z.object({
+  collection_wrappers: z.record(z.string(), z.string()),
+  synthesized_static_members: z.record(z.string(), z.string()),
+  view_like_conformances: NameList,
+  view_modifiers: NameList,
+  stdlib_sequence_members: NameList,
+});
+type NoiseTable = z.infer<typeof NoiseTableSchema>;
 
 let table: NoiseTable | null = null;
+
+/**
+ * Load and validate the table once. A malformed table is a pack packaging
+ * error and is reported by name; the per-file pass turns the throw into a
+ * `recognizer_failure` diagnostic rather than a TypeError deep in a lookup.
+ */
 function noise(): NoiseTable {
   if (table === null) {
-    table = JSON.parse(
-      readFileSync(join(packRoot(), "data", "noise.json"), "utf8"),
-    ) as NoiseTable;
+    const path = join(packRoot(), "data", "noise.json");
+    const parsed = NoiseTableSchema.safeParse(
+      JSON.parse(readFileSync(path, "utf8")),
+    );
+    if (!parsed.success) {
+      throw new Error(
+        `swift pack: ${path} does not match the noise table schema: ${parsed.error.issues
+          .slice(0, 3)
+          .map((i) => `${i.path.join(".")}: ${i.message}`)
+          .join("; ")}`,
+      );
+    }
+    table = parsed.data;
   }
   return table;
 }
@@ -48,15 +67,18 @@ export function synthesizedStaticType(member: string): string | null {
   return t === undefined || member.startsWith("$") ? null : t;
 }
 
+/** Whether these conformances make a type a SwiftUI view, per the table. */
 export function isViewLike(conformances: readonly string[]): boolean {
   const names = noise().view_like_conformances.names;
   return conformances.some((c) => names.includes(c));
 }
 
+/** Whether `member` is a SwiftUI View-extension modifier, per the table. */
 export function isViewModifier(member: string): boolean {
   return noise().view_modifiers.names.includes(member);
 }
 
+/** Whether `member` is a Standard Library sequence or collection operation, per the table. */
 export function isStdlibSequenceMember(member: string): boolean {
   return noise().stdlib_sequence_members.names.includes(member);
 }

@@ -42,6 +42,7 @@ import {
 const DECLARATION_KEYWORDS = ["class", "struct", "enum", "actor", "extension"];
 const CODABLE = new Set(["Codable", "Decodable", "Encodable"]);
 
+/** A node's source span with core's span hash. */
 export function span(ctx: FileContext, n: Node): SourceSpan {
   return {
     repo: ctx.repo,
@@ -52,12 +53,14 @@ export function span(ctx: FileContext, n: Node): SourceSpan {
   };
 }
 
+/** The modifier tokens on a declaration. */
 function modifierTexts(decl: Node): string[] {
   const mods = firstChildOfType(decl, "modifiers");
   if (mods === null) return [];
   return mods.children.filter((c): c is Node => c !== null).map((c) => c.text);
 }
 
+/** The access-level modifier on a declaration, ignoring `private(set)`-style setter modifiers. */
 export function visibilityModifier(decl: Node): string | null {
   const mods = firstChildOfType(decl, "modifiers");
   if (mods === null) return null;
@@ -67,10 +70,12 @@ export function visibilityModifier(decl: Node): string | null {
   return null;
 }
 
+/** Whether a declaration is `static` or `class`. */
 function isStatic(decl: Node): boolean {
   return modifierTexts(decl).some((t) => t === "static" || t === "class");
 }
 
+/** Whether a declaration carries `@name`. */
 function hasAttribute(decl: Node, name: string): boolean {
   const mods = firstChildOfType(decl, "modifiers");
   if (mods === null) return false;
@@ -79,6 +84,7 @@ function hasAttribute(decl: Node, name: string): boolean {
   );
 }
 
+/** The inherited or adopted type names on a declaration. */
 function conformancesOf(decl: Node): string[] {
   const out: string[] = [];
   for (const spec of childrenOfType(decl, "inheritance_specifier")) {
@@ -89,6 +95,7 @@ function conformancesOf(decl: Node): string[] {
   return out;
 }
 
+/** A function's return type, when written. */
 function returnTypeOf(decl: Node): TypeRef | null {
   // Both the name and the return type sit under the `name` field; the return
   // type is the child whose node kind is a type.
@@ -112,6 +119,7 @@ function functionNameOf(decl: Node): string {
   );
 }
 
+/** A function's parameters with their labels and types. */
 function paramsOf(decl: Node): Param[] {
   const out: Param[] = [];
   for (const p of childrenOfType(decl, "parameter")) {

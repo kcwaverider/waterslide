@@ -128,6 +128,7 @@ export interface FileContext {
   entry_point_refs: { type_name: string; member: string }[];
 }
 
+/** Append a diagnostic for this file (graph model §10 shape). */
 export function diag(
   ctx: FileContext,
   severity: Diagnostic["severity"],
@@ -168,6 +169,7 @@ export function typeAt(ctx: FileContext, n: Node): TypeDecl | null {
   return best;
 }
 
+/** Whether a syntax-error node lies inside `n`. */
 export function hasErrorInside(ctx: FileContext, n: Node): boolean {
   return ctx.errorNodes.some(
     (e) => n.startIndex <= e.startIndex && e.endIndex <= n.endIndex,

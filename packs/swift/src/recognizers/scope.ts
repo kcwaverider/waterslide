@@ -247,8 +247,16 @@ export function typeOfExpr(
       const name = expr.text;
       if (name === "self") return selfReceiver(ctx, expr, owner);
       if (name === "Self") {
+        // `Self` is the enclosing type in type form. The chain root must say
+        // so, or compose looks its static members up as instance members.
         const self = selfReceiver(ctx, expr, owner);
-        return self === null ? null : { ...self, form: "type" };
+        return self === null || self.type_name === null
+          ? null
+          : {
+              ...self,
+              form: "type",
+              chain: [{ kind: "type", name: self.type_name }],
+            };
       }
       const b = resolveBinding(ctx, name, expr, owner);
       if (b !== null) {
@@ -291,13 +299,20 @@ export function typeOfExpr(
               if (t !== null) return t;
             }
           }
-          // Undeclared static member on a type declared here: only a
-          // compiler-synthesized member has a knowable type. Anything else is
-          // an unknown receiver, never assumed to be a singleton instance.
+          // Not declared in this file's part of the type: a synthesized
+          // member has a knowable type; anything else may be declared in an
+          // extension in another file, so the chain is left for compose,
+          // which sees every file and still never assumes a singleton.
           const synthesized = synthesizedStaticType(member);
-          return synthesized === null
-            ? null
-            : instanceReceiver(ctx, synthesized);
+          if (synthesized !== null) return instanceReceiver(ctx, synthesized);
+          return {
+            type_name: null,
+            form: "instance",
+            chain: [...r.chain, { kind: "member", name: member }],
+            in_file: null,
+            certain: false,
+            reason: `receiver \`${expr.text}\` names static member \`${member}\` of ${r.type_name ?? "?"}, not declared in this file`,
+          };
         }
         return {
           type_name: r.type_name,

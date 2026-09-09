@@ -40,6 +40,7 @@ import {
 const EXCLUDED_DIRS =
   /^(Pods|DerivedData|\.build|build|Carthage|node_modules|\.git)$|Tests$/;
 
+/** Every .swift file under `root`, skipping tests, Pods and build output (parser §1.3). */
 export function discover(root: string): string[] {
   const out: string[] = [];
   const walk = (dir: string): void => {
@@ -83,6 +84,7 @@ export interface Assembled {
   report: ReturnType<typeof composeWithReport>["report"];
 }
 
+/** Compose, apply the patch, collapse edges per graph model §3.3 and assemble a canonical graph the validator can judge. */
 export function assemble(
   results: readonly PerFileResult[],
   repoName: string,
@@ -165,6 +167,7 @@ export function assemble(
   return { graph, merged, report };
 }
 
+/** The edge target: a node id, or a driver-minted `unknown` node for an UnresolvedRef (core does this at stage 4). */
 function resolveTo(
   pe: PartialEdge,
   standIns: Map<string, GraphNode>,
@@ -191,6 +194,7 @@ function resolveTo(
   return id;
 }
 
+/** HEAD of the repo at `dir`, or forty zeros when it is not a git checkout. */
 function gitCommit(dir: string): string {
   try {
     return execSync("git rev-parse HEAD", {
@@ -204,6 +208,7 @@ function gitCommit(dir: string): string {
   }
 }
 
+/** Parse a tree in sorted or seeded-shuffle discovery order and assemble the canonical bytes. */
 export async function runTree(
   repoName: string,
   root: string,
@@ -230,6 +235,7 @@ export async function runTree(
   return { assembled, bytes: serializeCanonical(assembled.graph), results };
 }
 
+/** CLI entry: parse, validate, print the summary and the canonical hash. */
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const opt = (name: string): string | null => {
