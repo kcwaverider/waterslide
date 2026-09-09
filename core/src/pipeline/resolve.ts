@@ -490,8 +490,23 @@ export function resolve(corpus: Corpus): ResolveOutput {
       }[];
       if (hits.length === 0) break;
       if (hits.some((x) => x.hit.matchedPrefixes > 1)) multi = true;
+      // A terminal rooted at a stdlib module name is dropped only if nothing in
+      // the repo provides the substituted name: a first-party package called
+      // `queue` or `email` is a real target, not the standard library.
+      const providedHere = (t: string): boolean =>
+        hits.some(
+          ({ n, hit }) =>
+            hit.terminals.includes(t) &&
+            lookupVisible(
+              "symbol",
+              `${t}${n.slice(hit.call.length)}`,
+              origin,
+            ).some((entry) => entry.targets.length > 0),
+        );
       const allTypes = [...new Set(hits.flatMap((x) => x.hit.terminals))];
-      const live = allTypes.filter((t) => !isStdlibRooted(t));
+      const live = allTypes.filter(
+        (t) => !isStdlibRooted(t) || providedHere(t),
+      );
       if (live.length === 0) return { kind: "stdlib", multi }; // the logger case
       chain.push({
         call: hits

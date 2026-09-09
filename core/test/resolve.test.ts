@@ -952,6 +952,38 @@ describe("stage 4: stdlib-rooted alias targets (C19 fix 1)", () => {
     );
   });
 
+  it("does not drop a first-party package whose root shares a stdlib module name", () => {
+    // A repo package literally called `queue`: `queue.manager.Manager.send` is
+    // provided, so a factory returning it is a real target, not the stdlib.
+    const send = node("api:queue/manager.py#Manager.send");
+    const Q: Origin = { repo: "api", path: "queue/manager.py" };
+    const r = resolve(
+      corpus({
+        nodes: [caller, send],
+        edges: [
+          ref(caller.id, sym("svc.get_q().send", 3), API),
+          // The real stdlib queue, by contrast, is dropped.
+          ref(caller.id, sym("svc.get_std_q().put", 4), API),
+        ],
+        provides: [
+          provide("svc.get_q()", null, STORE, {
+            alias_of: "queue.manager.Manager",
+          }),
+          provide("svc.get_std_q()", null, STORE, {
+            alias_of: "queue.Queue()",
+          }),
+          provide("queue.manager.Manager.send", send.id, Q),
+        ],
+      }),
+    );
+    expect(r.edges.map((e) => e.to)).toEqual([send.id]);
+    expect(r.stats).toMatchObject({
+      via_factory: 1,
+      stdlib_dropped: 1,
+      dangling: 0,
+    });
+  });
+
   it("with mixed stdlib and in-repo targets, keeps only the in-repo ones", () => {
     const t = node("api:svc/x.py#Thing.run");
     const r = resolve(
