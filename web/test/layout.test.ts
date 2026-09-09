@@ -1,7 +1,14 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { CanonicalGraph } from "@waterslide/core";
-import { BAND_ORDER, layoutGraph } from "../src/layout.js";
+import {
+  BAND_ORDER,
+  LAYOUT,
+  MAX_LINE_CHARS,
+  layoutGraph,
+  nodeSize,
+  wrapLabel,
+} from "../src/layout.js";
 import { buildViewerHtml, stripModuleSyntax } from "../src/index.js";
 
 const validDir = new URL("../../fixtures/valid/", import.meta.url);
@@ -74,6 +81,55 @@ describe("layered layout (UI §1)", () => {
   });
 });
 
+describe('labels (scope §"Who reads the map")', () => {
+  it("renders the whole label: nothing that fits two lines is ever cut", () => {
+    for (const f of fixtures)
+      for (const ln of layoutGraph(load(f)).nodes) {
+        expect(ln.lines.join(" ").replace(/\s+/g, "")).toBe(
+          ln.node.label.replace(/\s+/g, ""),
+        );
+        expect(ln.lines.length).toBeLessThanOrEqual(2);
+        for (const line of ln.lines)
+          expect(line.length).toBeLessThanOrEqual(MAX_LINE_CHARS);
+      }
+  });
+
+  it("the unknown node's label is legible on the map, not only on hover", () => {
+    const layout = layoutGraph(load("unknown-dangling-refs.json"));
+    const unknown = layout.nodes.find((n) => n.node.kind === "unknown");
+    expect(unknown?.lines).toEqual(["unresolved http /notes/{id}/archive"]);
+  });
+
+  it("wraps at a word or path boundary, two lines at most, ellipsis only past that", () => {
+    expect(wrapLabel("short", 10)).toEqual(["short"]);
+    expect(wrapLabel("unresolved http /notes/{id}/archive", 20)).toEqual([
+      "unresolved http",
+      "/notes/{id}/archive",
+    ]);
+    expect(wrapLabel("NoteRepository.save.something", 16)).toEqual([
+      "NoteRepository.",
+      "save.something",
+    ]);
+    expect(wrapLabel("abcdefghijklmnopqrstuvwxyz", 10)).toEqual([
+      "abcdefghij",
+      "klmnopqrs…",
+    ]);
+    expect(wrapLabel("a b c d e f g h i j k l m n o p q r s", 6)).toEqual([
+      "a b c",
+      "d e f…",
+    ]);
+  });
+
+  it("sizes a node to its label within the min and max widths", () => {
+    expect(nodeSize("x").w).toBe(LAYOUT.minNodeW);
+    const long = nodeSize("unresolved symbol memory_service.forget");
+    expect(long.w).toBeGreaterThan(LAYOUT.minNodeW);
+    expect(long.w).toBeLessThanOrEqual(LAYOUT.maxNodeW);
+    expect(long.h).toBe(LAYOUT.nodeH1);
+    expect(nodeSize("a".repeat(60)).h).toBe(LAYOUT.nodeH2);
+  });
+});
+
 describe("viewer page", () => {
   it("inlines d3, the layout, the renderer and the graph, with no module syntax left", () => {
     const html = buildViewerHtml(
@@ -82,6 +138,7 @@ describe("viewer page", () => {
     expect(html).toContain('<script id="graph" type="application/json">');
     expect(html).toContain("tapistree:api/routers/notes.py#update_note");
     expect(html).toContain("function layoutGraph(");
+    expect(html).toContain("function nodeStyle(");
     expect(html).toContain("function renderGraph(");
     expect(html).toContain("mountViewer();");
     expect(html).toMatch(/d3.*v7/);
@@ -118,11 +175,31 @@ describe("viewer page", () => {
     expect(html).not.toContain("</script><b>");
   });
 
-  it("stripModuleSyntax removes only module syntax", () => {
+  it("stripModuleSyntax removes only module syntax, multi-line imports included", () => {
     expect(
       stripModuleSyntax(
-        'import type { A } from "x";\nexport function f() {}\nexport const k = 1;\nconst z = "import x";\n',
+        'import type { A } from "x";\nimport {\n  a,\n  type B,\n} from "./y.js";\nexport function f() {}\nexport const k = 1;\nconst z = "import x";\nexport { k };\n',
       ),
     ).toBe('function f() {}\nconst k = 1;\nconst z = "import x";\n');
+  });
+
+  it("embeds the change-state map beside the graph, empty by default (the M3 seam)", () => {
+    const graph = readFileSync(new URL("derived-ids.json", validDir), "utf8");
+    expect(buildViewerHtml(graph)).toContain(
+      '<script id="change-state" type="application/json">{}</script>',
+    );
+    const html = buildViewerHtml(graph, {
+      changeState: { "ext:cohere/embed": "modified", "<x>": "new" },
+    });
+    const start = html.indexOf('<script id="change-state"');
+    const body = html.slice(
+      html.indexOf(">", start) + 1,
+      html.indexOf("</script>", start),
+    );
+    expect(body).not.toContain("<");
+    expect(JSON.parse(body)).toEqual({
+      "ext:cohere/embed": "modified",
+      "<x>": "new",
+    });
   });
 });

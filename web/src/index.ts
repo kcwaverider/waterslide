@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import * as nodePath from "node:path";
+import type { ChangeStateMap } from "./browser/encoding.js";
 
 /**
  * Node-side half of the viewer: builds one self-contained HTML page with D3,
@@ -8,27 +9,46 @@ import * as nodePath from "node:path";
  * page works from a file:// URL and also accepts a dropped graph.json.
  */
 
-export { BAND_ORDER, LAYOUT, layoutGraph } from "./layout.js";
+export {
+  BAND_ORDER,
+  LAYOUT,
+  MAX_LINE_CHARS,
+  layoutGraph,
+  nodeSize,
+  wrapLabel,
+} from "./layout.js";
 export type { Layout, LayoutBand, LayoutEdge, LayoutNode } from "./layout.js";
+export {
+  KIND_GROUP,
+  GROUP_HUE,
+  changeStateOf,
+  confidenceDash,
+  moreSignificant,
+  nodeStyle,
+} from "./browser/encoding.js";
+export type {
+  ChangeState,
+  ChangeStateMap,
+  KindGroup,
+  NodeStyle,
+} from "./browser/encoding.js";
 
 const require = createRequire(import.meta.url);
 
 /**
- * The two browser modules are compiled as ES modules but inlined as one
- * classic script, so their module syntax is removed: `import` lines vanish
- * (types and the layout import, both satisfied by inlining) and the `export`
- * keyword is stripped from declarations. Both files are written to make that
- * transformation safe: no runtime imports besides `./layout.js`, no default
- * exports, no re-exports.
+ * The browser modules are compiled as ES modules but inlined as one classic
+ * script, so their module syntax is removed: `import` statements vanish (types
+ * and the sibling modules, all satisfied by inlining) and the `export` keyword
+ * is stripped from declarations. The files are written to make that
+ * transformation safe: no runtime imports besides sibling browser modules, no
+ * default exports, no re-exports. An import statement may span lines, so it
+ * is matched as a statement — nothing inside one contains a semicolon.
  */
 export function stripModuleSyntax(source: string): string {
   return source
-    .split("\n")
-    .filter((line) => !/^import\s/.test(line) && !/^export \{/.test(line))
-    .map((line) =>
-      line.replace(/^export (const|function|interface|type|class|let) /, "$1 "),
-    )
-    .join("\n");
+    .replace(/^import\b[^;]*;[ \t]*\n?/gm, "")
+    .replace(/^export \{[^;]*;[ \t]*\n?/gm, "")
+    .replace(/^export (const|function|interface|type|class|let) /gm, "$1 ");
 }
 
 /**
@@ -51,6 +71,13 @@ function readBrowserModule(rel: string): string {
 
 export interface ViewerOptions {
   readonly title?: string;
+  /**
+   * Node id → change state, the M3 seam. `graph.json` never carries change
+   * state (graph model §9); it is computed against `baseline.json` and handed
+   * to the viewer here. Omitted, or missing an id, means `unchanged`
+   * (persisted-files §1.5, the no-baseline rule).
+   */
+  readonly changeState?: ChangeStateMap;
 }
 
 /** Builds the viewer page around `graphJson` (may be empty: the page then waits for a dropped file). */
@@ -62,12 +89,20 @@ export function buildViewerHtml(
   // resolved entry (src/index.js) to the package root instead.
   const d3Root = nodePath.dirname(nodePath.dirname(require.resolve("d3")));
   const d3 = readFileSync(nodePath.join(d3Root, "dist", "d3.min.js"), "utf8");
-  const layout = readBrowserModule("./layout.js");
-  const render = readBrowserModule("./browser/render.js");
+  // Inlined in dependency order: each module may use only what precedes it.
+  const modules = [
+    "./layout.js",
+    "./browser/encoding.js",
+    "./browser/render.js",
+  ].map(readBrowserModule);
   const title = options.title ?? "waterslide";
   // The HTML parser ends a script element at `</script` and honours `<!--`
   // inside script data; `\u003c` is a valid JSON escape, so neutralise every `<`.
   const safeJson = graphJson.replace(/</g, "\\u003c");
+  const safeChangeState = JSON.stringify(options.changeState ?? {}).replace(
+    /</g,
+    "\\u003c",
+  );
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -95,10 +130,10 @@ export function buildViewerHtml(
 </div>
 <div id="stage"></div>
 <script id="graph" type="application/json">${safeJson}</script>
+<script id="change-state" type="application/json">${safeChangeState}</script>
 <script>${d3}</script>
 <script>
-${layout}
-${render}
+${modules.join("\n")}
 </script>
 </body>
 </html>

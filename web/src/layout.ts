@@ -21,16 +21,78 @@ export const BAND_ORDER: readonly Tier[] = [
 ];
 
 export const LAYOUT = {
-  nodeW: 168,
-  nodeH: 34,
+  /** Estimated glyph advance at the page's 12px system font; there is no DOM to measure with. */
+  charW: 6.6,
+  padX: 12,
+  minNodeW: 120,
+  maxNodeW: 300,
+  /** One-line and two-line node heights. */
+  nodeH1: 34,
+  nodeH2: 48,
+  lineH: 15,
   gapX: 22,
   bandH: 120,
   bandPadX: 40,
   bandLabelW: 96,
-  externalW: 220,
+  externalW: 340,
   externalGapY: 14,
   minBandW: 640,
 } as const;
+
+/** Characters that fit on one line at `maxNodeW`. */
+export const MAX_LINE_CHARS = Math.floor(
+  (LAYOUT.maxNodeW - 2 * LAYOUT.padX) / LAYOUT.charW,
+);
+
+/**
+ * Scope §"Who reads the map": every node renders its full `label`. A label
+ * longer than one line wraps to two at a word or path boundary, and only a
+ * label longer than two lines is ever ellipsised. Deterministic, DOM-free.
+ */
+export function wrapLabel(
+  label: string,
+  maxChars: number = MAX_LINE_CHARS,
+): string[] {
+  if (label.length <= maxChars) return [label];
+  const first = breakAt(label, maxChars);
+  const rest = label.slice(first.length).trimStart();
+  if (rest.length <= maxChars) return [first.trimEnd(), rest];
+  return [first.trimEnd(), `${rest.slice(0, maxChars - 1)}…`];
+}
+
+/**
+ * The longest prefix of at most `maxChars` that ends at a natural break: the
+ * last space if there is one, else after the last path or symbol separator,
+ * else a hard cut. Spaces win so a path or dotted name stays whole.
+ */
+function breakAt(text: string, maxChars: number): string {
+  let space = -1;
+  let separator = -1;
+  for (let i = 0; i < maxChars && i < text.length; i++) {
+    const ch = text[i] as string;
+    if (ch === " ") space = i;
+    else if ("/._:-,(".includes(ch)) separator = i + 1;
+  }
+  const cut = space > 0 ? space : separator > 0 ? separator : maxChars;
+  return text.slice(0, cut);
+}
+
+export function nodeSize(label: string): {
+  lines: string[];
+  w: number;
+  h: number;
+} {
+  const lines = wrapLabel(label);
+  const chars = Math.max(...lines.map((l) => l.length));
+  const w = Math.min(
+    LAYOUT.maxNodeW,
+    Math.max(
+      LAYOUT.minNodeW,
+      Math.ceil(chars * LAYOUT.charW + 2 * LAYOUT.padX),
+    ),
+  );
+  return { lines, w, h: lines.length > 1 ? LAYOUT.nodeH2 : LAYOUT.nodeH1 };
+}
 
 export interface LayoutNode {
   readonly node: Node;
@@ -38,6 +100,8 @@ export interface LayoutNode {
   y: number;
   readonly w: number;
   readonly h: number;
+  /** The label, wrapped for display. Never the id. */
+  readonly lines: readonly string[];
   readonly external: boolean;
 }
 
@@ -132,18 +196,23 @@ export function layoutGraph(graph: {
   }
   sweep(external);
 
+  const size = new Map(nodes.map((n) => [n.id, nodeSize(n.label)] as const));
+  const sizeOf = (n: Node): ReturnType<typeof nodeSize> =>
+    size.get(n.id) as ReturnType<typeof nodeSize>;
+  const rowWidth = (band: readonly Node[]): number =>
+    band.reduce((s, n) => s + sizeOf(n).w, 0) +
+    Math.max(0, band.length - 1) * LAYOUT.gapX;
   const widest = Math.max(
     LAYOUT.minBandW,
-    ...inBand.map(
-      (b) => b.length * (LAYOUT.nodeW + LAYOUT.gapX) + LAYOUT.bandPadX * 2,
-    ),
+    ...inBand.map((b) => rowWidth(b) + LAYOUT.bandPadX * 2),
   );
   const externalX = LAYOUT.bandLabelW + widest + 40;
   const width = externalX + LAYOUT.externalW;
-  const height = Math.max(
-    BAND_ORDER.length * LAYOUT.bandH,
-    external.length * (LAYOUT.nodeH + LAYOUT.externalGapY) + 40,
+  const externalH = external.reduce(
+    (s, n) => s + sizeOf(n).h + LAYOUT.externalGapY,
+    0,
   );
+  const height = Math.max(BAND_ORDER.length * LAYOUT.bandH, externalH + 40);
 
   const placed: LayoutNode[] = [];
   const pos = new Map<string, LayoutNode>();
@@ -154,33 +223,39 @@ export function layoutGraph(graph: {
     count: (inBand[i] as Node[]).length,
   }));
   inBand.forEach((band, bi) => {
-    const rowW = band.length * (LAYOUT.nodeW + LAYOUT.gapX) - LAYOUT.gapX;
-    const x0 = LAYOUT.bandLabelW + (widest - rowW) / 2;
-    band.forEach((n, i) => {
+    let x = LAYOUT.bandLabelW + (widest - rowWidth(band)) / 2;
+    for (const n of band) {
+      const { lines, w, h } = sizeOf(n);
       const ln: LayoutNode = {
         node: n,
-        x: x0 + i * (LAYOUT.nodeW + LAYOUT.gapX),
-        y: bi * LAYOUT.bandH + (LAYOUT.bandH - LAYOUT.nodeH) / 2,
-        w: LAYOUT.nodeW,
-        h: LAYOUT.nodeH,
+        x,
+        y: bi * LAYOUT.bandH + (LAYOUT.bandH - h) / 2,
+        w,
+        h,
+        lines,
         external: false,
       };
       placed.push(ln);
       pos.set(n.id, ln);
-    });
+      x += w + LAYOUT.gapX;
+    }
   });
-  external.forEach((n, i) => {
+  let ey = 20;
+  for (const n of external) {
+    const { lines, w, h } = sizeOf(n);
     const ln: LayoutNode = {
       node: n,
       x: externalX + 20,
-      y: 20 + i * (LAYOUT.nodeH + LAYOUT.externalGapY),
-      w: LAYOUT.nodeW,
-      h: LAYOUT.nodeH,
+      y: ey,
+      w,
+      h,
+      lines,
       external: true,
     };
     placed.push(ln);
     pos.set(n.id, ln);
-  });
+    ey += h + LAYOUT.externalGapY;
+  }
 
   const edges: LayoutEdge[] = [];
   for (const e of [...graph.edges].sort((a, b) => byteCompare(a.id, b.id))) {

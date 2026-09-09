@@ -1,16 +1,20 @@
 import type * as D3 from "d3";
 import type { Edge, Node } from "@waterslide/core";
-import { layoutGraph, type Layout } from "../layout.js";
+import { layoutGraph, LAYOUT, type Layout } from "../layout.js";
+import {
+  changeStateOf,
+  confidenceDash,
+  nodeStyle,
+  type ChangeStateMap,
+} from "./encoding.js";
 
 /**
- * The crude renderer — handoff §6 item 8 and the M1 brief. Runs in the
- * browser as an inline script: `d3` is a global from the inlined UMD build and
- * `layoutGraph` is inlined ahead of this file. The graph is drawn once and
- * stays put (UI §0); pan and zoom are the only interaction.
+ * The renderer — UI spec §1, §3, §4 and §8. Runs in the browser as an inline
+ * script: `d3` is a global from the inlined UMD build; `layoutGraph` and the
+ * encoding module are inlined ahead of this file. The graph is drawn once and
+ * stays put (UI §0); pan and zoom move the picture, never the graph.
  *
- * Encoding is deliberately minimal: hue by kind group (UI §3.1), line style by
- * confidence (§3.3), red plus a marker for broken edges (§3.4), a badge count
- * on band-skipping edges (§1.5). Stage 4 makes it good.
+ * Every drawing block reads the layout, never the graph directly.
  */
 declare const d3: typeof D3;
 
@@ -21,40 +25,8 @@ interface GraphLike {
   readonly parsed_at?: string;
 }
 
-const HUE: Record<string, string> = {
-  ui_view: "#c65d9a",
-  ui_handler: "#c65d9a",
-  client_service: "#8a63c9",
-  endpoint: "#3b7dd8",
-  middleware: "#3b7dd8",
-  function: "#3f9a6e",
-  class: "#3f9a6e",
-  service: "#3f9a6e",
-  module: "#3f9a6e",
-  repository: "#d0862b",
-  collection: "#d0862b",
-  table: "#d0862b",
-  topic: "#d0862b",
-  external_service: "#b04a3b",
-  tombstone: "#8a8a8a",
-  unknown: "#8a8a8a",
-};
-
-function dash(confidence: string): string {
-  return confidence === "inferred"
-    ? "7 5"
-    : confidence === "annotated"
-      ? "2 4"
-      : "";
-}
-
-function shortLabel(n: Node): string {
-  const max = 24;
-  return n.label.length > max ? `${n.label.slice(0, max - 1)}…` : n.label;
-}
-
-function tooltip(n: Node): string {
-  const lines = [n.id, `${n.kind} · ${n.tier} · ${n.confidence}`];
+function tooltip(n: Node, state: string): string {
+  const lines = [n.label, `${n.kind} · ${n.tier} · ${n.confidence} · ${state}`];
   if (n.confidence_reason !== null) lines.push(n.confidence_reason);
   if (n.is_entry_point) lines.push(`entry point: ${n.entry_point_kind ?? ""}`);
   return lines.join("\n");
@@ -72,7 +44,11 @@ function edgeTooltip(e: Edge): string {
   return lines.join("\n");
 }
 
-export function renderGraph(root: HTMLElement, graph: GraphLike): Layout {
+export function renderGraph(
+  root: HTMLElement,
+  graph: GraphLike,
+  changeState: ChangeStateMap = {},
+): Layout {
   const layout = layoutGraph(graph);
   root.replaceChildren();
 
@@ -124,12 +100,12 @@ export function renderGraph(root: HTMLElement, graph: GraphLike): Layout {
     .attr("y", 0)
     .attr("width", layout.width - layout.externalX)
     .attr("height", layout.height)
-    .attr("fill", "#fbf1ef");
+    .attr("fill", "hsl(184 25% 95%)");
   bands
     .append("text")
     .attr("x", layout.externalX + 12)
     .attr("y", 14)
-    .attr("fill", "#7a3a30")
+    .attr("fill", "hsl(184 40% 28%)")
     .attr("font-weight", 600)
     .text("external");
 
@@ -143,7 +119,7 @@ export function renderGraph(root: HTMLElement, graph: GraphLike): Layout {
       .attr("fill", "none")
       .attr("stroke", e.is_broken ? "#c62828" : "#666")
       .attr("stroke-width", e.is_broken ? 2 : 1.4)
-      .attr("stroke-dasharray", dash(e.confidence))
+      .attr("stroke-dasharray", confidenceDash(e.confidence))
       .attr("marker-end", "url(#arrow)")
       .append("title")
       .text(edgeTooltip(e));
@@ -167,33 +143,54 @@ export function renderGraph(root: HTMLElement, graph: GraphLike): Layout {
     }
   }
 
-  // Nodes.
+  // Nodes — §3.1 hue, §3.2 saturation and outline. The full label, wrapped,
+  // never the id: the map has to be legible without hovering.
   const nodes = g.append("g").attr("class", "nodes");
   for (const ln of layout.nodes) {
     const n = ln.node;
-    const absent = n.kind === "unknown" || n.kind === "tombstone";
+    const state = changeStateOf(changeState, n.id);
+    const style = nodeStyle(n.kind, state);
     const box = nodes
       .append("g")
+      .attr("class", `node kind-${n.kind} state-${state}`)
       .attr("transform", `translate(${String(ln.x)},${String(ln.y)})`);
     box
       .append("rect")
       .attr("width", ln.w)
       .attr("height", ln.h)
       .attr("rx", 6)
-      .attr("fill", absent ? "#f4f4f4" : (HUE[n.kind] ?? "#999"))
-      .attr("fill-opacity", absent ? 1 : 0.9)
-      .attr("stroke", absent ? "#8a8a8a" : "#333")
-      .attr("stroke-dasharray", absent ? "4 3" : "")
-      .attr("stroke-width", n.is_entry_point ? 2.5 : 1);
-    box
+      .attr("fill", style.fill)
+      .attr("stroke", style.stroke)
+      .attr("stroke-dasharray", style.strokeDash)
+      .attr("stroke-width", style.strokeWidth);
+    if (style.doubleOutline) {
+      // §3.2: `new` is a second outline inside the first. Not dashed, ever.
+      box
+        .append("rect")
+        .attr("x", 3)
+        .attr("y", 3)
+        .attr("width", ln.w - 6)
+        .attr("height", ln.h - 6)
+        .attr("rx", 4)
+        .attr("fill", "none")
+        .attr("stroke", style.text)
+        .attr("stroke-width", 1);
+    }
+    const text = box
       .append("text")
       .attr("x", ln.w / 2)
-      .attr("y", ln.h / 2 + 4)
       .attr("text-anchor", "middle")
-      .attr("fill", absent ? "#555" : "#fff")
-      .attr("font-weight", n.is_entry_point ? 700 : 400)
-      .text(`${n.is_entry_point ? "▶ " : ""}${shortLabel(n)}`);
-    box.append("title").text(tooltip(n));
+      .attr("fill", style.text)
+      .attr("font-weight", n.is_entry_point ? 600 : 400);
+    const top = ln.h / 2 - ((ln.lines.length - 1) * LAYOUT.lineH) / 2 + 4;
+    ln.lines.forEach((line, i) => {
+      text
+        .append("tspan")
+        .attr("x", ln.w / 2)
+        .attr("y", top + i * LAYOUT.lineH)
+        .text(i === 0 && n.is_entry_point ? `▶ ${line}` : line);
+    });
+    box.append("title").text(tooltip(n, state));
   }
 
   // Pan and zoom. Zoom here is magnification of the drawn picture only; the
@@ -209,6 +206,26 @@ export function renderGraph(root: HTMLElement, graph: GraphLike): Layout {
   return layout;
 }
 
+/**
+ * The change-state seam (M3). The page carries an optional JSON map of node id
+ * to change state beside the graph; an empty or missing map is every node
+ * `unchanged`, which is persisted-files §1.5's no-baseline rule.
+ */
+function readChangeState(): ChangeStateMap {
+  const el = document.getElementById("change-state");
+  if (el === null || el.textContent === null) return {};
+  const text = el.textContent.trim();
+  if (text.length === 0) return {};
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return typeof parsed === "object" && parsed !== null
+      ? (parsed as ChangeStateMap)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 /** Wires the page: draws the embedded graph and accepts a dropped or picked graph.json. */
 export function mountViewer(): void {
   const stage = document.getElementById("stage");
@@ -216,10 +233,11 @@ export function mountViewer(): void {
   const input = document.getElementById("file") as HTMLInputElement | null;
   if (stage === null || status === null) return;
 
+  const changeState = readChangeState();
   const draw = (text: string, source: string): void => {
     try {
       const graph = JSON.parse(text) as GraphLike;
-      const layout = renderGraph(stage, graph);
+      const layout = renderGraph(stage, graph, changeState);
       const legend = `${String(graph.nodes.length)} nodes · ${String(graph.edges.length)} edges · ${String(layout.bands.filter((b) => b.count > 0).length)} bands used · ${String(layout.nodes.filter((n) => n.external).length)} external`;
       status.textContent = `${source} — ${legend}${graph.parsed_at === undefined ? "" : ` — parsed ${graph.parsed_at}`}`;
     } catch (e) {
