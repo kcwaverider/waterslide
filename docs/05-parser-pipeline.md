@@ -224,8 +224,9 @@ and `entry_point_kind` fields on a node, per graph model §2.
 | `compose` | `compose?(results: PerFileResult[], options: PackOptions): PackPatch` | Once per pack, after stage 3, over every file the pack claimed. **Synchronous**: async would invite concurrency inside it, and two awaits in parallel make the output order nondeterministic |
 | `rePath` | `rePath?(result: PerFileResult, repo, path, options: PackOptions): PerFileResult` | On a cache hit whose repo or path differs from the payload's (§2.1) |
 
-`PerFileResult` is `{ repo, path, result }` — one file's five returns plus where
-they came from.
+`PerFileResult` is `{ repo, path, result, pack_data }` — one file's five returns,
+where they came from, and the pack's file-level `pack_data` (below), lifted out
+of the parse return by core.
 
 **`compose` is a pack-level cross-file pass and is never cached.** It runs in
 full on every parse, cached files included, for the same reason stage 4 does
@@ -239,36 +240,46 @@ order. A `PackPatch` carries `nodes`, `edges`, `schemas`, `provides`,
 | Add nodes, edges, schemas, provides | Yes |
 | Add a source span to a node emitted by another file (`node_updates[].add_sources`) | Yes |
 | Set or overwrite `parent` | Yes |
-| Annotate `label`, `is_entry_point`, `entry_point_kind`, `tags` | Yes |
+| Annotate `label`, `kind`, `is_entry_point`, `entry_point_kind`, `tags` | Yes — `kind` is not identity, `id` is; a Swift type becomes `client_service` once any method issues an HTTP request, which only compose can see |
 | Change a node's id | **No** |
 | Remove a node | **No** |
 
 Core enforces the table rather than trusting the pack: a violating update is
-dropped with a `rejected_pack_patch` diagnostic.
+dropped with a `rejected_pack_patch` diagnostic. A renamed node breaks identity
+for every saved position and the baseline. In a `NodeUpdate` an absent key means
+"leave unchanged" — the one place graph model §2.5's always-present rule does
+not apply, because `parent: null` and `parent` absent mean different things.
 
 #### `pack_data`: from a pack's `parse` to its own `compose`
 
 A recognizer often needs to hand structured facts from its per-file pass to its
 compose pass — a route's method and local path, a mount's `include_router`
-prefix — and nothing above may carry them: `label` is human display text, not a
-data channel; edges have no `tags`; `provides` maps a name to a node, and a
-prefix is not a name; `hints` is read and validated by stage 4. So `Node` and
-`PartialEdge`, as a pack emits them, carry one more field:
+prefix, or a Swift extension's spans and helper bodies — and nothing above may
+carry them: `label` is human display text, not a data channel; edges have no
+`tags`; `provides` maps a name to a node, and a prefix is not a name; `hints` is
+read and validated by stage 4. So `pack_data` has three homes: on `Node` and
+`PartialEdge` as a pack emits them, and on the file as a whole:
 
-| Field | Type | Required | Meaning |
+| Home | Field | Required | Meaning |
 |---|---|---|---|
-| `pack_data` | object \| null | no | Pack-private scratch data. Written by `parse`, read by the **same** pack's `compose` only. Core never interprets it and one pack never reads another's |
+| `Node`, `PartialEdge` | `pack_data: object \| null` | no | Per-entity scratch data |
+| `PackResult` → `PerFileResult.pack_data` | `pack_data: object \| null` | on `PerFileResult`, yes (null when none) | Per-file scratch data: extension spans with hashes, helper bodies, cross-file call sites — anything the five returns cannot carry without re-reading source. Returned by `parse` as a sixth key; core lifts it beside `result` |
+
+All three are written by `parse` and consumed only by the **same** pack, through
+its `compose` or its `rePath`. Core never interprets them and one pack never
+reads another's.
 
 **Core strips it after compose runs, before derivation.** The key is deleted,
 not nulled: it does not reach stage 5, the validator, `graph.json` or the
 canonical graph, so it cannot affect byte-identity. It appears in neither
 `CanonicalGraph` nor `GraphArtifact`; it lives on the pack-facing types
-(`PackNode`, `PartialEdge`) alone. It is cached with the rest of a file's parse
-output, because compose runs over cached files too and would otherwise see
-different inputs on a warm run than on a cold one. A renamed node breaks identity
-for every saved position and the baseline. In a `NodeUpdate` an absent key means
-"leave unchanged" — the one place graph model §2.5's always-present rule does
-not apply, because `parent: null` and `parent` absent mean different things.
+(`PackNode`, `PartialEdge`, `PerFileResult`) alone. All three homes are cached
+with the rest of a file's parse output, because compose runs over cached files
+too and would otherwise see different inputs on a warm run than on a cold one;
+their freshness is the cache key's job. `rePath` receives and returns the whole
+`PerFileResult`, file-level `pack_data` included, since it may hold path-derived
+data; core treats file-level `pack_data` returned unchanged across a path change
+as suspicious, not fatal.
 
 ### 3.4 `provides`: why the fifth return exists
 

@@ -7,14 +7,16 @@ import { RefKindSchema, UNKNOWN_SCOPE, type RefKind } from "./model/enums.js";
  *
  * The separator is a colon, matching the scope separator, so the id splits
  * back into (scope, ref_kind, value) unambiguously. `encoded_value`
- * percent-encodes `:`, `/`, `%` and every code point below U+0020, after NFC
- * normalization; everything else stays literal. The encoding is canonical:
+ * percent-encodes `:`, `/`, `%`, the space and every code point below U+0020,
+ * after NFC normalization; everything else stays literal. The space is encoded
+ * because a literal space in an id is unquotable in a shell and ambiguous in a
+ * log line. The encoding is canonical:
  * exactly those characters are encoded, hex is uppercase, so one value has one
  * id. Ids are addresses; the node's `label` carries the readable form.
  */
 
-const NEEDS_ENCODING = /[:/%\x00-\x1f]/g;
-const ENCODED_TOKEN = /^(?:[^:/%\x00-\x1f]|%[0-9A-F]{2})+$/u;
+const NEEDS_ENCODING = /[:/% \x00-\x1f]/g;
+const ENCODED_TOKEN = /^(?:[^:/% \x00-\x1f]|%[0-9A-F]{2})+$/u;
 
 export function encodeUnknownValue(value: string): string {
   return value

@@ -246,7 +246,7 @@ describe("malformed fixtures", () => {
       E_TOMBSTONE_SOURCE: true,
       E_SOURCE_COUNT: true,
       E_BRANCH_ORDINAL: true,
-      E_BRANCH_ORDINAL_DUPLICATE: true,
+      E_BRANCH_ORDINAL_GAP: true,
       E_SKIPS_TIERS_EXCLUDED: true,
       E_UNKNOWN_NODE: true,
     };

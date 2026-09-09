@@ -75,6 +75,19 @@ describe("pack_data (parser §3.3)", () => {
     ).toBe(true);
   });
 
+  it("has a third home at file level, accepted on PackResult", () => {
+    expect(
+      PackResultSchema.safeParse({
+        nodes: [],
+        edges: [],
+        schemas: [],
+        provides: [],
+        diagnostics: [],
+        pack_data: { extension_spans: [] },
+      }).success,
+    ).toBe(true);
+  });
+
   it("is not a graph field: the graph model's Node rejects it", () => {
     expect(NodeSchema.safeParse(node).success).toBe(false);
     expect(CorePartialEdgeSchema.safeParse(edge).success).toBe(false);

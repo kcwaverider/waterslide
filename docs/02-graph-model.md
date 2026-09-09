@@ -66,9 +66,10 @@ Format: `{scope}:{locator}`
   non-empty; for `ext`, both sides of the `/`. For `unknown`, the locator is
   `{ref_kind}:{encoded_value}`: an `UnresolvedRef.ref_kind` (parser §3.6), a
   colon, then the ref's `value` NFC-normalized and then percent-encoded —
-  `:`, `/`, `%` and every code point below U+0020 become `%XX` with uppercase
-  hex, everything else stays literal. `/notes/{id}` becomes
-  `unknown:http:%2Fnotes%2F{id}`. The encoding is canonical, so one value has
+  `:`, `/`, `%`, the space and every code point below U+0020 become `%XX` with
+  uppercase hex, everything else stays literal. `GET /notes/{id}` becomes
+  `unknown:http:GET%20%2Fnotes%2F{id}`; a literal space in an id would be
+  unquotable in a shell and ambiguous in a log line. The encoding is canonical, so one value has
   one id and the id splits back into (scope, ref_kind, value) unambiguously;
   `core/` exports the encoder and decoder. Ugly on purpose: ids are addresses,
   and `label` carries the readable form. For repo-scoped ids the path is
@@ -364,12 +365,18 @@ otherwise exits early rather than continuing deeper into the system. Detected
 from the shape of the branch body, not from naming. Sole purpose is deprioritising
 the branch during default selection.
 
-**Default selection.** Within an `exclusive_group`, the animation picks the
-first edge under this **total ordering**, applied to every edge in the group:
+**Default selection.** Within an `exclusive_group`, the animation picks one
+**alternative** — one `branch_ordinal` — and every edge carrying that ordinal
+fires together, because they are the calls one limb makes. The pick is the
+first alternative under this **total ordering**, where an alternative's key is
+computed over its edges:
 
-1. `is_error_path: false` sorts before `is_error_path: true`.
-2. Then ascending `source.line_start`.
-3. Then ascending `source.path`, for a group spanning files.
+1. An alternative whose edges are not all `is_error_path: true` sorts before one
+   whose edges all are — the same rule §3.3 uses when collapsing call sites.
+2. Then ascending `source.line_start`, taking the minimum over the alternative's
+   edges.
+3. Then ascending `source.path`, likewise the minimum, for a group spanning
+   files.
 4. Then ascending `branch_ordinal`, as the final tie-breaker (§3.3).
 
 **Every edge carrying a non-null `exclusive_group` MUST have a non-null
@@ -379,10 +386,12 @@ invariants is in handoff §5.
 
 Steps 3 and 4 exist because steps 1 and 2 alone are not a total order. Two
 branches can share a line (a ternary, a one-line `guard ... else`), and
-`source.line_start` is not unique across files. `branch_ordinal` is unique within
-a group by construction, so step 4 always terminates. Without it the chosen
-branch would depend on array order, which depends on parse order, which breaks
-the determinism requirement.
+`source.line_start` is not unique across files. Each alternative has exactly one
+`branch_ordinal`, so step 4 always terminates. Without it the chosen branch
+would depend on array order, which depends on parse order, which breaks the
+determinism requirement. Two edges that share group, ordinal, line, path and
+error-path flag are not competing: they belong to one alternative and fan out
+within it, so no tie among them ever needs breaking.
 
 Because the ordering is total, the choice is fully determined by the graph and
 nothing about it is persisted — it recomputes identically every parse. Overriding
@@ -437,7 +446,9 @@ remove.
 
 **Fork edges are keyed differently.** Edges with a non-null `exclusive_group` are
 alternatives at one branch point and must stay distinct, so they are keyed by
-`from` + `to` + `kind` + `exclusive_group` + `branch_ordinal`.
+`from` + `to` + `kind` + `exclusive_group` + `branch_ordinal`. Because `to` is in
+the key, two edges from one limb to different targets have distinct ids while
+sharing an ordinal.
 
 `branch_ordinal` rather than a line number, because a line number is not unique
 within a group: `foo(1) if c else foo(2)` puts two alternatives on one line with
@@ -446,12 +457,17 @@ graph invalid.
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `branch_ordinal` | int \| null | yes | Position of this alternative within its `exclusive_group`, in source order, from 0. Non-null exactly when `exclusive_group` is non-null |
+| `branch_ordinal` | int \| null | yes | Zero-based position of the **alternative** this edge belongs to within its `exclusive_group`, in source order. Non-null exactly when `exclusive_group` is non-null |
 
 The pack assigns it while walking the branch — it already knows the order, so this
 costs nothing and avoids adding column tracking to every recognizer. It is
 derived from *source* order, not parse order, so the determinism rule in §1 is
-satisfied.
+satisfied. It numbers **alternatives, not edges**: every edge emitted from one
+limb carries that limb's ordinal, so values repeat within a group whenever a
+limb makes more than one call, and the ordinals present in a group run
+contiguously from 0 with no gaps (invariant 15). Numbering edges consecutively
+across limbs, or attaching the group to only one edge per limb, both misstate
+where the fork is.
 
 `branch_ordinal` also replaces `edge.id` as the final tie-breaker in §3.2's
 default-selection ordering, which is both cheaper and more meaningful.
@@ -470,7 +486,7 @@ map with false breakage.
 
 **Validator rules:** edge ids unique within a graph; `source == null` if and only
 if `source_count == 0`; `branch_ordinal` non-null exactly when `exclusive_group`
-is non-null.
+is non-null; within a group, the set of ordinals present is contiguous from 0.
 
 #### 3.3.1 Edge id encoding (normative)
 
