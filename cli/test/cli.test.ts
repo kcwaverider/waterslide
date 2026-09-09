@@ -332,6 +332,111 @@ describe("waterslide parse --infrastructure", () => {
   });
 });
 
+describe("waterslide parse --exclude / --include", () => {
+  const base = (): string[] => [
+    "parse",
+    `server=${root}/server`,
+    `client=${root}/client`,
+    "--pack",
+    TOY,
+    "--canonical",
+  ];
+  const graphText = (): string =>
+    readFileSync(path.join(root, ".waterslide", "graph.json"), "utf8");
+  const ids = (): string[] =>
+    (JSON.parse(graphText()) as { nodes: { id: string }[] }).nodes.map(
+      (n) => n.id,
+    );
+
+  it("is repo-qualified and repeatable, skips the files at discovery, reports the count, and reuses the cache", async () => {
+    const full = await waterslide(...base());
+    expect(full.code, full.stderr).toBe(0);
+    expect(full.stdout).toMatch(/3 files, 3 parsed, 0 from cache/);
+    expect(full.stdout).toContain("excluded 0 files by glob");
+    const fullBytes = graphText();
+    expect(ids()).toContain("server:api/store.toy#save");
+
+    const partial = await waterslide(
+      ...base(),
+      "--exclude",
+      "server:api/store.*",
+      "--exclude",
+      "client:App/**",
+    );
+    expect(partial.code, partial.stderr).toBe(0);
+    // Two files never looked up; the one that remains is a cache hit.
+    expect(partial.stdout).toMatch(/1 files, 0 parsed, 1 from cache/);
+    expect(partial.stdout).toContain("excluded 2 files by glob");
+    const partialIds = ids();
+    expect(partialIds.some((id) => id.startsWith("server:api/store.toy"))).toBe(
+      false,
+    );
+    expect(partialIds.some((id) => id.startsWith("client:"))).toBe(false);
+    expect(partialIds).toContain("server:api/notes.toy#create");
+    const partialBytes = graphText();
+    expect(partialBytes).not.toBe(fullBytes);
+
+    // Same excludes, same bytes; the exclude is in the same repo only.
+    const again = await waterslide(
+      ...base(),
+      "--exclude",
+      "server:api/store.*",
+      "--exclude",
+      "client:App/**",
+    );
+    expect(again.code, again.stderr).toBe(0);
+    expect(graphText()).toBe(partialBytes);
+
+    // An unqualified-looking glob in the other repo: nothing in client
+    // matches "api/**", so client is untouched and the count says so.
+    const other = await waterslide(...base(), "--exclude", "client:api/**");
+    expect(other.code, other.stderr).toBe(0);
+    expect(other.stdout).toContain("excluded 0 files by glob");
+    expect(graphText()).toBe(fullBytes);
+
+    // --include is applied before --exclude.
+    const included = await waterslide(
+      ...base(),
+      "--include",
+      "server:api/**",
+      "--exclude",
+      "server:api/store.*",
+    );
+    expect(included.code, included.stderr).toBe(0);
+    expect(included.stdout).toContain("excluded 1 file by glob");
+    expect(ids().some((id) => id.startsWith("server:api/store.toy"))).toBe(
+      false,
+    );
+    expect(ids()).toContain("client:App/Sync.toy#sync");
+  });
+
+  it("is loud about an unknown repo or a spec without <name>:<glob>", async () => {
+    const unknown = await waterslide(...base(), "--exclude", "nope:infra/**");
+    expect(unknown.code).toBe(1);
+    expect(unknown.stderr).toContain('no repo is named "nope"');
+    expect(unknown.stderr).toContain("repos: server, client");
+    const malformed = await waterslide(...base(), "--exclude", "infra/**");
+    expect(malformed.code).toBe(1);
+    expect(malformed.stderr).toContain("expected <name>:<glob>");
+    const empty = await waterslide(...base(), "--include", "server:");
+    expect(empty.code).toBe(1);
+    expect(empty.stderr).toContain("expected <name>:<glob>");
+    // A qualified glob must name exactly one repo: a duplicate name is a
+    // usage error here, not a stack trace from the pipeline.
+    const dup = await waterslide(
+      "parse",
+      `server=${root}/server`,
+      `server=${root}/client`,
+      "--pack",
+      TOY,
+      "--exclude",
+      "server:api/**",
+    );
+    expect(dup.code).toBe(1);
+    expect(dup.stderr).toContain('repo name "server" appears twice');
+  });
+});
+
 describe("malformed graph files", () => {
   it("validate and dump report not-valid-JSON with exit 2; view treats it as usage", async () => {
     writeFileSync(path.join(root, "bad.json"), "{ not json");

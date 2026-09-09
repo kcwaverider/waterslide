@@ -128,6 +128,16 @@ export function expandHome(p: string): string {
     : p;
 }
 
+/** What stage 1 left out on purpose, so the summary can say the map is deliberately partial. */
+export interface DiscoverStats {
+  /**
+   * Files a pack claims that the repo's own `include`/`exclude` globs
+   * (parser §1.1) removed. Files the built-in exclusions (§1.3) remove are
+   * not counted: they were never part of the map to begin with.
+   */
+  excluded_by_glob: number;
+}
+
 /**
  * Stage 1. Walks every repo, applies exclusions, keeps files a pack claims,
  * and returns them sorted by (repo, path) byte-wise — so the order the
@@ -137,29 +147,52 @@ export async function discover(
   repos: readonly RepoInput[],
   options: DiscoverOptions,
 ): Promise<DiscoveredFile[]> {
+  return (await discoverWithStats(repos, options)).files;
+}
+
+/** `discover`, plus the count of files the repo list's own globs excluded. */
+export async function discoverWithStats(
+  repos: readonly RepoInput[],
+  options: DiscoverOptions,
+): Promise<{ files: DiscoveredFile[]; stats: DiscoverStats }> {
   assertRepoList(repos);
   const out: DiscoveredFile[] = [];
+  const stats: DiscoverStats = { excluded_by_glob: 0 };
   for (const repo of repos) {
     const root = nodePath.resolve(expandHome(repo.path));
-    const excludes = [
+    const builtIn = [
       ...DEFAULT_EXCLUDE_GLOBS,
       ...(options.includeTests === true ? [] : TEST_EXCLUDE_GLOBS),
-      ...(repo.exclude ?? []),
     ];
-    const isExcluded = picomatch(excludes, { dot: true });
-    // Directory-shaped excludes ("**/node_modules/**") prune the walk itself,
-    // so a vendored tree is never read only to be discarded file by file.
+    const isBuiltInExcluded = picomatch(builtIn, { dot: true });
+    // Directory-shaped built-in excludes ("**/node_modules/**") prune the walk
+    // itself, so a vendored tree is never read only to be discarded file by
+    // file. The repo's OWN globs deliberately do not prune: the files under
+    // them are counted so the summary can report an honest number for the
+    // common directory form ("infra/stacks/**"). That costs a readdir of the
+    // excluded directory and nothing more — no file is opened, hashed or
+    // parsed.
     const isExcludedDir = picomatch(
-      excludes.filter((g) => g.endsWith("/**")).map((g) => g.slice(0, -3)),
+      builtIn.filter((g) => g.endsWith("/**")).map((g) => g.slice(0, -3)),
       { dot: true },
     );
+    const userExclude = repo.exclude ?? [];
+    const isUserExcluded =
+      userExclude.length === 0
+        ? (): boolean => false
+        : picomatch(userExclude, { dot: true });
     const isIncluded =
       repo.include === undefined || repo.include.length === 0
         ? (): boolean => true
         : picomatch(repo.include, { dot: true });
     await walk(root, "", isExcludedDir, (rel) => {
       if (!options.extensions.has(nodePath.posix.extname(rel))) return;
-      if (isExcluded(rel) || !isIncluded(rel)) return;
+      if (isBuiltInExcluded(rel)) return;
+      // §1.1: include is the allowlist, exclude the denylist applied after it.
+      if (!isIncluded(rel) || isUserExcluded(rel)) {
+        stats.excluded_by_glob += 1;
+        return;
+      }
       out.push({
         repo: repo.name,
         path: rel,
@@ -167,9 +200,10 @@ export async function discover(
       });
     });
   }
-  return out.sort(
+  out.sort(
     (a, b) => byteCompare(a.repo, b.repo) || byteCompare(a.path, b.path),
   );
+  return { files: out, stats };
 }
 
 async function walk(

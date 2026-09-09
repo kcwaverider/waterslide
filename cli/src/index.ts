@@ -42,6 +42,14 @@ const USAGE = `usage:
                            mark every node with a source span under this
                            repo-relative glob as infrastructure (repeatable).
                            Never inferred; absent means no node is marked.
+      --exclude <name>:<glob>
+                           skip files under a repo-relative glob in the named
+                           repo (repeatable). Applied at discovery: the files
+                           are never read, hashed or parsed. Quote the glob so
+                           the shell leaves "**" alone.
+      --include <name>:<glob>
+                           only parse files under this glob in the named repo
+                           (repeatable). Applied before --exclude.
       --quiet              print only the summary
   waterslide validate <graph.json> [--shape artifact|canonical]   (default artifact)
   waterslide dump [graph.json]                                   (default .waterslide/graph.json)
@@ -70,6 +78,8 @@ function parseArgs(argv: readonly string[]): Args {
       "pack",
       "pack-option",
       "infrastructure",
+      "exclude",
+      "include",
       "shape",
       "out",
     ].includes(name);
@@ -286,6 +296,50 @@ export function parseInfrastructure(
   });
 }
 
+/**
+ * `--exclude <name>:<glob>` and `--include <name>:<glob>`, repeatable. Unlike
+ * the tier and infrastructure globs these are REPO-QUALIFIED: an exclude that
+ * silently applied to every repo is the kind of thing found by noticing a
+ * missing subtree. Repo names contain no ":" (graph model §1), so the first
+ * colon is the split. The globs land on the repo list entry itself (parser
+ * §1.1), which is where config.yaml will put them too; flag beats config.
+ */
+export function applyRepoGlobs(
+  repos: readonly RepoInput[],
+  field: "include" | "exclude",
+  specs: readonly string[],
+): RepoInput[] {
+  // A qualified glob must name exactly one repo. Core's assertRepoList would
+  // reject the duplicate later anyway, but as a pipeline error with a stack
+  // trace; here it is the usage error it is.
+  const names = new Set<string>();
+  for (const repo of repos) {
+    if (names.has(repo.name))
+      throw new UsageError(
+        `repo name "${repo.name}" appears twice in the repo list`,
+      );
+    names.add(repo.name);
+  }
+  const byRepo = new Map<string, string[]>();
+  for (const spec of specs) {
+    const colon = spec.indexOf(":");
+    if (colon <= 0 || colon === spec.length - 1)
+      throw new UsageError(`--${field} ${spec}: expected <name>:<glob>`);
+    const name = spec.slice(0, colon);
+    const glob = spec.slice(colon + 1);
+    if (!repos.some((r) => r.name === name)) {
+      throw new UsageError(
+        `--${field} ${spec}: no repo is named "${name}" (repos: ${repos.map((r) => r.name).join(", ")})`,
+      );
+    }
+    byRepo.set(name, [...(byRepo.get(name) ?? []), glob]);
+  }
+  return repos.map((repo) => {
+    const globs = byRepo.get(repo.name);
+    return globs === undefined ? repo : { ...repo, [field]: globs };
+  });
+}
+
 function parseRepos(specs: readonly string[]): RepoInput[] {
   if (specs.length === 0)
     throw new UsageError("parse needs at least one <name=path>");
@@ -313,7 +367,15 @@ async function cmdParse(
   const stateDir = nodePath.resolve(flag(args, "state-dir") ?? ".waterslide");
   const quiet = flag(args, "quiet") === "true";
   const log = quiet ? (): void => undefined : err;
-  const repos = parseRepos(args.positional);
+  const repos = applyRepoGlobs(
+    applyRepoGlobs(
+      parseRepos(args.positional),
+      "include",
+      args.flags.get("include") ?? [],
+    ),
+    "exclude",
+    args.flags.get("exclude") ?? [],
+  );
   const loaded = await loadPacks(args.flags.get("pack") ?? [], log);
   const packs = loaded.map((l) => l.pack);
   if (packs.length === 0) {

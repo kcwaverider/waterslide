@@ -12,7 +12,7 @@ import { validate, type ValidationError } from "../validate.js";
 import type { ParseCache } from "./cache.js";
 import type { WaterslideConfig } from "./config.js";
 import { collapseEdges, finalizeEdges } from "./derive-edges.js";
-import type { RepoInput } from "./discover.js";
+import type { DiscoverStats, RepoInput } from "./discover.js";
 import { parseSources, type Corpus } from "./index.js";
 import { resolve, type ResolveStats } from "./resolve.js";
 import type { Stage3Stats } from "./stage3.js";
@@ -38,6 +38,8 @@ export interface RunOutput {
   readonly diagnostics: readonly Diagnostic[];
   readonly stage3: Stage3Stats;
   readonly resolution: ResolveStats;
+  /** Stage 1: files the repo list's own globs excluded. Summary-only; not in the artifact. */
+  readonly discovery: DiscoverStats;
 }
 
 /** Stages 1–5, assembled into the artifact shape. Pure apart from reading sources and the cache. */
@@ -79,6 +81,7 @@ export async function runPipeline(input: RunInput): Promise<RunOutput> {
     diagnostics,
     stage3: corpus.stats,
     resolution: resolved.stats,
+    discovery: corpus.discovery,
   };
 }
 
@@ -197,6 +200,13 @@ export function summarize(run: RunOutput): string {
   );
   lines.push(
     `parse: ${String(run.stage3.files)} files, ${String(run.stage3.parsed)} parsed, ${String(run.stage3.cache_hits)} from cache (${String(run.stage3.repathed)} re-pathed, ${String(run.stage3.repath_fallbacks)} re-parsed after a rejected rePath)`,
+  );
+  // Always printed, zero included: a zero says the map is complete, a missing
+  // line says nothing. A map that quietly drops a subtree is the failure the
+  // specs name repeatedly.
+  const excluded = run.discovery.excluded_by_glob;
+  lines.push(
+    `excluded ${String(excluded)} file${excluded === 1 ? "" : "s"} by glob`,
   );
   const r = run.resolution;
   lines.push(

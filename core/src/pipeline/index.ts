@@ -15,7 +15,8 @@ import {
 import { assignTiers, fillParents, markInfrastructure } from "./derive.js";
 import {
   captureRepoState,
-  discover,
+  discoverWithStats,
+  type DiscoverStats,
   type RepoInput,
   type RepoState,
 } from "./discover.js";
@@ -58,6 +59,8 @@ export interface Corpus {
   readonly provides: readonly ProvideOrigin[];
   readonly diagnostics: readonly Diagnostic[];
   readonly stats: Stage3Stats;
+  /** Stage 1: what the repo list's own globs left out, so the summary can say so. */
+  readonly discovery: DiscoverStats;
 }
 
 export interface ParseSourcesInput {
@@ -74,12 +77,13 @@ export async function parseSources(input: ParseSourcesInput): Promise<Corpus> {
   const registry = new PackRegistry(input.packs);
   const cache = input.cache ?? new NullParseCache();
 
-  const files = await discover(input.repos, {
+  const discovered = await discoverWithStats(input.repos, {
     extensions: registry.extensions,
     ...(config.include_tests === undefined
       ? {}
       : { includeTests: config.include_tests }),
   });
+  const files = discovered.files;
   const repos: RepoState[] = [];
   for (const repo of input.repos) repos.push(await captureRepoState(repo));
   repos.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
@@ -129,6 +133,7 @@ export async function parseSources(input: ParseSourcesInput): Promise<Corpus> {
     provides,
     diagnostics,
     stats: stage3.stats,
+    discovery: discovered.stats,
   };
 }
 

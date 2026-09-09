@@ -4,7 +4,7 @@ import type { CanonicalGraph } from "../src/model/graph.js";
 import { MemoryParseCache } from "../src/pipeline/cache.js";
 import type { WaterslideConfig } from "../src/pipeline/config.js";
 import { collapseEdges, finalizeEdges } from "../src/pipeline/derive-edges.js";
-import { discover } from "../src/pipeline/discover.js";
+import { discover, type RepoInput } from "../src/pipeline/discover.js";
 import { parseSources, type Corpus } from "../src/pipeline/index.js";
 import { resolve } from "../src/pipeline/resolve.js";
 import {
@@ -56,6 +56,14 @@ const repos = (): { name: string; path: string }[] => [
   { name: "client", path: `${tree.root}/client` },
 ];
 
+function fullIdIsSourced(
+  byId: Map<string, CanonicalGraph["nodes"][number]>,
+  id: string,
+): boolean {
+  const n = byId.get(id);
+  return n !== undefined && n.sources.length > 0;
+}
+
 function assemble(corpus: Corpus): CanonicalGraph {
   const r = resolve(corpus);
   const byId = new Map(r.nodes.map((n) => [n.id, n]));
@@ -72,9 +80,10 @@ function assemble(corpus: Corpus): CanonicalGraph {
 async function build(
   cache = new MemoryParseCache(),
   config: WaterslideConfig = {},
+  repoList: RepoInput[] = repos(),
 ): Promise<{ graph: CanonicalGraph; bytes: string; corpus: Corpus }> {
   const corpus = await parseSources({
-    repos: repos(),
+    repos: repoList,
     packs: [makeToyPack({ compose: true })],
     cache,
     config,
@@ -173,6 +182,92 @@ describe("stages 1–5 end to end", () => {
     );
     // Dropping the flag drops the marks; the cache was never poisoned.
     expect((await build(cache)).bytes).toBe(cold.bytes);
+  });
+
+  it("excludes at discovery: no cache lookup or write for the file, surviving entries still hit, and the exclude is reversible", async () => {
+    const cache = new MemoryParseCache();
+    // 1. Full run warms the cache: one entry per file.
+    const full = await build(cache);
+    expect(full.corpus.stats.parsed).toBe(3);
+    expect(full.corpus.discovery.excluded_by_glob).toBe(0);
+    expect(cache.size).toBe(3);
+
+    // 2. Exclude one file. It is never looked up or written; the other two
+    //    are hits; the cache is exactly as it was.
+    const excluded: RepoInput[] = [
+      { name: "server", path: `${tree.root}/server`, exclude: ["api/store.*"] },
+      { name: "client", path: `${tree.root}/client` },
+    ];
+    const partial = await build(cache, {}, excluded);
+    expect(partial.corpus.stats.files).toBe(2);
+    expect(partial.corpus.stats.parsed).toBe(0);
+    expect(partial.corpus.stats.cache_hits).toBe(2);
+    expect(partial.corpus.discovery.excluded_by_glob).toBe(1);
+    expect(cache.size).toBe(3);
+
+    // 3. Same exclude again: byte-identical, warm or cold.
+    expect((await build(cache, {}, excluded)).bytes).toBe(partial.bytes);
+    expect((await build(new MemoryParseCache(), {}, excluded)).bytes).toBe(
+      partial.bytes,
+    );
+
+    // 4. Drop the exclude: every file is a hit again and the bytes are the
+    //    full run's. Nothing was poisoned.
+    const restored = await build(cache);
+    expect(restored.corpus.stats.parsed).toBe(0);
+    expect(restored.corpus.stats.cache_hits).toBe(3);
+    expect(restored.bytes).toBe(full.bytes);
+  });
+
+  it("an excluded run is a strict subset on sourced nodes and surviving edges; dangling references become unknowns", async () => {
+    const full = await build();
+    const partial = await build(new MemoryParseCache(), {}, [
+      { name: "server", path: `${tree.root}/server`, exclude: ["api/store.*"] },
+      { name: "client", path: `${tree.root}/client` },
+    ]);
+    expect(partial.bytes).not.toBe(full.bytes);
+    expect(validate(JSON.parse(partial.bytes), { shape: "canonical" }).ok).toBe(
+      true,
+    );
+
+    // Every sourced node that survives is byte-for-byte the node the full run
+    // had: ids embed paths and nothing is renumbered or re-derived.
+    const fullById = new Map(full.graph.nodes.map((n) => [n.id, n]));
+    const sourced = partial.graph.nodes.filter((n) => n.sources.length > 0);
+    expect(sourced.length).toBeGreaterThan(0);
+    for (const n of sourced) expect(fullById.get(n.id)).toEqual(n);
+    // The excluded file's nodes are gone.
+    expect(
+      partial.graph.nodes.some((n) => n.id.startsWith("server:api/store.toy")),
+    ).toBe(false);
+    expect(
+      full.graph.nodes.some((n) => n.id === "server:api/store.toy#save"),
+    ).toBe(true);
+
+    // Edges between two nodes that both survive are identical.
+    const partialIds = new Set(partial.graph.nodes.map((n) => n.id));
+    const fullEdges = new Map(full.graph.edges.map((e) => [e.id, e]));
+    for (const e of partial.graph.edges) {
+      if (fullIdIsSourced(fullById, e.from) && fullIdIsSourced(fullById, e.to))
+        expect(fullEdges.get(e.id)).toEqual(e);
+    }
+    // Total node count need not shrink — here three store nodes leave and
+    // three unknowns arrive — but the sourced set strictly does.
+    expect(partialIds.size).toBeLessThanOrEqual(fullById.size);
+    expect(sourced.length).toBeLessThan(
+      full.graph.nodes.filter((n) => n.sources.length > 0).length,
+    );
+
+    // References into the excluded file now dangle: they resolve to unknown
+    // nodes that the full run did not need. Correct, not a violation.
+    const newUnknowns = partial.graph.nodes
+      .filter((n) => n.kind === "unknown" && !fullById.has(n.id))
+      .map((n) => n.id);
+    expect(newUnknowns).toContain("unknown:symbol:api.store.save");
+    // And no diagnostic mentions the excluded file: it was never parsed.
+    expect(
+      partial.corpus.diagnostics.some((d) => d.path === "api/store.toy"),
+    ).toBe(false);
   });
 
   it("is byte-identical across a warm run and across shuffled discovery order", async () => {
