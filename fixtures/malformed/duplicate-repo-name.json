@@ -7,6 +7,10 @@
       "commit": "0123456789abcdef0123456789abcdef01234567"
     },
     {
+      "name": "tapistree",
+      "commit": "0123456789abcdef0123456789abcdef01234567"
+    },
+    {
       "name": "tapistree-ios",
       "commit": "89abcdef0123456789abcdef0123456789abcdef"
     }

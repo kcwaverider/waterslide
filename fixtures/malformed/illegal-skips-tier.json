@@ -371,7 +371,9 @@
       "branch_ordinal": null,
       "is_broken": false,
       "broken_reason": null,
-      "skips_tiers": []
+      "skips_tiers": [
+        "basement"
+      ]
     },
     {
       "id": "e_fe04e8a748b5b8db",

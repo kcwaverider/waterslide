@@ -27,6 +27,20 @@
       "tags": []
     },
     {
+      "id": "ext:cohere/embed",
+      "kind": "external_service",
+      "label": "Cohere Embed",
+      "tier": "external",
+      "parent": null,
+      "sources": [],
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
       "id": "mongo:tapistree.notes",
       "kind": "collection",
       "label": "notes",

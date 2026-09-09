@@ -167,7 +167,7 @@
       ],
       "confidence": "certain",
       "confidence_reason": null,
-      "is_entry_point": true,
+      "is_entry_point": "yes",
       "entry_point_kind": "http_route",
       "is_infrastructure": false,
       "tags": [

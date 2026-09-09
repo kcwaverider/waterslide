@@ -76,7 +76,7 @@ solely to compute change state.
 |---|---|---|---|
 | `schema_version` | int | yes | Bump on breaking changes |
 | `captured_at` | ISO 8601 | yes | When the snapshot was taken |
-| `repos` | Repo[] | yes | Commit hash per repo at snapshot time |
+| `repos` | BaselineRepo[] | yes | `{ name, commit }` per repo at snapshot time. **Deliberately narrower** than graph model §7's `Repo`, and a separate type: the baseline never needs `path` or `dirty`, and keeping it distinct means widening it later is a baseline change, not a graph contract change |
 | `nodes` | object | yes | Map of node id → `{ baseline_hash, label, tier }` |
 | `edges` | string[] | yes | Edge ids present at snapshot time |
 
@@ -86,16 +86,16 @@ nowhere to sit.
 
 #### Every node needs a baseline hash, including source-less ones
 
-`modified` was originally defined against `source.hash`, but not every node has a
+`modified` was originally defined against a single `source.hash`, but not every node has a
 source. A Mongo collection, an external service surface and a tombstone all carry
-`source: null`, so they could never be classified.
+`sources: []`, so they could never be classified.
 
 **`baseline_hash` is defined for every node kind:**
 
 | Node has | `baseline_hash` is |
 |---|---|
-| `source` non-null | `source.hash` — the file content hash, as before |
-| `source: null` | Hash of the node's identity-bearing fields: `id`, `kind`, `label`, `tier` |
+| `sources` non-empty | Hash over every span's `hash`, taken in canonical span order (graph model §7.2). A change in *any* defining file marks the node modified, where a single-source hash would have missed a change in a secondary file |
+| `sources` empty | Hash of the node's identity-bearing fields: `id`, `kind`, `label`, `tier` |
 
 A synthetic node is therefore `modified` when its label or tier changes — a
 collection that moves band because config changed, say — and `unchanged`

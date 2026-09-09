@@ -1,0 +1,386 @@
+{
+  "schema_version": 1,
+  "tier_config_hash": "sha256:e3b0c44298fc1c14",
+  "repos": [
+    {
+      "name": "ledger",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "ledger:app/notify.py",
+      "kind": "module",
+      "label": "notify",
+      "tier": "external",
+      "parent": "svc:ledger-api",
+      "sources": [
+        {
+          "repo": "ledger",
+          "path": "app/notify.py",
+          "line_start": 1,
+          "line_end": 25,
+          "hash": "sha256:6cd6f41455d78245"
+        }
+      ],
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "ledger:app/notify.py#send_webhook",
+      "kind": "function",
+      "label": "send_webhook",
+      "tier": "external",
+      "parent": "ledger:app/notify.py",
+      "sources": [
+        {
+          "repo": "ledger",
+          "path": "app/notify.py",
+          "line_start": 4,
+          "line_end": 20,
+          "hash": "sha256:0648298b48be0319"
+        }
+      ],
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "ledger:app/queries.py",
+      "kind": "module",
+      "label": "queries",
+      "tier": "data_access",
+      "parent": "svc:ledger-api",
+      "sources": [
+        {
+          "repo": "ledger",
+          "path": "app/queries.py",
+          "line_start": 1,
+          "line_end": 30,
+          "hash": "sha256:07193df400d460d8"
+        }
+      ],
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "ledger:app/queries.py#load_entries",
+      "kind": "repository",
+      "label": "load_entries",
+      "tier": "data_access",
+      "parent": "ledger:app/queries.py",
+      "sources": [
+        {
+          "repo": "ledger",
+          "path": "app/queries.py",
+          "line_start": 5,
+          "line_end": 14,
+          "hash": "sha256:0cf67fc72b3c86c7"
+        }
+      ],
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "ledger:app/routes.py",
+      "kind": "module",
+      "label": "routes",
+      "tier": "api",
+      "parent": "svc:ledger-api",
+      "sources": [
+        {
+          "repo": "ledger",
+          "path": "app/routes.py",
+          "line_start": 1,
+          "line_end": 40,
+          "hash": "sha256:e22bc966d9352957"
+        }
+      ],
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "ledger:app/routes.py#list_entries",
+      "kind": "endpoint",
+      "label": "GET /entries",
+      "tier": "api",
+      "parent": "ledger:app/routes.py",
+      "sources": [
+        {
+          "repo": "ledger",
+          "path": "app/routes.py",
+          "line_start": 10,
+          "line_end": 18,
+          "hash": "sha256:a330395cc0a53ad1"
+        }
+      ],
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": true,
+      "entry_point_kind": "http_route",
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "mongo:ledger.entries",
+      "kind": "collection",
+      "label": "entries",
+      "tier": "store",
+      "parent": null,
+      "sources": [],
+      "confidence": "inferred",
+      "confidence_reason": "inferred collection 'entries' from entity class Entry",
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "sql:public.audit_log",
+      "kind": "table",
+      "label": "audit_log",
+      "tier": "store",
+      "parent": null,
+      "sources": [],
+      "confidence": "inferred",
+      "confidence_reason": "inferred table 'audit_log' from SQLAlchemy model AuditLog",
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "svc:ledger-api",
+      "kind": "service",
+      "label": "ledger-api",
+      "tier": "domain",
+      "parent": null,
+      "sources": [],
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_03fc3d1fea9c0e3d",
+      "from": "ledger:app/queries.py#load_entries",
+      "to": "sql:public.audit_log",
+      "kind": "write",
+      "label": "insert",
+      "schema_id": null,
+      "response_schema_id": null,
+      "confidence": "inferred",
+      "confidence_reason": "inferred table 'audit_log' from SQLAlchemy model AuditLog",
+      "condition": null,
+      "exclusive_group": null,
+      "is_error_path": false,
+      "source": {
+        "repo": "ledger",
+        "path": "app/queries.py",
+        "line_start": 13,
+        "line_end": null
+      },
+      "source_count": 1,
+      "branch_ordinal": null,
+      "is_broken": false,
+      "broken_reason": null,
+      "skips_tiers": []
+    },
+    {
+      "id": "e_0c3d17a12e898846",
+      "from": "ledger:app/routes.py#list_entries",
+      "to": "ledger:app/notify.py#send_webhook",
+      "kind": "call",
+      "label": "send_webhook",
+      "schema_id": "sch_webhook_payload",
+      "response_schema_id": null,
+      "confidence": "certain",
+      "confidence_reason": null,
+      "condition": null,
+      "exclusive_group": null,
+      "is_error_path": false,
+      "source": {
+        "repo": "ledger",
+        "path": "app/routes.py",
+        "line_start": 17,
+        "line_end": null
+      },
+      "source_count": 1,
+      "branch_ordinal": null,
+      "is_broken": false,
+      "broken_reason": null,
+      "skips_tiers": []
+    },
+    {
+      "id": "e_d1fded81d067ea7b",
+      "from": "ledger:app/queries.py#load_entries",
+      "to": "mongo:ledger.entries",
+      "kind": "read",
+      "label": "find",
+      "schema_id": null,
+      "response_schema_id": "sch_entry_list",
+      "confidence": "inferred",
+      "confidence_reason": "inferred collection 'entries' from entity class Entry",
+      "condition": null,
+      "exclusive_group": null,
+      "is_error_path": false,
+      "source": {
+        "repo": "ledger",
+        "path": "app/queries.py",
+        "line_start": 11,
+        "line_end": null
+      },
+      "source_count": 1,
+      "branch_ordinal": null,
+      "is_broken": false,
+      "broken_reason": null,
+      "skips_tiers": []
+    },
+    {
+      "id": "e_e4d6231a55bba427",
+      "from": "ledger:app/routes.py#list_entries",
+      "to": "ledger:app/queries.py#load_entries",
+      "kind": "call",
+      "label": "load_entries",
+      "schema_id": null,
+      "response_schema_id": "sch_entry_list",
+      "confidence": "certain",
+      "confidence_reason": null,
+      "condition": null,
+      "exclusive_group": null,
+      "is_error_path": false,
+      "source": {
+        "repo": "ledger",
+        "path": "app/routes.py",
+        "line_start": 15,
+        "line_end": null
+      },
+      "source_count": 1,
+      "branch_ordinal": null,
+      "is_broken": false,
+      "broken_reason": null,
+      "skips_tiers": [
+        "domain"
+      ]
+    }
+  ],
+  "schemas": [
+    {
+      "id": "sch_entry_list",
+      "name": "list[Entry]",
+      "source": {
+        "repo": "ledger",
+        "path": "app/models.py",
+        "line_start": 3,
+        "line_end": 9
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "fields": [
+        {
+          "name": "id",
+          "type": "str",
+          "optional": false,
+          "classification": [
+            "identifier"
+          ],
+          "ref_schema_id": null
+        },
+        {
+          "name": "amount",
+          "type": "Decimal",
+          "optional": false,
+          "classification": [
+            "financial"
+          ],
+          "ref_schema_id": null
+        },
+        {
+          "name": "owner",
+          "type": "UserRef",
+          "optional": false,
+          "classification": [],
+          "ref_schema_id": "sch_user_ref"
+        }
+      ]
+    },
+    {
+      "id": "sch_user_ref",
+      "name": "UserRef",
+      "source": {
+        "repo": "ledger",
+        "path": "app/models.py",
+        "line_start": 11,
+        "line_end": 13
+      },
+      "confidence": "certain",
+      "confidence_reason": null,
+      "fields": [
+        {
+          "name": "user_id",
+          "type": "str",
+          "optional": false,
+          "classification": [
+            "identifier"
+          ],
+          "ref_schema_id": null
+        }
+      ]
+    },
+    {
+      "id": "sch_webhook_payload",
+      "name": "dict",
+      "source": {
+        "repo": "ledger",
+        "path": "app/notify.py",
+        "line_start": 9,
+        "line_end": null
+      },
+      "confidence": "inferred",
+      "confidence_reason": "shape inferred from a dict literal at app/notify.py line 9; no Pydantic model declares it",
+      "fields": [
+        {
+          "name": "entry_id",
+          "type": "str",
+          "optional": false,
+          "classification": [
+            "identifier"
+          ],
+          "ref_schema_id": null
+        },
+        {
+          "name": "note",
+          "type": "str",
+          "optional": true,
+          "classification": [
+            "free_text"
+          ],
+          "ref_schema_id": null
+        }
+      ]
+    }
+  ]
+}

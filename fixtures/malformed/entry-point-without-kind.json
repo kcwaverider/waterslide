@@ -168,7 +168,7 @@
       "confidence": "certain",
       "confidence_reason": null,
       "is_entry_point": true,
-      "entry_point_kind": "http_route",
+      "entry_point_kind": null,
       "is_infrastructure": false,
       "tags": [
         "auth_required"

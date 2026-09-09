@@ -351,7 +351,7 @@
     {
       "id": "e_dd18a22155d2d22b",
       "from": "tapistree:api/routers/notes.py#update_note",
-      "to": "tapistree:api/services/note_service.py#NoteService.update",
+      "to": "tapistree:api/nowhere.py#gone",
       "kind": "call",
       "label": "update",
       "schema_id": "sch_note_update_req",

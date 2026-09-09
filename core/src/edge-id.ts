@@ -22,16 +22,10 @@ const HEX_CHARS = 16;
 const nfc = (s: string): string => s.normalize("NFC");
 
 /**
- * Derive an edge id per graph model §3.3.1.
- *
- * Input bytes: the key as a JSON array with no whitespace, strings
- * NFC-normalized, UTF-8. Hash: SHA-256. Output: `e_` + first 16 lowercase hex
- * characters of the digest.
- *
- * This is the only implementation. Packs call it; they never derive ids
- * themselves (handoff §5.2).
+ * The one place the key is validated and turned into hash input parts. Both
+ * `edgeId` and `edgeIdInput` go through here, so they cannot disagree.
  */
-export function edgeId(key: EdgeIdKey): string {
+function keyParts(key: EdgeIdKey): (string | number)[] {
   const group = key.exclusive_group ?? null;
   const ordinal = key.branch_ordinal ?? null;
 
@@ -46,35 +40,36 @@ export function edgeId(key: EdgeIdKey): string {
     );
   }
 
-  const parts: (string | number)[] =
-    group === null
-      ? [nfc(key.from), nfc(key.to), nfc(key.kind)]
-      : [
-          nfc(key.from),
-          nfc(key.to),
-          nfc(key.kind),
-          nfc(group),
-          ordinal as number,
-        ];
-
-  const input = JSON.stringify(parts);
-  const digest = createHash("sha256").update(input, "utf8").digest("hex");
-  return ID_PREFIX + digest.slice(0, HEX_CHARS);
+  return group === null
+    ? [nfc(key.from), nfc(key.to), nfc(key.kind)]
+    : [
+        nfc(key.from),
+        nfc(key.to),
+        nfc(key.kind),
+        nfc(group),
+        ordinal as number,
+      ];
 }
 
-/** Serialize an edge id key exactly as `edgeId` hashes it. Exposed for tests and diagnostics. */
+/**
+ * The exact bytes `edgeId` hashes: the key as a JSON array with no whitespace,
+ * strings NFC-normalized. Exposed for tests and diagnostics. Rejects the same
+ * keys `edgeId` rejects.
+ */
 export function edgeIdInput(key: EdgeIdKey): string {
-  const group = key.exclusive_group ?? null;
-  const ordinal = key.branch_ordinal ?? null;
-  const parts: (string | number)[] =
-    group === null
-      ? [nfc(key.from), nfc(key.to), nfc(key.kind)]
-      : [
-          nfc(key.from),
-          nfc(key.to),
-          nfc(key.kind),
-          nfc(group),
-          ordinal as number,
-        ];
-  return JSON.stringify(parts);
+  return JSON.stringify(keyParts(key));
+}
+
+/**
+ * Derive an edge id per graph model §3.3.1: SHA-256 over `edgeIdInput(key)`
+ * as UTF-8, output `e_` + the first 16 lowercase hex characters.
+ *
+ * This is the only implementation. Whoever knows both endpoint ids calls it —
+ * a pack for edges resolved within a file, core after resolution for the rest.
+ */
+export function edgeId(key: EdgeIdKey): string {
+  const digest = createHash("sha256")
+    .update(edgeIdInput(key), "utf8")
+    .digest("hex");
+  return ID_PREFIX + digest.slice(0, HEX_CHARS);
 }

@@ -258,13 +258,8 @@
       },
       "exclusive_group": "note_service.py:NoteService.update:L40",
       "is_error_path": false,
-      "source": {
-        "repo": "tapistree",
-        "path": "api/services/note_service.py",
-        "line_start": 41,
-        "line_end": null
-      },
-      "source_count": 1,
+      "source": null,
+      "source_count": 0,
       "branch_ordinal": 0,
       "is_broken": false,
       "broken_reason": null,

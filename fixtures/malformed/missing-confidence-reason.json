@@ -34,7 +34,7 @@
       "parent": null,
       "sources": [],
       "confidence": "inferred",
-      "confidence_reason": "inferred collection 'notes' from entity class Note",
+      "confidence_reason": null,
       "is_entry_point": false,
       "entry_point_kind": null,
       "is_infrastructure": false,

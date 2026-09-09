@@ -354,7 +354,7 @@
       "to": "tapistree:api/services/note_service.py#NoteService.update",
       "kind": "call",
       "label": "update",
-      "schema_id": "sch_note_update_req",
+      "schema_id": "sch_missing",
       "response_schema_id": "sch_note_response",
       "confidence": "certain",
       "confidence_reason": null,

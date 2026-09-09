@@ -108,7 +108,7 @@
     },
     {
       "id": "tapistree:api/repositories/note_repo.py#NoteRepository.save",
-      "kind": "repository",
+      "kind": "tombstone",
       "label": "NoteRepository.save",
       "tier": "data_access",
       "parent": "tapistree:api/repositories/note_repo.py",
@@ -121,8 +121,8 @@
           "hash": "sha256:23215d6f720f216d"
         }
       ],
-      "confidence": "certain",
-      "confidence_reason": null,
+      "confidence": "inferred",
+      "confidence_reason": "present in previous parse, absent now",
       "is_entry_point": false,
       "entry_point_kind": null,
       "is_infrastructure": false,

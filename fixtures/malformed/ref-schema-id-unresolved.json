@@ -420,7 +420,7 @@
             "free_text",
             "may_contain_pii"
           ],
-          "ref_schema_id": null
+          "ref_schema_id": "sch_missing"
         },
         {
           "name": "model",

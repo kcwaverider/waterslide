@@ -172,7 +172,8 @@
       "is_infrastructure": false,
       "tags": [
         "auth_required"
-      ]
+      ],
+      "colour": "red"
     },
     {
       "id": "tapistree:api/services/note_service.py",

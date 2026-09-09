@@ -181,7 +181,10 @@ Requirements:
   with the expected diagnostic. A validator that doesn't run on every commit
   isn't an arbiter (§5.2).
 - The pre-commit hook is a plain script under version control, installed by
-  `npm install` via `core.hooksPath`. No hook-manager dependency.
+  `npm install` via `core.hooksPath`. No hook-manager dependency. It runs
+  typecheck, lint and test, **not** `format:check`: formatting is deliberately not
+  gated, since Prettier is run on write and a formatting slip is not a
+  correctness failure. Recorded so the omission reads as a choice, not a gap.
 - Keep tree-sitter queries in `.scm` files and the `is_error_path` construct
   tables in data files, per §2.
 
@@ -208,7 +211,7 @@ against.
 
 | # | Invariant |
 |---|---|
-| 1 | Node ids unique; edge ids unique; schema ids unique |
+| 1 | Node ids unique; edge ids unique; schema ids unique; repo names unique |
 | 2 | Every edge `from` and `to` resolves to a node in the graph |
 | 3 | Every `parent` resolves to a node in the graph |
 | 4 | Every **non-null** `schema_id`, `response_schema_id` and `ref_schema_id` resolves to a schema |
@@ -217,13 +220,20 @@ against.
 | 7 | `is_entry_point: true` → `entry_point_kind` non-null |
 | 8 | `is_broken: true` → `broken_reason` non-null |
 | 9 | `exclusive_group` non-null → `source` non-null (graph model §3.2) |
-| 10 | Node `kind: tombstone` → node `source` is null (nodes only; `tombstone` is not an edge kind) |
+| 10 | Node `kind: tombstone` → node `sources` is empty (nodes only; `tombstone` is not an edge kind) |
 | 11 | Every `skips_tiers` member is a legal `tier` enum value |
 | 12 | Every field-table key with Required `yes` or a condition is **present**, per graph model §2.5. Volatile fields (§7.1) are required in the artifact shape and must be absent in the canonical shape; the caller names the shape explicitly, §7.3 |
 | 13 | `source == null` if and only if `source_count == 0` (graph model §3.3) |
 | 14 | `branch_ordinal` non-null if and only if `exclusive_group` non-null |
 | 15 | `branch_ordinal` values are unique within each `exclusive_group` |
 | 16 | `skips_tiers` is empty when either endpoint is `external_service`, `topic` or `tombstone`, or has `tier: external` (graph model §3.4) |
+| 17 | **Canonical shape only.** `nodes`, `edges`, `schemas` sorted ascending by `id` byte-wise; `repos` by `name`; `nodes[].sources` by `repo`, `path`, `line_start`, `line_end` (null first), `hash`; `skips_tiers`, `classification`, `tags` sorted ascending; every string NFC-normalized (graph model §7.2). Key order and whitespace are the serializer's, checked by byte diff |
+| 18 | Every node id is `{scope}:{locator}` with scope one of `svc`, `mongo`, `sql`, `topic`, `ext` or a name in `repos[]`; no repo is named after a fixed scope, empty, or containing `:`; for a repo-scoped node with `sources`, every span shares the id's repo and at least one span's `path` is the path in the id (graph model §1) |
+| 19 | Every `repo` on a node span (`sources[]`), edge `source` or schema `source` names a repo in `repos[]` (graph model §2.4) |
+| 20 | The `parent` chain is acyclic; no node is its own ancestor (graph model §2.3). Self-loop edges remain legal |
+| 21 | `line_end`, where non-null, is never less than `line_start` — on node spans, edge sources and schema sources (graph model §2.4). A pack must not repair this with `null` |
+| 22 | Node `kind: tombstone` → `confidence` is `inferred` and `confidence_reason` is non-null (graph model §5.1) |
+| 23 | `tags`, `classification` and `skips_tiers` contain no duplicates (graph model §7.2, §3.4). Rejected, never deduplicated |
 
 **Not an invariant:** a broken edge does *not* have to point at a tombstone.
 Tombstones cover a removed target *node*; a removed *field* breaks an edge whose
@@ -428,6 +438,18 @@ result never posts, but the allowance is spent.
 review to post, act on it, then push again. One review per round. Review
 configuration lives in a file at the repo root and must be present on the
 feature branch to apply to that branch's PR.
+
+### 8.4 Editing formatted files
+
+Prettier rewraps long lines on `--write`, so the text on disk is not the text
+that was typed. Three edits in M0 failed because a patch anchored on the typed
+form, and each recovery rewrote a whole file — riskier than the patch it
+replaced.
+
+**Read the exact on-disk region immediately before composing an edit.** Run
+`prettier --write` on the file first so the text is stable, anchor on a single
+distinctive line rather than a multi-line block that may rewrap, and when a match
+fails, re-read and re-anchor rather than rewriting the file.
 
 ---
 

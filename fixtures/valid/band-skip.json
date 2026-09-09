@@ -85,6 +85,28 @@
       "tags": []
     },
     {
+      "id": "tapistree-ios:Sources/Views/NoteEditorView.swift#NoteEditorView",
+      "kind": "ui_view",
+      "label": "NoteEditorView",
+      "tier": "ui",
+      "parent": null,
+      "sources": [
+        {
+          "repo": "tapistree-ios",
+          "path": "Sources/Views/NoteEditorView.swift",
+          "line_start": 12,
+          "line_end": 80,
+          "hash": "sha256:0000000000000001"
+        }
+      ],
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": true,
+      "entry_point_kind": "ui_handler",
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
       "id": "tapistree:api/repositories/note_repo.py",
       "kind": "module",
       "label": "note_repo",
@@ -372,6 +394,36 @@
       "is_broken": false,
       "broken_reason": null,
       "skips_tiers": []
+    },
+    {
+      "id": "e_f87a5c79f2abad14",
+      "from": "tapistree-ios:Sources/Views/NoteEditorView.swift#NoteEditorView",
+      "to": "mongo:tapistree.notes",
+      "kind": "write",
+      "label": "direct write",
+      "schema_id": null,
+      "response_schema_id": null,
+      "confidence": "inferred",
+      "confidence_reason": "view writes to the collection directly through a local Mongo client",
+      "condition": null,
+      "exclusive_group": null,
+      "is_error_path": false,
+      "source": {
+        "repo": "tapistree-ios",
+        "path": "Sources/Views/NoteEditorView.swift",
+        "line_start": 55,
+        "line_end": null
+      },
+      "source_count": 1,
+      "branch_ordinal": null,
+      "is_broken": false,
+      "broken_reason": null,
+      "skips_tiers": [
+        "api",
+        "data_access",
+        "domain",
+        "ui_logic"
+      ]
     },
     {
       "id": "e_fe04e8a748b5b8db",

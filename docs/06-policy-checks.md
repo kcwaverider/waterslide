@@ -165,9 +165,11 @@ one case where the check reads the graph rather than the source.
 
 For each `expected_middleware` rule, in declaration order:
 
-1. Resolve `applies_to` to a node set. Glob against `source.path`, intersected
-   with `is_entry_point: true` — the check is about entry points, since middleware
-   guards the boundary and an internal function has no boundary to guard.
+1. Resolve `applies_to` to a node set. Glob against every `sources[].path` — a
+   node matches if **any** of its spans matches, since a definition split across
+   files is still one entry point — intersected with `is_entry_point: true`. The
+   check is about entry points, since middleware guards the boundary and an
+   internal function has no boundary to guard.
 2. For each node in the set, for each name in `require`, test every matcher for
    that capability. Any single match satisfies it.
 3. Unsatisfied capability → one finding, at the rule's severity.

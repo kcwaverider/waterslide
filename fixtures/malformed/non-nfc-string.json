@@ -153,7 +153,7 @@
     {
       "id": "tapistree:api/routers/notes.py#update_note",
       "kind": "endpoint",
-      "label": "PUT /notes/{id}",
+      "label": "PUT /notes/{id} — café",
       "tier": "api",
       "parent": "tapistree:api/routers/notes.py",
       "sources": [

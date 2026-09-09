@@ -19,7 +19,7 @@ Six stages, strictly ordered. Each stage's output is the next stage's only input
 | 2 | **Hash** | No | Content hash per file. Cheap; drives stage 3 |
 | 3 | **Parse** | **Yes** | Per-file, by hash. The expensive stage |
 | 4 | **Resolve** | **No — never** | Match references across files and repos. See §2.2 |
-| 5 | **Derive** | No | Tiers, parents, `skips_tiers`, `exclusive_group` grouping |
+| 5 | **Derive** | No | Tiers, parents, `skips_tiers`, edge ids for resolved refs. Fork fields are pack-supplied (§5, §6) |
 | 6 | **Emit** | No | Write `graph.json`. **Nothing else** |
 
 **Stage 6 writes `graph.json` and only `graph.json`.** It does not touch
@@ -191,13 +191,15 @@ Called once per file, given `(repo_name, path, content)`. Returns:
 | `edges` | PartialEdge[] | Relationships found. `to` may be unresolved. See §3.5 |
 | `schemas` | Schema[] | Payload shapes declared in this file |
 | `provides` | Provide[] | The names by which other files may refer to these nodes. See §3.4 |
-| `diagnostics` | Diagnostic[] | Parse failures and unsupported constructs. Never thrown |
+| `diagnostics` | Diagnostic[] | Parse failures and unsupported constructs. Never thrown. Shape: graph model §10 |
 
 Entry points are **not** a separate collection — they are the `is_entry_point`
 and `entry_point_kind` fields on a node, per graph model §2.
 
-> **Note on a change.** The interface was talked through as four returns. Writing
-> it down surfaced the fifth, `provides`, and it is not optional — see below.
+> **Five required returns:** `nodes`, `edges`, `schemas`, `provides` and
+> `diagnostics`. None is optional. `provides` was the one an earlier draft
+> lacked — see §3.4 for why it cannot be dropped. `diagnostics` is shaped by
+> graph model §10.
 
 ### 3.4 `provides`: why the fifth return exists
 
@@ -326,6 +328,7 @@ What a pack emits in an edge's `to` when the target lives elsewhere.
   "confidence": "certain",
   "condition": null,
   "exclusive_group": null,
+  "branch_ordinal": null,
   "is_error_path": false
 }
 ```
@@ -394,8 +397,9 @@ What the core computes once the graph is connected.
 | `parent` | Folder structure for the POC, per graph model §2.3 |
 | `skips_tiers` | Band distance between an edge's endpoints |
 | `is_infrastructure` | `config.yaml` declarations only. Never inferred |
-| `exclusive_group` | Branch grouping, per §6 |
+| `exclusive_group`, `branch_ordinal` | **Not derived.** Pack-supplied per branch, per §6 and §3.6 — core cannot know where a branch sits without parsing |
 | `is_error_path` | Pack-supplied per branch, per §6 |
+| `id` (edge) | `edgeId()` from graph model §3.3.1, called by core for edges that left the pack with an `UnresolvedRef` target; packs call the same function for edges resolved within a file |
 
 Tier assignment by path glob before kind matters for the monorepo case, where
 `api/` and `ios/` are the strongest available signal.
@@ -412,6 +416,8 @@ model rests on it (UI spec §7.5), and it is per-language work.
 For each branch point that gates *different outgoing edges*:
 
 - One `exclusive_group` id shared by the alternative edges.
+- `branch_ordinal` per branch: its position within the group in source order,
+  from 0 (graph model §3.3). The pack already knows the order while walking.
 - `condition.expr` per branch, verbatim from source.
 - `is_error_path` per branch.
 

@@ -171,6 +171,7 @@
       "entry_point_kind": "http_route",
       "is_infrastructure": false,
       "tags": [
+        "zeta",
         "auth_required"
       ]
     },

@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "tier_config_hash": "sha256:e3b0c44298fc1c14",
   "repos": [
     {

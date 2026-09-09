@@ -13,20 +13,6 @@
   ],
   "nodes": [
     {
-      "id": "ext:cohere/embed",
-      "kind": "external_service",
-      "label": "Cohere Embed",
-      "tier": "external",
-      "parent": null,
-      "sources": [],
-      "confidence": "certain",
-      "confidence_reason": null,
-      "is_entry_point": false,
-      "entry_point_kind": null,
-      "is_infrastructure": false,
-      "tags": []
-    },
-    {
       "id": "mongo:tapistree.notes",
       "kind": "collection",
       "label": "notes",
@@ -239,6 +225,20 @@
       "entry_point_kind": null,
       "is_infrastructure": false,
       "tags": []
+    },
+    {
+      "id": "widget:cohere/embed",
+      "kind": "external_service",
+      "label": "Cohere Embed",
+      "tier": "external",
+      "parent": null,
+      "sources": [],
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
     }
   ],
   "edges": [
@@ -326,7 +326,7 @@
     {
       "id": "e_d33065d13a4a0ccf",
       "from": "tapistree:api/services/note_service.py#NoteService.update",
-      "to": "ext:cohere/embed",
+      "to": "widget:cohere/embed",
       "kind": "external_call",
       "label": "embed",
       "schema_id": "sch_embed_request",

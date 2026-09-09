@@ -110,7 +110,7 @@
       "id": "tapistree:api/repositories/note_repo.py#NoteRepository.save",
       "kind": "repository",
       "label": "NoteRepository.save",
-      "tier": "data_access",
+      "tier": "external",
       "parent": "tapistree:api/repositories/note_repo.py",
       "sources": [
         {
@@ -268,7 +268,9 @@
       "branch_ordinal": 0,
       "is_broken": false,
       "broken_reason": null,
-      "skips_tiers": []
+      "skips_tiers": [
+        "domain"
+      ]
     },
     {
       "id": "e_a7d772cb0f59d4e6",

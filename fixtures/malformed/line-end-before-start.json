@@ -161,7 +161,7 @@
           "repo": "tapistree",
           "path": "api/routers/notes.py",
           "line_start": 42,
-          "line_end": 58,
+          "line_end": 41,
           "hash": "sha256:8a84e406c08ac959"
         }
       ],
