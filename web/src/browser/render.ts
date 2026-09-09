@@ -22,6 +22,12 @@ import {
   type PanelModel,
   type PanelSchema,
 } from "./panel.js";
+import {
+  inheritedStates,
+  offscreenIndicators,
+  type OffscreenIndicator,
+  type Viewport,
+} from "./offscreen.js";
 
 /**
  * The renderer — UI spec §1, §3, §4 and §8. Runs in the browser as an inline
@@ -431,18 +437,156 @@ export function renderGraph(
     drawEdgeBadges(holder, le);
   }
 
+  // Offscreen indicators (§4) live outside the zoom transform, at the edges
+  // of what is visible, and are recomputed on every pan or zoom.
+  const overlay = svg.append("g").attr("class", "offscreen");
+  const inherited = inheritedStates(graph.nodes, changeState);
+  const boxes = layout.nodes.map((ln) => ({
+    id: ln.node.id,
+    x: ln.x,
+    y: ln.y,
+    w: ln.w,
+    h: ln.h,
+  }));
+  let lastTransform: D3.ZoomTransform = d3.zoomIdentity;
+  const updateOffscreen = (): void => {
+    const view = visibleRegion(root, layout, lastTransform);
+    drawOffscreen(
+      overlay,
+      offscreenIndicators(boxes, view.layout, inherited),
+      view.viewBox,
+    );
+  };
+
   // Pan and zoom. Zoom here is magnification of the drawn picture only; the
-  // semantic zoom of UI §2 is Stage 4's.
+  // semantic zoom of UI §2 is M4's, and the two must never share a variable.
   const zoom = d3
     .zoom<SVGSVGElement, unknown>()
     .scaleExtent([0.2, 6])
     .on("zoom", (event: D3.D3ZoomEvent<SVGSVGElement, unknown>) => {
+      lastTransform = event.transform;
       g.attr("transform", event.transform.toString());
+      updateOffscreen();
     });
   svg.call(zoom);
   svg.on("click", () => onSelect({ type: "none" }));
+  window.addEventListener("resize", updateOffscreen);
+  updateOffscreen();
 
   return layout;
+}
+
+/**
+ * The visible region, both in viewBox units (where the overlay draws) and in
+ * layout coordinates (what the indicators count against). The svg keeps its
+ * aspect ratio (`xMidYMid meet`), so the visible viewBox region can be wider
+ * or taller than the viewBox itself.
+ */
+function visibleRegion(
+  root: HTMLElement,
+  layout: Layout,
+  t: D3.ZoomTransform,
+): { viewBox: Viewport; layout: Viewport } {
+  const rect = root.getBoundingClientRect();
+  const cw = Math.max(1, rect.width);
+  const ch = Math.max(1, rect.height);
+  const scale = Math.min(cw / layout.width, ch / layout.height);
+  const visW = cw / scale;
+  const visH = ch / scale;
+  const viewBox: Viewport = {
+    x0: layout.width / 2 - visW / 2,
+    y0: layout.height / 2 - visH / 2,
+    x1: layout.width / 2 + visW / 2,
+    y1: layout.height / 2 + visH / 2,
+  };
+  return {
+    viewBox,
+    layout: {
+      x0: t.invertX(viewBox.x0),
+      y0: t.invertY(viewBox.y0),
+      x1: t.invertX(viewBox.x1),
+      y1: t.invertY(viewBox.y1),
+    },
+  };
+}
+
+/**
+ * §4: one arrow per side with nodes beyond it. The count is text; the change
+ * state is the fill — pastel for unchanged, dark for modified, dark with a
+ * double outline for new — so the outline vocabulary of §3.2 holds here too.
+ */
+function drawOffscreen(
+  overlay: D3.Selection<SVGGElement, unknown, null, undefined>,
+  indicators: readonly OffscreenIndicator[],
+  view: Viewport,
+): void {
+  overlay.selectAll("*").remove();
+  const inset = 30;
+  const cx = (view.x0 + view.x1) / 2;
+  const cy = (view.y0 + view.y1) / 2;
+  for (const ind of indicators) {
+    const glyph =
+      ind.side === "top"
+        ? "▲"
+        : ind.side === "bottom"
+          ? "▼"
+          : ind.side === "left"
+            ? "◀"
+            : "▶";
+    const text =
+      ind.side === "right" || ind.side === "bottom"
+        ? `${String(ind.count)} ${glyph}`
+        : `${glyph} ${String(ind.count)}`;
+    const w = text.length * 7.5 + 16;
+    const h = 24;
+    const x =
+      ind.side === "left"
+        ? view.x0 + inset
+        : ind.side === "right"
+          ? view.x1 - inset
+          : cx;
+    const y =
+      ind.side === "top"
+        ? view.y0 + inset
+        : ind.side === "bottom"
+          ? view.y1 - inset
+          : cy;
+    const vivid = ind.state === "modified" || ind.state === "new";
+    const el = overlay
+      .append("g")
+      .attr("class", `offscreen-${ind.side} state-${ind.state}`)
+      .attr("transform", `translate(${String(x)},${String(y)})`);
+    el.append("title").text(
+      `${String(ind.count)} node${ind.count === 1 ? "" : "s"} off screen ${ind.side === "left" || ind.side === "right" ? "to the " : ""}${ind.side}` +
+        (ind.state === "unchanged" ? "" : `; includes something ${ind.state}`),
+    );
+    el.append("rect")
+      .attr("x", -w / 2)
+      .attr("y", -h / 2)
+      .attr("width", w)
+      .attr("height", h)
+      .attr("rx", 12)
+      .attr("fill", vivid ? "#3b3b3b" : "#ececec")
+      .attr("stroke", vivid ? "#111" : "#777")
+      .attr("stroke-width", 1.2);
+    if (ind.state === "new")
+      el.append("rect")
+        .attr("x", -w / 2 + 3)
+        .attr("y", -h / 2 + 3)
+        .attr("width", w - 6)
+        .attr("height", h - 6)
+        .attr("rx", 9)
+        .attr("fill", "none")
+        .attr("stroke", "#fff")
+        .attr("stroke-width", 1);
+    el.append("text")
+      .attr("text-anchor", "middle")
+      .attr("y", 4.5)
+      .attr("font-size", 12)
+      .attr("font-weight", 600)
+      .attr("fill", vivid ? "#fff" : "#222")
+      .text(text);
+  }
 }
 
 /**

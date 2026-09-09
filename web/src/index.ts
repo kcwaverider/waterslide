@@ -44,6 +44,17 @@ export type {
   PanelSchema,
   PanelSchemaField,
 } from "./browser/panel.js";
+export {
+  inheritedStates,
+  offscreenIndicators,
+  sideOf,
+} from "./browser/offscreen.js";
+export type {
+  Box,
+  OffscreenIndicator,
+  Side,
+  Viewport,
+} from "./browser/offscreen.js";
 
 const require = createRequire(import.meta.url);
 
@@ -106,6 +117,7 @@ export function buildViewerHtml(
     "./layout.js",
     "./browser/encoding.js",
     "./browser/panel.js",
+    "./browser/offscreen.js",
     "./browser/render.js",
   ].map(readBrowserModule);
   const title = options.title ?? "waterslide";
