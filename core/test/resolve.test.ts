@@ -984,6 +984,56 @@ describe("stage 4: alias-provided prefixes beyond '()' (C19 fix 2)", () => {
     expect(r.stats.via_factory).toBe(0);
   });
 
+  it("substitutes again when the retargeted name itself has an alias-provided prefix, naming both steps", () => {
+    const client = node("api:db/motorish.py#Client");
+    const connect = node("api:db/motorish.py#Client.connect");
+    const DB: Origin = { repo: "api", path: "db/database.py" };
+    const M: Origin = { repo: "api", path: "db/motorish.py" };
+    const r = resolve(
+      corpus({
+        nodes: [caller, client, connect],
+        edges: [ref(caller.id, sym("svc.get_db().client.connect", 9), API)],
+        provides: [
+          provide("svc.get_db()", null, STORE, {
+            alias_of: "db.database.Database",
+          }),
+          provide("db.database.Database.client", null, DB, {
+            alias_of: "db.motorish.Client",
+          }),
+          provide("db.motorish.Client", client.id, M),
+          provide("db.motorish.Client.connect", connect.id, M),
+        ],
+      }),
+    );
+    expect(r.edges[0]).toMatchObject({
+      to: connect.id,
+      confidence: "inferred",
+    });
+    expect(r.edges[0]?.confidence_reason).toContain(
+      "'svc.get_db()' → 'db.database.Database'",
+    );
+    expect(r.edges[0]?.confidence_reason).toContain(
+      "then 'db.database.Database.client' → 'db.motorish.Client'",
+    );
+    expect(r.stats.via_factory).toBe(1);
+  });
+
+  it("stops at the alias depth cap and dangles, naming the substitutions tried", () => {
+    // `a.b` aliases `a.b.c`, so `a.b.x` becomes `a.b.c.x`, then `a.b.c.c.x`, …
+    // — each hop finds the same prefix and grows the name. The cap ends it.
+    const r = resolve(
+      corpus({
+        nodes: [caller],
+        edges: [ref(caller.id, sym("a.b.x"), API)],
+        provides: [provide("a.b", null, STORE, { alias_of: "a.b.c" })],
+      }),
+    );
+    expect(r.edges[0]?.to).toBe("unknown:symbol:a.b.x");
+    const d = r.diagnostics.find((x) => x.code === "unresolved_ref");
+    expect(d?.message).toContain("alias depth cap is 8");
+    expect(r.stats.via_factory).toBe(0);
+  });
+
   it("takes the longest matching prefix and counts the reference as multi-prefix", () => {
     const short = node("api:a/s.py#Short.c.m");
     const long = node("api:a/l.py#Long.m");

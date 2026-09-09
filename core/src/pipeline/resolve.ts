@@ -434,17 +434,21 @@ export function resolve(corpus: Corpus): ResolveOutput {
     const name = refLookupName(ref);
     let candidates = lookupVisible(ref.ref_kind, name, origin);
     let targets = uniqueTargets(candidates);
-    let factory: { call: string; terminals: string[]; files: string[] } | null =
-      null;
 
+    // C9 / C19: a symbol whose receiver the pack could not type. When nothing
+    // provides the name exactly, take the longest alias-provided prefix (split
+    // only at "."), substitute the alias target, append the remainder, and
+    // retry — up to the alias depth cap, the same bound that governs alias
+    // chains. `services.get_s3_service().upload_bytes` and
+    // `auth.oauth2_handler.hash_password` both resolve this way.
+    const chain: { call: string; targets: string[]; files: string[] }[] = [];
     if (targets.length === 0 && ref.ref_kind === "symbol") {
-      // C19 fix 1: an exact alias match whose chain ends in the standard
-      // library resolves to nothing, silently. The stdlib is neither a node
-      // nor a coverage gap, and the pack already treats a direct stdlib call
-      // this way.
       // A fork alternative cannot be dropped without leaving a gap in its
       // group's branch_ordinal sequence (invariant 15), so it dangles instead.
       const isFork = origin.edge.exclusive_group !== null;
+      // C19 fix 1, exact form: an alias whose chain ends in the standard
+      // library resolves to nothing, silently — the stdlib is neither a node
+      // nor a coverage gap, and the pack already treats a direct call this way.
       const aliasTerminals = candidates
         .filter((c) => c.terminal !== name)
         .map((c) => c.terminal);
@@ -459,41 +463,76 @@ export function resolve(corpus: Corpus): ResolveOutput {
         }
       }
 
-      // C9 / C19 fix 2: a receiver the pack could not type. The defining file
-      // provides the receiver's name — `services.get_s3_service()` for a
-      // factory result, `auth.oauth2.oauth2_handler` for a module-level
-      // singleton — as an alias of its type. Longest alias-provided prefix,
-      // split at ".", one re-resolution pass, never a loop.
-      const hit = aliasPrefix(name, origin);
-      if (hit !== null) {
-        if (hit.matchedPrefixes > 1) stats.prefix_alias_multi += 1;
-        const live = hit.terminals.filter((t) => !isStdlibRooted(t));
+      let names = [name];
+      const seen = new Set(names);
+      let multi = false;
+      for (let hop = 0; targets.length === 0; hop++) {
+        if (hop >= PROVIDE_ALIAS_MAX_DEPTH) {
+          dangle(
+            p,
+            from,
+            `substituted alias prefixes ${String(hop)} times (${chain.map((c) => `'${c.call}'`).join(", ")}) without reaching a definition; the alias depth cap is ${String(PROVIDE_ALIAS_MAX_DEPTH)}`,
+          );
+          return;
+        }
+        const hits = names
+          .map((n) => ({ n, hit: aliasPrefix(n, origin) }))
+          .filter((x) => x.hit !== null) as {
+          n: string;
+          hit: NonNullable<ReturnType<typeof aliasPrefix>>;
+        }[];
+        if (hits.length === 0) break; // nothing left to substitute: dangle below
+        if (hits.some((x) => x.hit.matchedPrefixes > 1)) multi = true;
+
+        const allTypes = [...new Set(hits.flatMap((x) => x.hit.terminals))];
+        const live = allTypes.filter((t) => !isStdlibRooted(t));
         if (live.length === 0 && !isFork) {
           // Every candidate type is stdlib: the logger case. Nothing to draw.
           stats.stdlib_dropped += 1;
           return;
         }
         if (live.length === 0) stats.stdlib_fork_kept += 1;
-        factory = {
-          ...hit,
-          terminals: live.length === 0 ? hit.terminals : live,
-        };
-        // Every type the alias was given is a candidate receiver; the second
-        // lookup fans out over all of them and the ordinary ambiguity path
-        // reports every target.
-        const types = factory.terminals;
-        candidates = types
-          .map((t) => `${t}${name.slice(hit.call.length)}`)
-          .flatMap((n) => lookupVisible(ref.ref_kind, n, origin));
-        targets = uniqueTargets(candidates);
-        if (targets.length === 0) {
-          dangle(
-            p,
-            from,
-            `matched alias prefix '${hit.call}' (target '${types.join("' or '")}' from ${hit.files.join(", ")}), but '${types.map((t) => `${t}${name.slice(hit.call.length)}`).join("', '")}' matched no definition`,
-          );
-          return;
+        const types = live.length === 0 ? allTypes : live;
+        chain.push({
+          call: hits
+            .map((x) => x.hit.call)
+            .sort(byteCompare)
+            .join("' or '"),
+          targets: [...types].sort(byteCompare),
+          files: [...new Set(hits.flatMap((x) => x.hit.files))].sort(
+            byteCompare,
+          ),
+        });
+
+        const next: string[] = [];
+        for (const { n, hit } of hits) {
+          const remainder = n.slice(hit.call.length);
+          for (const t of hit.terminals) {
+            if (!types.includes(t)) continue;
+            const candidate = `${t}${remainder}`;
+            if (!seen.has(candidate)) {
+              seen.add(candidate);
+              next.push(candidate);
+            }
+          }
         }
+        if (next.length === 0) break; // only names already tried: dangle below
+        names = next.sort(byteCompare);
+        candidates = names.flatMap((n) =>
+          lookupVisible(ref.ref_kind, n, origin),
+        );
+        targets = uniqueTargets(candidates);
+      }
+      if (multi) stats.prefix_alias_multi += 1;
+
+      if (targets.length === 0 && chain.length > 0) {
+        const last = chain[chain.length - 1] as (typeof chain)[number];
+        dangle(
+          p,
+          from,
+          `matched alias prefix '${last.call}' (target '${last.targets.join("' or '")}' from ${last.files.join(", ")}), but '${names.join("', '")}' matched no definition`,
+        );
+        return;
       }
     }
 
@@ -513,12 +552,18 @@ export function resolve(corpus: Corpus): ResolveOutput {
     if (targets.length === 1) {
       stats.resolved += 1;
       const to = targets[0] as string;
-      if (factory !== null) {
+      if (chain.length > 0) {
         stats.via_factory += 1;
+        const steps = chain
+          .map(
+            (c) =>
+              `'${c.call}' → '${c.targets.join("' or '")}' (declared in ${c.files.join(", ")})`,
+          )
+          .join(", then ");
         out.push(
           downgrade(
             { ...base, to },
-            `resolved through alias '${factory.call}': its target '${factory.terminals.join("' or '")}' declared in ${factory.files.join(", ")} names the receiver type; the alias was not verified at the call site`,
+            `resolved through alias ${steps}; the alias names the receiver type and was not verified at the call site`,
           ),
         );
       } else if (ref.ref_kind === "http") {
