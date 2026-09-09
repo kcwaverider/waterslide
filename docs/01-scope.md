@@ -56,7 +56,7 @@ which is the stricter requirement, so it's the one the design targets.
 features — nothing in this section authorises a capability that isn't already
 listed under *In scope*.
 
-- **Node ids are addresses, not labels.** `tapistree:api/routers/notes.py#update_note`
+- **Node ids are addresses, not labels.** `myrepo:api/routers/notes.py#update_note`
   is correct and unreadable. Every node needs a display label that means something
   to someone who has never opened the file.
 - **The map must render with no configuration.** Config requires knowing what a

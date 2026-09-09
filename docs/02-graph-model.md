@@ -13,8 +13,8 @@ Three entity types: **Node**, **Edge**, **Schema**, plus graph-level metadata.
 
 ## 0. Multi-repo, always
 
-The reference codebase (`tapistree`) is a monorepo, so the POC exercises the case
-where the repo list has exactly one entry.
+The reference codebase is a monorepo, so the POC exercises the case where the
+repo list has exactly one entry.
 
 **This is a trap.** Build against a monorepo only and you will bake in
 assumptions that break the first time the tool is pointed at four repos. The
@@ -40,10 +40,10 @@ Format: `{scope}:{locator}`
 
 | Kind of thing | Format | Example |
 |---|---|---|
-| Service | `svc:{name}` | `svc:tapistree-api` |
-| Code node | `{repo}:{path}#{qualified_name}` | `tapistree:api/routers/notes.py#update_note` |
-| Module | `{repo}:{path}` | `tapistree:api/routers/notes.py` |
-| Mongo collection | `mongo:{db}.{collection}` | `mongo:tapistree.notes` |
+| Service | `svc:{name}` | `svc:myrepo-api` |
+| Code node | `{repo}:{path}#{qualified_name}` | `myrepo:api/routers/notes.py#update_note` |
+| Module | `{repo}:{path}` | `myrepo:api/routers/notes.py` |
+| Mongo collection | `mongo:{db}.{collection}` | `mongo:myrepo.notes` |
 | SQL table | `sql:{schema}.{table}` | `sql:public.orders` |
 | Queue topic | `topic:{name}` | `topic:note.indexed` |
 | External service | `ext:{vendor}/{surface}` | `ext:cohere/embed` |
@@ -114,14 +114,14 @@ Format: `{scope}:{locator}`
 ```jsonc
 // ILLUSTRATIVE ONLY
 {
-  "id": "tapistree:api/routers/notes.py#update_note",
+  "id": "myrepo:api/routers/notes.py#update_note",
   "kind": "endpoint",
   "label": "PUT /notes/{id}",
   "tier": "api",
-  "parent": "tapistree:api/routers/notes.py",
+  "parent": "myrepo:api/routers/notes.py",
   "sources": [
     {
-      "repo": "tapistree",
+      "repo": "myrepo",
       "path": "api/routers/notes.py",
       "line_start": 42, "line_end": 58,
       "hash": "sha256:9f2c…"
@@ -294,8 +294,8 @@ the table wins. Examples are illustrative; tables are normative.
 // ILLUSTRATIVE ONLY
 {
   "id": "e_0a41…",
-  "from": "tapistree:ios/Services/NoteService.swift#NoteService.update",
-  "to": "tapistree:api/routers/notes.py#update_note",
+  "from": "myrepo:ios/Services/NoteService.swift#NoteService.update",
+  "to": "myrepo:api/routers/notes.py#update_note",
   "kind": "http_request",
   "label": "PUT /notes/{id}",
   "schema_id": "sch_note_update_req",
@@ -305,7 +305,7 @@ the table wins. Examples are illustrative; tables are normative.
   "condition": null,
   "exclusive_group": null,
   "is_error_path": false,
-  "source": { "repo": "tapistree", "path": "ios/Services/NoteService.swift", "line_start": 88, "line_end": null },
+  "source": { "repo": "myrepo", "path": "ios/Services/NoteService.swift", "line_start": 88, "line_end": null },
   "source_count": 1,
   "branch_ordinal": null,
   "is_broken": false,
@@ -580,7 +580,7 @@ isn't duplicated across forty edges and a classification change is a single edit
 {
   "id": "sch_note_update_req",
   "name": "NoteUpdateRequest",
-  "source": { "repo": "tapistree", "path": "api/models/note.py", "line_start": 12, "line_end": null },
+  "source": { "repo": "myrepo", "path": "api/models/note.py", "line_start": 12, "line_end": null },
   "confidence": "certain",
   "confidence_reason": null,
   "fields": [
@@ -771,7 +771,7 @@ in a non-`external` tier by config is legal, and no invariant should ever be
 added for it: tier is config-controlled, and the tool draws the structure it is
 told to without an opinion on whether the arrangement is wise. The reverse case
 comes up too: an external service *reaching into* your datastore is an edge, not
-a tier. `ext:cohere/embed → mongo:tapistree.notes` is fully representable with
+a tier. `ext:cohere/embed → mongo:myrepo.notes` is fully representable with
 Cohere still in the `external` column, and renders as a long edge crossing every
 band — the correct and appropriately alarming picture.
 

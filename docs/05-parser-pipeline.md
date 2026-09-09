@@ -63,7 +63,7 @@ never derive an id from parse order or array index.
 // ILLUSTRATIVE ONLY
 {
   "repos": [
-    { "name": "tapistree", "path": "~/code/tapistree",
+    { "name": "myrepo", "path": "/path/to/myrepo",
       "exclude": ["**/Pods/**", "**/node_modules/**", "**/*.generated.py"] }
   ]
 }
@@ -415,7 +415,7 @@ What a pack emits in an edge's `to` when the target lives elsewhere.
 ```jsonc
 // ILLUSTRATIVE ONLY
 {
-  "from": "tapistree:ios/Services/NoteService.swift#NoteService.update",
+  "from": "myrepo:ios/Services/NoteService.swift#NoteService.update",
   "kind": "http_request",
   "to": { "ref_kind": "http", "value": "/notes/{id}",
           "hints": { "method": "PUT", "base_url_expr": "APIConfig.baseURL" },
@@ -580,7 +580,7 @@ map item: the options *are* the map keys, already extracted. No forecasting.
 
 ## 7. Swift recognizers
 
-Target: the `tapistree` iOS client.
+Target: the reference codebase's iOS client.
 
 | Target | Approach | Confidence |
 |---|---|---|
@@ -615,7 +615,7 @@ appear is an entry point that no click produces.
 
 ## 8. FastAPI recognizers
 
-Target: the `tapistree` Python API.
+Target: the reference codebase's Python API.
 
 | Target | Approach | Confidence |
 |---|---|---|
