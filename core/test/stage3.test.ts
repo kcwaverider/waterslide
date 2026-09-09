@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { NodeSchema } from "../src/model/graph.js";
+import { NodeUpdateSchema, type NodeUpdate } from "../src/model/pack.js";
 import { MemoryParseCache } from "../src/pipeline/cache.js";
 import { discover } from "../src/pipeline/discover.js";
 import { parseSources, type Corpus } from "../src/pipeline/index.js";
 import {
   PackRegistry,
+  applyPatch,
   composePacks,
   mergeNodes,
   mergeSchemas,
@@ -541,5 +543,140 @@ describe("mergeSchemas", () => {
     ]);
     expect(differ.diagnostics[0]?.message).toContain("r:a.py");
     expect(differ.diagnostics[0]?.message).toContain("r:b.py");
+  });
+});
+
+describe("applyPatch round-trips every NodeUpdate field", () => {
+  // One sample per optional field. The test enumerates the schema's keys, so a
+  // field added to NodeUpdateSchema without a sample here fails the suite:
+  // the failure class is "schema accepts it, applier drops it, nothing errors".
+  const samples: Record<string, unknown> = {
+    kind: "client_service",
+    parent: "svc:toy-r",
+    label: "Renamed",
+    is_entry_point: true,
+    entry_point_kind: "webhook",
+    tags: ["a", "b"],
+  };
+  const fixed = new Set(["node_id", "add_sources"]);
+
+  it("has a sample for every optional field the schema accepts", () => {
+    const optional = Object.keys(NodeUpdateSchema.shape).filter(
+      (k) => !fixed.has(k),
+    );
+    expect(Object.keys(samples).sort()).toEqual(optional.sort());
+  });
+
+  it("applies each optional field to the target node", () => {
+    const base = {
+      kind: "class" as const,
+      label: "Orig",
+      tier: "ui_logic" as const,
+      parent: null,
+      sources: [],
+      confidence: "certain" as const,
+      confidence_reason: null,
+      is_entry_point: false,
+      // Pre-set so `is_entry_point: true` on its own satisfies invariant 7;
+      // the entry_point_kind sample deliberately differs from it.
+      entry_point_kind: "http_route" as const,
+      is_infrastructure: false,
+      tags: [],
+    };
+    const files = [
+      {
+        repo: "r",
+        path: "a.toy",
+        result: {
+          nodes: [
+            { ...base, id: "r:a.toy#T" },
+            { ...base, id: "svc:toy-r", kind: "service" as const },
+          ],
+          edges: [],
+          schemas: [],
+          provides: [],
+          diagnostics: [],
+        },
+        pack_data: null,
+      },
+    ];
+    for (const [field, value] of Object.entries(samples)) {
+      const update = {
+        node_id: "r:a.toy#T",
+        add_sources: [],
+        [field]: value,
+      } as NodeUpdate;
+      const applied = applyPatch(
+        files,
+        {
+          nodes: [],
+          edges: [],
+          schemas: [],
+          provides: [],
+          node_updates: [update],
+          diagnostics: [],
+        },
+        "toy",
+      );
+      expect(applied.diagnostics, field).toEqual([]);
+      const node = applied.files[0]?.result.nodes.find(
+        (n) => n.id === "r:a.toy#T",
+      );
+      expect(
+        (node as unknown as Record<string, unknown>)[field],
+        field,
+      ).toEqual(value);
+    }
+  });
+
+  it("add_sources unions spans", () => {
+    const span = {
+      repo: "r",
+      path: "b.toy",
+      line_start: 1,
+      line_end: 2,
+      hash: "sha256:0000000000000000",
+    };
+    const applied = applyPatch(
+      [
+        {
+          repo: "r",
+          path: "a.toy",
+          result: {
+            nodes: [
+              {
+                id: "r:a.toy#T",
+                kind: "class",
+                label: "T",
+                tier: "ui_logic",
+                parent: null,
+                sources: [],
+                confidence: "certain",
+                confidence_reason: null,
+                is_entry_point: false,
+                entry_point_kind: null,
+                is_infrastructure: false,
+                tags: [],
+              },
+            ],
+            edges: [],
+            schemas: [],
+            provides: [],
+            diagnostics: [],
+          },
+          pack_data: null,
+        },
+      ],
+      {
+        nodes: [],
+        edges: [],
+        schemas: [],
+        provides: [],
+        node_updates: [{ node_id: "r:a.toy#T", add_sources: [span, span] }],
+        diagnostics: [],
+      },
+      "toy",
+    );
+    expect(applied.files[0]?.result.nodes[0]?.sources).toEqual([span]);
   });
 });
