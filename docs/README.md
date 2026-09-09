@@ -10,6 +10,65 @@ These were written before any code, deliberately. The build is driven from them.
 generated state lives in `.waterslide/`. Earlier drafts used "dataflow" as a
 working name — if you find it anywhere, it's a leftover and should be changed.
 
+## Running it
+
+From the repo root, on a fresh checkout:
+
+```sh
+npm install
+npm run build
+```
+
+`npm run build` runs `tsc -b` and compiles `core`, both packs, the CLI and the
+viewer. The CLI is not linked as a global command, so it is invoked through
+`node`. Point `parse` at a checkout of the codebase you want mapped. The name
+on the left of the `=` is the repo name that appears in node ids; the path is
+wherever that checkout lives on your machine. It is not part of this repo.
+
+```sh
+node cli/dist/src/index.js parse <repo-name>=<path/to/checkout> \
+  --pack-option python.source_roots=<import-root>
+```
+
+That writes `.waterslide/graph.json` in the current directory, fills
+`.waterslide/cache/`, and prints the summary: node and edge counts, resolution
+figures, unresolved references by `ref_kind`, and diagnostics by code. A second
+run over an unchanged tree serves every file from the cache.
+
+`--pack-option python.source_roots=<import-root>` names the repo-relative
+directory that Python imports are written relative to, so that a call site's
+`from services.x import y` matches the `provides` entry of
+`<import-root>/services/x.py`. Without it every module is named from the repo
+root, most Python call sites match nothing, and the resolved count drops
+sharply. The client-to-route join goes with it: an `include_router` mount is
+an import reference too, and when it fails to resolve its routes keep their
+local paths, so the client's full URLs match nothing. For a FastAPI app that
+lives under `server/`, the value is `server`; use whatever directory your own
+layout puts on `sys.path`. `examples/tapistree/config.yaml` shows the same
+value as a config block.
+
+```sh
+node cli/dist/src/index.js view --open
+```
+
+Writes `.waterslide/graph.html`, one self-contained file, and opens it. Pan and
+zoom with the mouse; hover a node or edge for its id, confidence and reason.
+Any other `graph.json` can be dropped onto the page.
+
+Other commands:
+
+```sh
+node cli/dist/src/index.js dump
+node cli/dist/src/index.js validate .waterslide/graph.json
+node cli/dist/src/index.js --help
+```
+
+Flags worth knowing on `parse`: `--canonical` writes the canonical shape for
+byte comparisons, `--no-cache` forces a full parse, `--state-dir <dir>` writes
+somewhere other than `./.waterslide`, and `--pack-option` is repeatable.
+
+For a bare `waterslide` command, run `npm link -w cli` from the repo root.
+
 ## Reading order
 
 Start with `00-handoff.md`. It stages the rest, so you don't read all of it at

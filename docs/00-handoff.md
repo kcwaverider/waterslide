@@ -1,7 +1,7 @@
 # Claude Code Handoff
 
-This is the entry point. The other six documents describe **what** to build; this
-one describes **how, in what order, and by whom** — including what runs in
+This is the entry point. The other seven documents describe **what** to build;
+this one describes **how, in what order, and by whom** — including what runs in
 parallel and what must not.
 
 Read this file completely before doing anything else.
@@ -108,7 +108,8 @@ a renderer to animate. Do not start a parallel stage before its gate passes.
 │   ├── 03-persisted-files.md
 │   ├── 04-ui-layout.md
 │   ├── 05-parser-pipeline.md
-│   └── 06-policy-checks.md
+│   ├── 06-policy-checks.md
+│   └── 07-what-it-shows.md
 ├── core/                      ← graph model, schema, validator, derivation
 ├── packs/
 │   ├── python/                ← Python language + FastAPI framework recognizers
@@ -274,12 +275,12 @@ persuasively. Make disagreement structurally impossible instead:
   on it. Two requirements that test does not yet meet: it must **deep-equal
   the parsed objects**, not compare bytes — a byte comparison couples the gate
   to formatting, and formatting is not the contract; and it must **iterate the
-  exported `JSON_SCHEMA_FILES` registry** rather than a duplicated literal list
-  of keys, so that a schema added to the registry is pinned without anyone
-  remembering to edit the test. The registry is the authority: a schema that
-  is not in `JSON_SCHEMA_FILES` is not gated, however the test iterates, so a
-  Zod schema that is meant to be emitted is added to the registry, not just
-  written into `core/schema/`.
+  exported `JSON_SCHEMA_FILES` registry**. Today it looks up file names in the
+  registry but iterates a literal list of keys, so a schema added to the
+  registry is not pinned until someone remembers to edit the test. The
+  registry is the authority: a schema that is not in `JSON_SCHEMA_FILES` is
+  not gated, however the test iterates, so a Zod schema that is meant to be
+  emitted is added to the registry, not just written into `core/schema/`.
 - The **validator is the arbiter**, and runs in the pre-commit hook on every
   commit. Every track's output must pass it. Running it in CI on every PR is
   road map, not MVP — the reasoning holds unchanged if this ever gets more than

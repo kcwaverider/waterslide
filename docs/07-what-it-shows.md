@@ -16,7 +16,9 @@ road map — not a licence to add fields.
 
 ## Two columns worth reading carefully
 
-- **Flagged** — the tool emits a finding or badge. Small list, all in `06`
+- **Flagged** — the tool emits a finding or badge. Small list: the policy
+  findings are all in `06`; the rest are flags the model already carries
+  (`skips_tiers`, `is_broken`, change state) and parser diagnostics
 - **Reader-observed** — the tool draws it accurately and a person notices.
   Most of this document, and per scope §*the hard line* that's deliberate
 
