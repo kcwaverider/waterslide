@@ -65,8 +65,9 @@ export function buildViewerHtml(
   const layout = readBrowserModule("./layout.js");
   const render = readBrowserModule("./browser/render.js");
   const title = options.title ?? "waterslide";
-  // `</script` inside JSON would end the element early; escape the slash.
-  const safeJson = graphJson.replace(/<\//g, "<\\/");
+  // The HTML parser ends a script element at `</script` and honours `<!--`
+  // inside script data; `\u003c` is a valid JSON escape, so neutralise every `<`.
+  const safeJson = graphJson.replace(/</g, "\\u003c");
   return `<!doctype html>
 <html lang="en">
 <head>

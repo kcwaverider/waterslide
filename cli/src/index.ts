@@ -79,6 +79,16 @@ function parseArgs(argv: readonly string[]): Args {
 
 class UsageError extends Error {}
 
+function parseJson(
+  text: string,
+): { ok: true; value: unknown } | { ok: false; error: string } {
+  try {
+    return { ok: true, value: JSON.parse(text) as unknown };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 function flag(args: Args, name: string): string | undefined {
   return args.flags.get(name)?.at(-1);
 }
@@ -125,18 +135,23 @@ async function loadPacks(
 ): Promise<LoadedPack[]> {
   const packs: LoadedPack[] = [];
   for (const spec of [...BUILT_IN_PACKS, ...extra]) {
-    let mod: Record<string, unknown>;
-    try {
-      const target =
-        spec.startsWith(".") || nodePath.isAbsolute(spec)
-          ? pathToFileURL(nodePath.resolve(spec)).href
-          : spec;
-      mod = (await import(target)) as Record<string, unknown>;
-    } catch (e) {
-      if (extra.includes(spec)) throw e;
-      log(`pack ${spec}: not installed, skipped`);
-      continue;
+    // Resolve first, import second. A package that is not installed is a
+    // skip; a package that resolves but fails to import (a broken build, a
+    // missing transitive dependency) is a loud failure, never a thin graph
+    // with exit code 0.
+    let target: string;
+    if (spec.startsWith(".") || nodePath.isAbsolute(spec)) {
+      target = pathToFileURL(nodePath.resolve(spec)).href;
+    } else {
+      try {
+        target = import.meta.resolve(spec);
+      } catch (e) {
+        if (extra.includes(spec)) throw e;
+        log(`pack ${spec}: not installed, skipped`);
+        continue;
+      }
     }
+    const mod = (await import(target)) as Record<string, unknown>;
     const pack = mod.pack as LanguagePack | undefined;
     if (pack === undefined || typeof pack.parse !== "function") {
       if (extra.includes(spec))
@@ -325,7 +340,12 @@ async function cmdValidate(
     throw new UsageError(`--shape must be artifact or canonical`);
   const shape: GraphShape = shapeFlag;
   const text = await fs.readFile(file, "utf8");
-  const result = validate(JSON.parse(text), { shape });
+  const parsed = parseJson(text);
+  if (!parsed.ok) {
+    err(`${file}: not valid JSON: ${parsed.error}`);
+    return 2;
+  }
+  const result = validate(parsed.value, { shape });
   if (result.ok) {
     out(
       `${file}: valid ${shape} graph, ${String(result.graph.nodes.length)} nodes, ${String(result.graph.edges.length)} edges`,
@@ -344,7 +364,12 @@ async function cmdDump(
 ): Promise<number> {
   const file = args.positional[0] ?? nodePath.join(".waterslide", "graph.json");
   const text = await fs.readFile(file, "utf8");
-  const raw = JSON.parse(text) as { parsed_at?: unknown };
+  const parsed = parseJson(text);
+  if (!parsed.ok) {
+    err(`${file}: not valid JSON: ${parsed.error}`);
+    return 2;
+  }
+  const raw = parsed.value as { parsed_at?: unknown };
   const shape: GraphShape =
     raw.parsed_at === undefined ? "canonical" : "artifact";
   const result = validate(raw, { shape });
@@ -355,14 +380,14 @@ async function cmdDump(
     return 2;
   }
   const g = result.graph;
-  const count = (xs: readonly string[]): string =>
-    [
-      ...new Map(
-        [...xs].sort().map((x) => [x, xs.filter((y) => y === x).length]),
-      ),
-    ]
+  const count = (xs: readonly string[]): string => {
+    const tally = new Map<string, number>();
+    for (const x of xs) tally.set(x, (tally.get(x) ?? 0) + 1);
+    return [...tally]
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
       .map(([k, n]) => `${k}=${String(n)}`)
       .join(" ");
+  };
   out(`${file} (${shape})`);
   out(`repos: ${g.repos.map((r) => r.name).join(", ")}`);
   out(`nodes: ${String(g.nodes.length)}  ${count(g.nodes.map((n) => n.kind))}`);
@@ -389,7 +414,10 @@ async function cmdView(args: Args, out: (s: string) => void): Promise<number> {
   const target =
     flag(args, "out") ?? nodePath.join(nodePath.dirname(file), "graph.html");
   const text = await fs.readFile(file, "utf8");
-  const raw = JSON.parse(text) as { parsed_at?: unknown };
+  const parsed = parseJson(text);
+  if (!parsed.ok)
+    throw new UsageError(`${file}: not valid JSON: ${parsed.error}`);
+  const raw = parsed.value as { parsed_at?: unknown };
   const result = validate(raw, {
     shape: raw.parsed_at === undefined ? "canonical" : "artifact",
   });
@@ -404,13 +432,17 @@ async function cmdView(args: Args, out: (s: string) => void): Promise<number> {
   await fs.writeFile(target, html, "utf8");
   out(`wrote ${target}`);
   if (flag(args, "open") === "true") {
-    const opener =
+    // `start` is a cmd.exe builtin, not an executable, so on Windows it must
+    // go through the command interpreter; the empty string is the window title.
+    const [opener, openerArgs] =
       process.platform === "darwin"
-        ? "open"
+        ? (["open", [target]] as const)
         : process.platform === "win32"
-          ? "start"
-          : "xdg-open";
-    execFile(opener, [target], () => undefined);
+          ? (["cmd.exe", ["/c", "start", "", target]] as const)
+          : (["xdg-open", [target]] as const);
+    execFile(opener, [...openerArgs], (e) => {
+      if (e !== null) out(`could not open ${target}: ${e.message}`);
+    });
   }
   return 0;
 }

@@ -90,9 +90,14 @@ export function layoutGraph(graph: {
   // Barycenter ordering, a few alternating sweeps. Positions are ranks, so the
   // result depends only on the graph, never on floating point drift.
   const neighbours = new Map<string, string[]>();
+  const addNeighbour = (a: string, b: string): void => {
+    const list = neighbours.get(a);
+    if (list === undefined) neighbours.set(a, [b]);
+    else list.push(b);
+  };
   for (const e of graph.edges) {
-    neighbours.set(e.from, [...(neighbours.get(e.from) ?? []), e.to]);
-    neighbours.set(e.to, [...(neighbours.get(e.to) ?? []), e.from]);
+    addNeighbour(e.from, e.to);
+    addNeighbour(e.to, e.from);
   }
   const rank = new Map<string, number>();
   const rerank = (): void => {
@@ -101,10 +106,11 @@ export function layoutGraph(graph: {
   };
   rerank();
   const sweep = (band: Node[]): void => {
+    const inThisBand = new Set(band.map((n) => n.id));
     const key = new Map<string, number>();
     for (const n of band) {
       const ranks = (neighbours.get(n.id) ?? [])
-        .filter((id) => rank.has(id) && !band.some((b) => b.id === id))
+        .filter((id) => rank.has(id) && !inThisBand.has(id))
         .map((id) => rank.get(id) as number);
       key.set(
         n.id,

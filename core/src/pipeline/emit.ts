@@ -177,8 +177,14 @@ export async function emitGraph(
   await fs.mkdir(options.stateDir, { recursive: true });
   const target = nodePath.join(options.stateDir, "graph.json");
   const tmp = `${target}.${String(process.pid)}.tmp`;
-  await fs.writeFile(tmp, bytes, "utf8");
-  await fs.rename(tmp, target);
+  try {
+    await fs.writeFile(tmp, bytes, "utf8");
+    await fs.rename(tmp, target);
+  } catch (error) {
+    // graph.json and nothing else: never leave a half-written temp file behind.
+    await fs.rm(tmp, { force: true }).catch(() => undefined);
+    throw error;
+  }
   return { ok: true, path: target, bytes };
 }
 

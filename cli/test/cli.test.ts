@@ -9,15 +9,15 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const run = promisify(execFile);
-const CLI = new URL("../dist/src/index.js", import.meta.url).pathname;
-const TOY = new URL(
-  "../../core/dist/test/helpers/toy-pack-module.js",
-  import.meta.url,
-).pathname;
+const CLI = fileURLToPath(new URL("../dist/src/index.js", import.meta.url));
+const TOY = fileURLToPath(
+  new URL("../../core/dist/test/helpers/toy-pack-module.js", import.meta.url),
+);
 
 /**
  * Exercises the built command line as a user would, with the toy pack loaded
@@ -246,5 +246,21 @@ describe("waterslide parse --pack-option", () => {
       "toy.source_roots",
     );
     expect(malformed.code).toBe(1);
+  });
+});
+
+describe("malformed graph files", () => {
+  it("validate and dump report not-valid-JSON with exit 2; view treats it as usage", async () => {
+    writeFileSync(path.join(root, "bad.json"), "{ not json");
+    const v = await waterslide("validate", "bad.json");
+    expect(v.code).toBe(2);
+    expect(v.stderr).toContain("bad.json: not valid JSON");
+    const d = await waterslide("dump", "bad.json");
+    expect(d.code).toBe(2);
+    expect(d.stderr).toContain("bad.json: not valid JSON");
+    const w = await waterslide("view", "bad.json");
+    expect(w.code).toBe(1);
+    expect(w.stderr).toContain("bad.json: not valid JSON");
+    expect(w.stderr).toContain("usage:");
   });
 });

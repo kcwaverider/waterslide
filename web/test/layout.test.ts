@@ -90,6 +90,22 @@ describe("viewer page", () => {
     expect(html).not.toContain("</script>\n</script>");
   });
 
+  it("escapes every '<' in the embedded JSON, so no label can end the script element", () => {
+    const html = buildViewerHtml(
+      JSON.stringify({ nodes: [], edges: [], repos: [], label: "<!-- <b>" }),
+    );
+    const embedded = html.slice(
+      html.indexOf('<script id="graph"'),
+      html.indexOf("</script>", html.indexOf('<script id="graph"')),
+    );
+    expect(embedded.slice(embedded.indexOf(">") + 1)).not.toContain("<");
+    expect(JSON.parse(embedded.slice(embedded.indexOf(">") + 1))).toMatchObject(
+      {
+        label: "<!-- <b>",
+      },
+    );
+  });
+
   it("escapes a closing script tag inside the graph JSON", () => {
     const html = buildViewerHtml(
       JSON.stringify({
