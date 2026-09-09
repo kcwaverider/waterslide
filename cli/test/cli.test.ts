@@ -307,10 +307,25 @@ describe("waterslide parse --infrastructure", () => {
     expect(graphText()).toBe(plainBytes);
   });
 
-  it("rejects a missing or empty glob as usage", async () => {
+  it("rejects a missing or empty glob as usage, and never takes the next option as the glob", async () => {
     const missing = await waterslide(...base(), "--infrastructure");
     expect(missing.code).toBe(1);
     expect(missing.stderr).toContain("--infrastructure needs a value");
+    // `--infrastructure --canonical` must not run with "--canonical" as the
+    // glob and the canonical flag silently dropped.
+    const swallowed = await waterslide(
+      "parse",
+      `server=${root}/server`,
+      "--pack",
+      TOY,
+      "--infrastructure",
+      "--canonical",
+    );
+    expect(swallowed.code).toBe(1);
+    expect(swallowed.stderr).toContain("--infrastructure needs a value");
+    expect(existsSync(path.join(root, ".waterslide", "graph.json"))).toBe(
+      false,
+    );
     const empty = await waterslide(...base(), "--infrastructure", "  ");
     expect(empty.code).toBe(1);
     expect(empty.stderr).toContain("non-empty glob");

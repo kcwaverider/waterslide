@@ -75,8 +75,12 @@ function parseArgs(argv: readonly string[]): Args {
     ].includes(name);
     if (takesValue && value === undefined) {
       value = argv[i + 1];
+      // The next token is the value only if it is not itself an option:
+      // `--infrastructure --canonical` is a missing glob, not a glob named
+      // "--canonical" and a silently dropped --canonical.
+      if (value === undefined || value.startsWith("--"))
+        throw new UsageError(`--${name} needs a value`);
       i++;
-      if (value === undefined) throw new UsageError(`--${name} needs a value`);
     }
     flags.set(name, [...(flags.get(name) ?? []), value ?? "true"]);
   }
