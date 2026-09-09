@@ -37,6 +37,7 @@ yarn-error.log*
 # layout.json are hand-written and meant to be committed.
 # See docs/03-persisted-files.md for the full ownership split.
 .waterslide/graph.json
+.waterslide/graph.html
 .waterslide/graph.json.gz
 .waterslide/cache/
 .waterslide/positions.json
