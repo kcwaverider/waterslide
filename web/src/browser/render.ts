@@ -1165,7 +1165,9 @@ class Session {
     private readonly controls: Controls,
   ) {
     this.levels = levelsOf(graph.nodes);
-    this.level = this.levels.length - 1;
+    // §2.2 runs the Google Maps way: open coarse, scroll in for detail. The
+    // fine nodes never enter the DOM until the reader asks for them.
+    this.level = 0;
     this.magnification = this.readMagnification();
     this.view = this.aggregate(this.level);
     this.handle = this.draw(undefined);
