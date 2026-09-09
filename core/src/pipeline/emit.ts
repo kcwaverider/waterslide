@@ -116,6 +116,9 @@ export function buildStats(
       ambiguous: resolution.ambiguous,
       dangling: resolution.dangling,
       via_factory: resolution.via_factory,
+      stdlib_dropped: resolution.stdlib_dropped,
+      stdlib_fork_kept: resolution.stdlib_fork_kept,
+      prefix_alias_multi: resolution.prefix_alias_multi,
     },
     parse: stage3,
     diagnostics_by_code: count(diagnostics.map((d) => d.code)),
@@ -210,7 +213,7 @@ export function summarize(run: RunOutput): string {
   );
   const r = run.resolution;
   lines.push(
-    `resolution: ${String(r.resolved)} resolved (${String(r.via_factory)} via factory), ${String(r.ambiguous)} ambiguous, ${String(r.dangling)} dangling`,
+    `resolution: ${String(r.resolved)} resolved (${String(r.via_factory)} via alias prefix), ${String(r.ambiguous)} ambiguous, ${String(r.dangling)} dangling, ${String(r.stdlib_dropped)} stdlib references dropped silently`,
   );
   lines.push("unresolved references by ref_kind:");
   for (const kind of Object.keys(r.unresolved_by_kind).sort() as RefKind[]) {

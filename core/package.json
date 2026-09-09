@@ -10,7 +10,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "data"
   ],
   "dependencies": {
     "picomatch": "^4.0.7",

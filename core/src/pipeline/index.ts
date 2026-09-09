@@ -148,3 +148,4 @@ export * from "./resolve.js";
 export * from "./derive-edges.js";
 export * from "./vendors.js";
 export * from "./emit.js";
+export * from "./stdlib.js";

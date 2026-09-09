@@ -15,6 +15,7 @@ import {
 import { unknownNodeId, unknownNodeLabel } from "../unknown-id.js";
 import type { ResolvedPartialEdge } from "./derive-edges.js";
 import type { Corpus, EdgeOrigin, ProvideOrigin } from "./index.js";
+import { isStdlibRooted } from "./stdlib.js";
 import { vendorByHost, vendorById } from "./vendors.js";
 
 /**
@@ -49,8 +50,14 @@ export interface ResolveStats {
   ambiguous: number;
   /** References that matched nothing and were drawn to an unknown node. */
   dangling: number;
-  /** References resolved through a factory's return annotation (C9). */
+  /** References resolved through an alias-provided prefix: a factory's return annotation (C9) or a module-level singleton (C19). */
   via_factory: number;
+  /** References whose alias target is rooted in the standard library and were dropped silently (C19): no edge, no node, no diagnostic. */
+  stdlib_dropped: number;
+  /** Stdlib-rooted references that were NOT dropped because they are a fork alternative; dropping one leaves a branch_ordinal gap (invariant 15). They dangle as before. Open question C19. */
+  stdlib_fork_kept: number;
+  /** References for which more than one prefix length matched an alias entry; the longest won. The number that says whether widening the prefix rule was safe. */
+  prefix_alias_multi: number;
   /** Unresolved references grouped by ref_kind: the coverage metric (handoff §6 item 6). */
   unresolved_by_kind: Record<RefKind, number>;
   /** Nodes minted by resolution, by kind. */
@@ -318,6 +325,9 @@ export function resolve(corpus: Corpus): ResolveOutput {
     ambiguous: 0,
     dangling: 0,
     via_factory: 0,
+    stdlib_dropped: 0,
+    stdlib_fork_kept: 0,
+    prefix_alias_multi: 0,
     unresolved_by_kind: {
       symbol: 0,
       http: 0,
@@ -428,26 +438,59 @@ export function resolve(corpus: Corpus): ResolveOutput {
       null;
 
     if (targets.length === 0 && ref.ref_kind === "symbol") {
-      // C9: a factory-returned receiver. `services.get_s3_service().upload_bytes`
-      // is a call whose result's type the pack could not see; the defining
-      // file provides `services.get_s3_service()` as an alias of its return
-      // annotation. Longest prefix ending in "()", split at ".", one
-      // re-resolution pass, never a loop.
-      const hit = factoryPrefix(name, origin);
+      // C19 fix 1: an exact alias match whose chain ends in the standard
+      // library resolves to nothing, silently. The stdlib is neither a node
+      // nor a coverage gap, and the pack already treats a direct stdlib call
+      // this way.
+      // A fork alternative cannot be dropped without leaving a gap in its
+      // group's branch_ordinal sequence (invariant 15), so it dangles instead.
+      const isFork = origin.edge.exclusive_group !== null;
+      const aliasTerminals = candidates
+        .filter((c) => c.terminal !== name)
+        .map((c) => c.terminal);
+      if (
+        aliasTerminals.length > 0 &&
+        aliasTerminals.every((t) => isStdlibRooted(t))
+      ) {
+        if (isFork) stats.stdlib_fork_kept += 1;
+        else {
+          stats.stdlib_dropped += 1;
+          return;
+        }
+      }
+
+      // C9 / C19 fix 2: a receiver the pack could not type. The defining file
+      // provides the receiver's name — `services.get_s3_service()` for a
+      // factory result, `auth.oauth2.oauth2_handler` for a module-level
+      // singleton — as an alias of its type. Longest alias-provided prefix,
+      // split at ".", one re-resolution pass, never a loop.
+      const hit = aliasPrefix(name, origin);
       if (hit !== null) {
-        factory = hit;
-        // Every return annotation the factory was given is a candidate
-        // receiver type; the second lookup fans out over all of them and the
-        // ordinary ambiguity path reports every target.
-        candidates = hit.retargeted.flatMap((n) =>
-          lookupVisible(ref.ref_kind, n, origin),
-        );
+        if (hit.matchedPrefixes > 1) stats.prefix_alias_multi += 1;
+        const live = hit.terminals.filter((t) => !isStdlibRooted(t));
+        if (live.length === 0 && !isFork) {
+          // Every candidate type is stdlib: the logger case. Nothing to draw.
+          stats.stdlib_dropped += 1;
+          return;
+        }
+        if (live.length === 0) stats.stdlib_fork_kept += 1;
+        factory = {
+          ...hit,
+          terminals: live.length === 0 ? hit.terminals : live,
+        };
+        // Every type the alias was given is a candidate receiver; the second
+        // lookup fans out over all of them and the ordinary ambiguity path
+        // reports every target.
+        const types = factory.terminals;
+        candidates = types
+          .map((t) => `${t}${name.slice(hit.call.length)}`)
+          .flatMap((n) => lookupVisible(ref.ref_kind, n, origin));
         targets = uniqueTargets(candidates);
         if (targets.length === 0) {
           dangle(
             p,
             from,
-            `matched factory '${hit.call}' with return annotation '${hit.terminals.join("' or '")}' (${hit.files.join(", ")}), but '${hit.retargeted.join("', '")}' matched no definition`,
+            `matched alias prefix '${hit.call}' (target '${types.join("' or '")}' from ${hit.files.join(", ")}), but '${types.map((t) => `${t}${name.slice(hit.call.length)}`).join("', '")}' matched no definition`,
           );
           return;
         }
@@ -475,7 +518,7 @@ export function resolve(corpus: Corpus): ResolveOutput {
         out.push(
           downgrade(
             { ...base, to },
-            `resolved through factory '${factory.call}': its return annotation '${factory.terminals.join("' or '")}' in ${factory.files.join(", ")} names the receiver type; the annotation was not verified at the call site`,
+            `resolved through alias '${factory.call}': its target '${factory.terminals.join("' or '")}' declared in ${factory.files.join(", ")} names the receiver type; the alias was not verified at the call site`,
           ),
         );
       } else if (ref.ref_kind === "http") {
@@ -517,41 +560,53 @@ export function resolve(corpus: Corpus): ResolveOutput {
     }
   }
 
-  /** Longest prefix of `name`, split at ".", ending in "()", that is provided and visible. */
-  function factoryPrefix(
+  /**
+   * Longest prefix of `name`, split only at ".", that is an alias-provided key
+   * in the index and visible from the reference. No general prefix search: a
+   * prefix counts only if a pack provided exactly that name as an alias. The
+   * longest wins; `matchedPrefixes` reports how many lengths matched so the
+   * widening can be measured.
+   */
+  function aliasPrefix(
     name: string,
     origin: EdgeOrigin,
   ): {
     call: string;
     terminals: string[];
     files: string[];
-    retargeted: string[];
+    matchedPrefixes: number;
   } | null {
+    let best: {
+      call: string;
+      terminals: string[];
+      files: string[];
+    } | null = null;
+    let matched = 0;
     for (
       let i = name.lastIndexOf(".");
       i > 0;
       i = name.lastIndexOf(".", i - 1)
     ) {
       const prefix = name.slice(0, i);
-      if (!prefix.endsWith("()")) continue;
-      const entries = lookupVisible("symbol", prefix, origin);
+      const entries = lookupVisible("symbol", prefix, origin).filter(
+        (en) => en.origin.provide.alias_of !== null,
+      );
       if (entries.length === 0) continue;
-      // Several entries for one factory name (annotated in several files, or
-      // with several return types) all count; the caller fans out over them.
-      const terminals = [...new Set(entries.map((en) => en.terminal))].sort(
-        byteCompare,
-      );
-      const files = [...new Set(entries.map((en) => originOf(en)))].sort(
-        byteCompare,
-      );
-      return {
+      matched += 1;
+      if (best !== null) continue; // a shorter prefix: counted, not used
+      // Several alias entries for one prefix (annotated in several files, or
+      // with several types) all count; the caller fans out over them.
+      best = {
         call: prefix,
-        terminals,
-        files,
-        retargeted: terminals.map((t) => `${t}${name.slice(i)}`),
+        terminals: [...new Set(entries.map((en) => en.terminal))].sort(
+          byteCompare,
+        ),
+        files: [...new Set(entries.map((en) => originOf(en)))].sort(
+          byteCompare,
+        ),
       };
     }
-    return null;
+    return best === null ? null : { ...best, matchedPrefixes: matched };
   }
 
   function resolveDatastore(p: Pending, from: Node): void {

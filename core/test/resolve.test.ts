@@ -794,8 +794,217 @@ describe("stage 4: factory-returned receivers (C9)", () => {
       ].sort(),
     );
     const d = r.diagnostics.find((x) => x.message.includes("delete_all"));
-    expect(d?.message).toContain("matched factory 'services.get_s3_service()'");
+    expect(d?.message).toContain(
+      "matched alias prefix 'services.get_s3_service()'",
+    );
     expect(r.stats.via_factory).toBe(0);
+  });
+});
+
+describe("stage 4: stdlib-rooted alias targets (C19 fix 1)", () => {
+  const LOGGER: Origin = { repo: "api", path: "utils/logger.py" };
+  const loggerAlias = provide("utils.logger.logger", null, LOGGER, {
+    alias_of: "logging.getLogger()",
+  });
+
+  it("drops a reference through an alias into the standard library silently: no edge, no node, no diagnostic", () => {
+    const r = resolve(
+      corpus({
+        nodes: [caller],
+        edges: [
+          ref(caller.id, sym("utils.logger.logger.info", 5), API),
+          ref(caller.id, sym("utils.logger.logger.error", 6), API),
+          ref(caller.id, sym("utils.logger.logger", 7), API),
+        ],
+        provides: [loggerAlias],
+      }),
+    );
+    expect(r.edges).toEqual([]);
+    expect(r.nodes).toEqual([caller]);
+    expect(r.diagnostics).toEqual([]);
+    expect(r.stats).toMatchObject({
+      stdlib_dropped: 3,
+      dangling: 0,
+      resolved: 0,
+    });
+    expect(r.stats.unresolved_by_kind.symbol).toBe(0);
+  });
+
+  it("keeps a fork alternative into the stdlib as a dangling edge, so the group's ordinals stay contiguous", () => {
+    const other = node("api:svc/store.py#save");
+    const r = resolve(
+      corpus({
+        nodes: [caller, other],
+        edges: [
+          ref(caller.id, sym("utils.logger.logger.info", 5), API, {
+            exclusive_group: "g",
+            branch_ordinal: 0,
+            condition: { expr: "if x", source_line: 4 },
+          }),
+          ref(caller.id, sym("svc.store.save", 7), API, {
+            exclusive_group: "g",
+            branch_ordinal: 1,
+            condition: { expr: "else", source_line: 6 },
+          }),
+        ],
+        provides: [loggerAlias, provide("svc.store.save", other.id, STORE)],
+      }),
+    );
+    expect(
+      r.edges
+        .map((e) => [e.to, e.branch_ordinal] as const)
+        .sort((a, b) => (a[1] ?? 0) - (b[1] ?? 0)),
+    ).toEqual([
+      ["unknown:symbol:utils.logger.logger.info", 0],
+      [other.id, 1],
+    ]);
+    expect(r.stats).toMatchObject({ stdlib_dropped: 0, stdlib_fork_kept: 1 });
+    validGraph(
+      corpus({
+        nodes: [caller, other],
+        edges: [
+          ref(caller.id, sym("utils.logger.logger.info", 5), API, {
+            exclusive_group: "g",
+            branch_ordinal: 0,
+          }),
+          ref(caller.id, sym("svc.store.save", 7), API, {
+            exclusive_group: "g",
+            branch_ordinal: 1,
+          }),
+        ],
+        provides: [loggerAlias, provide("svc.store.save", other.id, STORE)],
+      }),
+    );
+  });
+
+  it("treats a file-scoped stdlib import alias the same way", () => {
+    const r = resolve(
+      corpus({
+        nodes: [caller],
+        edges: [ref(caller.id, sym("path"), API)],
+        provides: [
+          provide("path", null, API, {
+            alias_of: "os.path",
+            scope: "file",
+            scope_path: API.path,
+          }),
+        ],
+      }),
+    );
+    expect(r.edges).toEqual([]);
+    expect(r.stats.stdlib_dropped).toBe(1);
+  });
+
+  it("does not drop a third-party alias target: it dangles, named by the terminal", () => {
+    const r = resolve(
+      corpus({
+        nodes: [caller],
+        edges: [ref(caller.id, sym("db.database.db.find_one"), API)],
+        provides: [
+          provide("db.database.db", null, STORE, {
+            alias_of: "motor.motor_asyncio.AsyncIOMotorClient()",
+          }),
+        ],
+      }),
+    );
+    expect(r.edges[0]?.to).toBe("unknown:symbol:db.database.db.find_one");
+    expect(r.stats.stdlib_dropped).toBe(0);
+    expect(r.diagnostics[0]?.message).toContain(
+      "matched alias prefix 'db.database.db'",
+    );
+  });
+
+  it("with mixed stdlib and in-repo targets, keeps only the in-repo ones", () => {
+    const t = node("api:svc/x.py#Thing.run");
+    const r = resolve(
+      corpus({
+        nodes: [caller, t],
+        edges: [ref(caller.id, sym("svc.get_thing().run"), API)],
+        provides: [
+          provide("svc.get_thing()", null, STORE, { alias_of: "svc.x.Thing" }),
+          provide(
+            "svc.get_thing()",
+            null,
+            { repo: "api", path: "svc/other.py" },
+            { alias_of: "logging.Logger" },
+          ),
+          provide("svc.x.Thing.run", t.id, { repo: "api", path: "svc/x.py" }),
+        ],
+      }),
+    );
+    expect(r.edges.map((e) => e.to)).toEqual([t.id]);
+    expect(r.stats.stdlib_dropped).toBe(0);
+  });
+});
+
+describe("stage 4: alias-provided prefixes beyond '()' (C19 fix 2)", () => {
+  const AUTH: Origin = { repo: "api", path: "auth/oauth2.py" };
+  const login = node("api:auth/oauth2.py#OAuth2Login", "class");
+  const verify = node("api:auth/oauth2.py#OAuth2Login.verify_password");
+  const provides = [
+    provide("auth.oauth2.OAuth2Login", login.id, AUTH),
+    provide("auth.oauth2.OAuth2Login.verify_password", verify.id, AUTH),
+    provide("auth.oauth2.oauth2_handler", null, AUTH, {
+      alias_of: "auth.oauth2.OAuth2Login",
+    }),
+  ];
+
+  it("resolves a method on a module-level singleton through its alias, inferred, naming the alias and its file", () => {
+    const r = resolve(
+      corpus({
+        nodes: [caller, login, verify],
+        edges: [
+          ref(
+            caller.id,
+            sym("auth.oauth2.oauth2_handler.verify_password", 3),
+            API,
+          ),
+        ],
+        provides,
+      }),
+    );
+    expect(r.edges[0]).toMatchObject({ to: verify.id, confidence: "inferred" });
+    expect(r.edges[0]?.confidence_reason).toContain(
+      "auth.oauth2.oauth2_handler",
+    );
+    expect(r.edges[0]?.confidence_reason).toContain("auth.oauth2.OAuth2Login");
+    expect(r.edges[0]?.confidence_reason).toContain("api:auth/oauth2.py");
+    expect(r.stats).toMatchObject({ via_factory: 1, prefix_alias_multi: 0 });
+  });
+
+  it("uses only alias-provided prefixes: a prefix that is a real node does not retarget", () => {
+    const r = resolve(
+      corpus({
+        nodes: [caller, login],
+        edges: [ref(caller.id, sym("auth.oauth2.OAuth2Login.nope"), API)],
+        provides: [provide("auth.oauth2.OAuth2Login", login.id, AUTH)],
+      }),
+    );
+    expect(r.edges[0]?.to).toBe("unknown:symbol:auth.oauth2.OAuth2Login.nope");
+    expect(r.stats.via_factory).toBe(0);
+  });
+
+  it("takes the longest matching prefix and counts the reference as multi-prefix", () => {
+    const short = node("api:a/s.py#Short.c.m");
+    const long = node("api:a/l.py#Long.m");
+    const r = resolve(
+      corpus({
+        nodes: [caller, short, long],
+        edges: [ref(caller.id, sym("a.b.c.m"), API)],
+        provides: [
+          provide("a.b", null, STORE, { alias_of: "a.s.Short" }),
+          provide("a.b.c", null, STORE, { alias_of: "a.l.Long" }),
+          provide("a.s.Short.c.m", short.id, { repo: "api", path: "a/s.py" }),
+          provide("a.l.Long.m", long.id, { repo: "api", path: "a/l.py" }),
+        ],
+      }),
+    );
+    expect(r.edges.map((e) => e.to)).toEqual([long.id]);
+    expect(r.stats).toMatchObject({
+      via_factory: 1,
+      prefix_alias_multi: 1,
+      ambiguous: 0,
+    });
   });
 });
 
