@@ -54,6 +54,7 @@ describe("canonical serialization (graph model §7.2)", () => {
         nodes: shuffle(graph.nodes, 5).map((n) => ({
           ...n,
           tags: [...n.tags].reverse(),
+          sources: [...n.sources].reverse(),
         })),
         repos: [...graph.repos].reverse(),
         tier_config_hash: graph.tier_config_hash,

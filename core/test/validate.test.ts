@@ -127,6 +127,14 @@ describe("valid fixtures", () => {
       edges.some((e) => e.from === e.to),
       "self-loop edge",
     ).toBe(true);
+    expect(
+      nodes.some((n) => n.sources.length >= 2),
+      "a node with a definition split across files",
+    ).toBe(true);
+    expect(
+      nodes.some((n) => n.sources.length === 0 && n.kind !== "tombstone"),
+      "a synthetic node with empty sources",
+    ).toBe(true);
     const externalByConfig = nodes.filter(
       (n) => n.tier === "external" && n.kind !== "external_service",
     );
@@ -193,6 +201,18 @@ describe("malformed fixtures", () => {
         `${key} is shared by ${files.join(", ")} and is not allowlisted`,
       ).toBe(true);
     }
+    // Guard the allowlist itself: every listed pair must still share a code@path,
+    // so a stale entry fails instead of silently permitting a new collision.
+    for (const [a, b] of ALLOWED_SHARED) {
+      const ea = expected[a];
+      const eb = expected[b];
+      expect(ea, `allowlisted ${a} no longer exists`).toBeDefined();
+      expect(eb, `allowlisted ${b} no longer exists`).toBeDefined();
+      expect(
+        `${ea?.code}@${ea?.path}`,
+        `allowlisted pair ${a}/${b} no longer shares a code@path`,
+      ).toBe(`${eb?.code}@${eb?.path}`);
+    }
   });
 
   it("every ValidationErrorCode has at least one malformed fixture", () => {
@@ -212,6 +232,8 @@ describe("malformed fixtures", () => {
       E_ID_FORMAT: true,
       E_SOURCE_REPO: true,
       E_PARENT_CYCLE: true,
+      E_TOMBSTONE_CONFIDENCE: true,
+      E_DUPLICATE_VALUE: true,
       E_DUPLICATE_ID: true,
       E_EDGE_ENDPOINT: true,
       E_PARENT: true,
@@ -327,7 +349,7 @@ describe("invariant 18: node id format", () => {
         label: "x",
         tier,
         parent: null,
-        source: null,
+        sources: [],
         confidence: "certain",
         confidence_reason: null,
         is_entry_point: false,
@@ -345,15 +367,20 @@ describe("invariant 18: node id format", () => {
 
   it("rejects a repo-scoped node whose source.repo differs from its scope", () => {
     const g = load("single-repo-minimal.json");
-    const n = g.nodes.find((x) => x.source !== null);
-    if (!n || !n.source) throw new Error("no sourced node");
-    n.source.repo = "other";
+    const n = g.nodes.find((x) => x.sources.length > 0);
+    const span = n?.sources[0];
+    if (!n || !span) throw new Error("no sourced node");
+    // Make "other" a real repo so this is an id/source disagreement (18), not an unresolved repo (19).
+    g.repos = [...g.repos, { name: "other", commit: "c" }].sort((a, b) =>
+      byteSort(a.name, b.name),
+    );
+    span.repo = "other";
     const result = validate(g, { shape: "canonical" });
     expect(result.ok).toBe(false);
     if (!result.ok)
       expect(
         result.errors.some(
-          (e) => e.code === "E_ID_FORMAT" && e.message.includes("source.repo"),
+          (e) => e.code === "E_ID_FORMAT" && e.message.includes("span's repo"),
         ),
       ).toBe(true);
   });
@@ -389,9 +416,15 @@ describe("repos[] identity (invariants 1, 18, 19)", () => {
   it("rejects a source.repo that is not in repos[] on nodes, edges and schemas", () => {
     for (const coll of ["nodes", "edges", "schemas"] as const) {
       const g = load("derived-ids.json");
-      const item = g[coll].find((x) => x.source !== null);
-      if (!item || !item.source) throw new Error(`no sourced ${coll}`);
-      item.source.repo = "not-a-repo";
+      if (coll === "nodes") {
+        const span = g.nodes.find((x) => x.sources.length > 0)?.sources[0];
+        if (!span) throw new Error("no sourced node");
+        span.repo = "not-a-repo";
+      } else {
+        const item = g[coll].find((x) => x.source !== null);
+        if (!item || !item.source) throw new Error(`no sourced ${coll}`);
+        item.source.repo = "not-a-repo";
+      }
       const result = validate(g, { shape: "canonical" });
       expect(result.ok).toBe(false);
       if (!result.ok)
@@ -429,6 +462,108 @@ describe("parent chain (invariant 20)", () => {
     const g = load("annotated-edge.json");
     expect(g.edges.some((e) => e.from === e.to)).toBe(true);
     expect(validate(g, { shape: "canonical" }).ok).toBe(true);
+  });
+});
+
+describe("invariants 21–23: line ranges, tombstone confidence, set-valued arrays", () => {
+  it("rejects line_end before line_start on a node span, an edge source and a schema source, at the object", () => {
+    const g = load("derived-ids.json");
+    // Pick spans starting after line 1 so line_end stays positive and the
+    // structural phase passes; this test is about the semantic pair check.
+    const span = g.nodes.find((n) => (n.sources[0]?.line_start ?? 0) > 1)
+      ?.sources[0];
+    const edge = g.edges.find(
+      (e) => e.source !== null && e.source.line_start > 1,
+    );
+    const schema = g.schemas.find(
+      (s) => s.source !== null && s.source.line_start > 1,
+    );
+    if (!span || !edge?.source || !schema?.source)
+      throw new Error("fixture shape changed");
+    span.line_end = span.line_start - 1;
+    edge.source.line_end = edge.source.line_start - 1;
+    schema.source.line_end = schema.source.line_start - 1;
+    const result = validate(g, { shape: "canonical" });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.map((e) => e.code)).toEqual([
+      "E_RANGE",
+      "E_RANGE",
+      "E_RANGE",
+    ]);
+    const paths = result.errors.map((e) => e.path);
+    expect(paths.some((p) => /^\$\.nodes\[\d+\]\.sources\[0\]$/.test(p))).toBe(
+      true,
+    );
+    expect(paths.some((p) => /^\$\.edges\[\d+\]\.source$/.test(p))).toBe(true);
+    expect(paths.some((p) => /^\$\.schemas\[\d+\]\.source$/.test(p))).toBe(
+      true,
+    );
+  });
+
+  it("accepts line_end equal to line_start and line_end null", () => {
+    const g = load("derived-ids.json");
+    const span = g.nodes.find((n) => n.sources.length > 0)?.sources[0];
+    const edge = g.edges.find((e) => e.source !== null);
+    if (!span || !edge?.source) throw new Error("fixture shape changed");
+    span.line_end = span.line_start;
+    edge.source.line_end = null;
+    expect(validate(g, { shape: "canonical" }).ok).toBe(true);
+  });
+
+  it("rejects a tombstone that is certain, or that is not inferred", () => {
+    for (const mutate of [
+      (n: { confidence: string; confidence_reason: string | null }) => {
+        n.confidence = "certain";
+        n.confidence_reason = null;
+      },
+      (n: { confidence: string; confidence_reason: string | null }) => {
+        n.confidence = "annotated";
+      },
+    ]) {
+      const g = load("tombstone-broken-edge.json");
+      const t = g.nodes.find((n) => n.kind === "tombstone");
+      if (!t) throw new Error("no tombstone");
+      mutate(t);
+      const result = validate(g, { shape: "canonical" });
+      expect(result.ok).toBe(false);
+      if (!result.ok)
+        expect(result.errors.map((e) => e.code)).toEqual([
+          "E_TOMBSTONE_CONFIDENCE",
+        ]);
+    }
+  });
+
+  it("rejects duplicate tags and classification entries, not just skips_tiers", () => {
+    const g = load("derived-ids.json");
+    const n = g.nodes.find((x) => x.tags.length > 0);
+    const f = g.schemas[0]?.fields.find((x) => x.classification.length > 0);
+    if (!n || !f) throw new Error("fixture shape changed");
+    n.tags = [...n.tags, ...n.tags].sort(byteSort);
+    f.classification = [...f.classification, ...f.classification].sort(
+      byteSort,
+    );
+    const result = validate(g, { shape: "canonical" });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.map((e) => e.code)).toEqual([
+      "E_DUPLICATE_VALUE",
+      "E_DUPLICATE_VALUE",
+    ]);
+  });
+
+  it("treats unsorted sources as a canonical-order violation in canonical shape only", () => {
+    const g = load("split-definition.json");
+    const n = g.nodes.find((x) => x.sources.length === 2);
+    if (!n) throw new Error("no split node");
+    n.sources.reverse();
+    const canonical = validate(g, { shape: "canonical" });
+    expect(canonical.ok).toBe(false);
+    if (!canonical.ok)
+      expect(canonical.errors.map((e) => e.code)).toEqual([
+        "E_CANONICAL_ORDER",
+      ]);
+    expect(validate(toArtifact(g), { shape: "artifact" }).ok).toBe(true);
   });
 });
 
