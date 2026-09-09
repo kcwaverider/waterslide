@@ -915,6 +915,72 @@ describe("stage 4: stdlib-rooted alias targets (C19 fix 1)", () => {
     expect(r.stats).toMatchObject({ stdlib_dropped: 3, stdlib_fork_kept: 0 });
   });
 
+  it("decides per alternative: a stdlib edge sharing an ordinal with a real call drops, a trailing sole one drops, a gapping sole one is kept", () => {
+    const write = node("api:svc/store.py#save");
+    const r = resolve(
+      corpus({
+        nodes: [caller, write],
+        edges: [
+          // ordinal 0: logger only -> would gap -> kept
+          ref(caller.id, sym("utils.logger.logger.info", 166), API, {
+            exclusive_group: "g",
+            branch_ordinal: 0,
+          }),
+          // ordinal 1: logger AND a real write -> the logger drops, the ordinal survives
+          ref(caller.id, sym("utils.logger.logger.info", 169), API, {
+            exclusive_group: "g",
+            branch_ordinal: 1,
+          }),
+          ref(caller.id, sym("svc.store.save", 170), API, {
+            exclusive_group: "g",
+            branch_ordinal: 1,
+            kind: "write",
+          }),
+          // ordinal 2: logger only, above the last survivor -> no gap -> drops
+          ref(caller.id, sym("utils.logger.logger.warning", 176), API, {
+            exclusive_group: "g",
+            branch_ordinal: 2,
+          }),
+        ],
+        provides: [loggerAlias, provide("svc.store.save", write.id, STORE)],
+      }),
+    );
+    const byLine = new Map(r.edges.map((e) => [e.source?.line_start, e.to]));
+    expect([...byLine.keys()].sort()).toEqual([166, 170]);
+    expect(byLine.get(166)).toBe("unknown:symbol:utils.logger.logger.info");
+    expect(byLine.get(170)).toBe(write.id);
+    expect(r.stats).toMatchObject({ stdlib_dropped: 2, stdlib_fork_kept: 1 });
+    // Ordinals present afterwards are contiguous: 0 (kept logger) and 1 (write).
+    expect([...new Set(r.edges.map((e) => e.branch_ordinal))].sort()).toEqual([
+      0, 1,
+    ]);
+    validGraph(
+      corpus({
+        nodes: [caller, write],
+        edges: [
+          ref(caller.id, sym("utils.logger.logger.info", 166), API, {
+            exclusive_group: "g",
+            branch_ordinal: 0,
+          }),
+          ref(caller.id, sym("utils.logger.logger.info", 169), API, {
+            exclusive_group: "g",
+            branch_ordinal: 1,
+          }),
+          ref(caller.id, sym("svc.store.save", 170), API, {
+            exclusive_group: "g",
+            branch_ordinal: 1,
+            kind: "write",
+          }),
+          ref(caller.id, sym("utils.logger.logger.warning", 176), API, {
+            exclusive_group: "g",
+            branch_ordinal: 2,
+          }),
+        ],
+        provides: [loggerAlias, provide("svc.store.save", write.id, STORE)],
+      }),
+    );
+  });
+
   it("treats a file-scoped stdlib import alias the same way", () => {
     const r = resolve(
       corpus({
