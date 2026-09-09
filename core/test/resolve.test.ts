@@ -859,6 +859,9 @@ describe("stage 4: stdlib-rooted alias targets (C19 fix 1)", () => {
       [other.id, 1],
     ]);
     expect(r.stats).toMatchObject({ stdlib_dropped: 0, stdlib_fork_kept: 1 });
+    expect(
+      r.edges.find((e) => e.to.startsWith("unknown:"))?.confidence_reason,
+    ).toContain("branch_ordinal gap");
     validGraph(
       corpus({
         nodes: [caller, other],
@@ -875,6 +878,41 @@ describe("stage 4: stdlib-rooted alias targets (C19 fix 1)", () => {
         provides: [loggerAlias, provide("svc.store.save", other.id, STORE)],
       }),
     );
+  });
+
+  it("drops a stdlib fork alternative when the survivors stay contiguous, and a whole group when every alternative is stdlib", () => {
+    const other = node("api:svc/store.py#save");
+    const r = resolve(
+      corpus({
+        nodes: [caller, other],
+        edges: [
+          // Group g1: real alternative 0, logger alternative 1 -> logger dropped, no gap.
+          ref(caller.id, sym("svc.store.save", 3), API, {
+            exclusive_group: "g1",
+            branch_ordinal: 0,
+          }),
+          ref(caller.id, sym("utils.logger.logger.info", 5), API, {
+            exclusive_group: "g1",
+            branch_ordinal: 1,
+          }),
+          // Group g2: every alternative is a logger call -> the group vanishes.
+          ref(caller.id, sym("utils.logger.logger.warning", 8), API, {
+            exclusive_group: "g2",
+            branch_ordinal: 0,
+          }),
+          ref(caller.id, sym("utils.logger.logger.error", 10), API, {
+            exclusive_group: "g2",
+            branch_ordinal: 1,
+          }),
+        ],
+        provides: [loggerAlias, provide("svc.store.save", other.id, STORE)],
+      }),
+    );
+    expect(r.edges.map((e) => [e.to, e.branch_ordinal])).toEqual([
+      [other.id, 0],
+    ]);
+    expect(r.nodes.some((n) => n.kind === "unknown")).toBe(false);
+    expect(r.stats).toMatchObject({ stdlib_dropped: 3, stdlib_fork_kept: 0 });
   });
 
   it("treats a file-scoped stdlib import alias the same way", () => {
