@@ -74,11 +74,6 @@
     "path": "$.edges[4].branch_ordinal",
     "why": "branch_ordinal set on an edge with no exclusive_group (invariant 14)"
   },
-  "duplicate-branch-ordinal.json": {
-    "code": "E_BRANCH_ORDINAL_DUPLICATE",
-    "path": "$.edges[1].branch_ordinal",
-    "why": "two alternatives in one exclusive_group share branch_ordinal 0 (invariant 15)"
-  },
   "skips-tiers-into-external.json": {
     "code": "E_SKIPS_TIERS_EXCLUDED",
     "path": "$.edges[3].skips_tiers",
@@ -238,5 +233,10 @@
     "code": "E_UNKNOWN_NODE",
     "path": "$.nodes[5].confidence_reason",
     "why": "an unknown node with confidence_reason null; it must name the unresolved reference and where it originated (invariant 24)"
+  },
+  "branch-ordinal-gap.json": {
+    "code": "E_BRANCH_ORDINAL_GAP",
+    "path": "$.edges[1].branch_ordinal",
+    "why": "one exclusive_group carries ordinals 0 and 2 with no 1; ordinals number alternatives in source order and must be contiguous from 0 (invariant 15)"
   }
 }

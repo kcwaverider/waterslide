@@ -61,7 +61,7 @@ export type ValidationErrorCode =
   | "E_TOMBSTONE_SOURCE"
   | "E_SOURCE_COUNT"
   | "E_BRANCH_ORDINAL"
-  | "E_BRANCH_ORDINAL_DUPLICATE"
+  | "E_BRANCH_ORDINAL_GAP"
   | "E_SKIPS_TIERS_EXCLUDED"
   | "E_UNKNOWN_NODE";
 
@@ -406,7 +406,12 @@ function checkInvariants(
     }
   });
 
-  const ordinalsByGroup = new Map<string, Map<number, string>>();
+  // 15. Ordinals within a group are contiguous from 0. Collected per group in
+  // array order; the gap is reported once, at the first edge past it.
+  const ordinalsByGroup = new Map<
+    string,
+    { ordinal: number; index: number }[]
+  >();
 
   graph.edges.forEach((edge, i) => {
     const p = `$.edges[${String(i)}]`;
@@ -480,21 +485,11 @@ function checkInvariants(
       );
     }
 
-    // 15. branch_ordinal unique within group.
+    // 15. Collect ordinals; the contiguity check runs after the loop.
     if (edge.exclusive_group !== null && edge.branch_ordinal !== null) {
-      const seen =
-        ordinalsByGroup.get(edge.exclusive_group) ?? new Map<number, string>();
-      const prior = seen.get(edge.branch_ordinal);
-      if (prior !== undefined) {
-        err(
-          "E_BRANCH_ORDINAL_DUPLICATE",
-          `${p}.branch_ordinal`,
-          `branch_ordinal ${String(edge.branch_ordinal)} in exclusive_group "${edge.exclusive_group}" is already used by edge "${prior}"`,
-        );
-      } else {
-        seen.set(edge.branch_ordinal, edge.id);
-        ordinalsByGroup.set(edge.exclusive_group, seen);
-      }
+      const list = ordinalsByGroup.get(edge.exclusive_group) ?? [];
+      list.push({ ordinal: edge.branch_ordinal, index: i });
+      ordinalsByGroup.set(edge.exclusive_group, list);
     }
 
     // 16. skips_tiers empty for excluded endpoints.
@@ -515,6 +510,29 @@ function checkInvariants(
       }
     }
   });
+
+  // 15. branch_ordinal is the zero-based position of the ALTERNATIVE within
+  // its exclusive_group, in source order. Two edges from one alternative share
+  // an ordinal — the fork edge-id key already includes `to`, so they stay
+  // distinct — but the ordinals present must run 0, 1, 2… with no gaps, or the
+  // count of alternatives cannot be read from the group.
+  for (const [group, entries] of ordinalsByGroup) {
+    const present = [...new Set(entries.map((e) => e.ordinal))].sort(
+      (a, b) => a - b,
+    );
+    const firstGap = present.findIndex((o, k) => o !== k);
+    if (firstGap === -1) continue;
+    const missing = firstGap; // present[firstGap] > firstGap, so this value is absent
+    const offender = entries
+      .filter((e) => e.ordinal > missing)
+      .sort((a, b) => a.ordinal - b.ordinal || a.index - b.index)[0];
+    if (offender === undefined) continue;
+    err(
+      "E_BRANCH_ORDINAL_GAP",
+      `$.edges[${String(offender.index)}].branch_ordinal`,
+      `exclusive_group "${group}" has branch_ordinal ${String(offender.ordinal)} but no ${String(missing)}; ordinals are the zero-based positions of alternatives in source order and must be contiguous from 0 (graph model §3.3)`,
+    );
+  }
 
   graph.schemas.forEach((schema, i) => {
     const p = `$.schemas[${String(i)}]`;

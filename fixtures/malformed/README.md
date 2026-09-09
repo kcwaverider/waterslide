@@ -40,7 +40,7 @@ coincidence of index is not worth breaking either fixture to avoid.
 | `missing-key.json` | `E_MISSING_KEY` | broken_reason key omitted instead of null (invariant 12, §2.5) |
 | `source-count-mismatch.json` | `E_SOURCE_COUNT` | source non-null but source_count 0 (invariant 13) |
 | `branch-ordinal-without-group.json` | `E_BRANCH_ORDINAL` | branch_ordinal set on an edge with no exclusive_group (invariant 14) |
-| `duplicate-branch-ordinal.json` | `E_BRANCH_ORDINAL_DUPLICATE` | two alternatives in one exclusive_group share branch_ordinal 0 (invariant 15) |
+| `branch-ordinal-gap.json` | `E_BRANCH_ORDINAL_GAP` | one exclusive_group carries ordinals 0 and 2 with no 1; ordinals number alternatives in source order and must be contiguous from 0 (invariant 15) |
 | `skips-tiers-into-external.json` | `E_SKIPS_TIERS_EXCLUDED` | external_call edge with non-empty skips_tiers; external is not a depth (invariant 16) |
 | `wrong-schema-version.json` | `E_SCHEMA_VERSION` | schema_version 2 against a version 1 model; must fail loudly (handoff §5.2) |
 | `canonical-with-volatile.json` | `E_VOLATILE_SHAPE` | parsed_at present in a graph validated as canonical shape (graph model §7.3) |

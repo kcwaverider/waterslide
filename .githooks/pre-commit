@@ -2,6 +2,11 @@
 # Handoff §4.2: the gate is this hook, not CI. Typecheck, lint, test — on every commit.
 set -e
 cd "$(git rev-parse --show-toplevel)"
+# git exports GIT_DIR, GIT_INDEX_FILE and friends to hooks. Anything the test
+# suite spawns would then operate on THIS repository instead of its own temp
+# directories — a test's `git commit` in a scratch tree once landed on the
+# current branch. Strip them before running anything that might call git.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX GIT_NAMESPACE
 echo "pre-commit: typecheck"
 npm run --silent typecheck
 echo "pre-commit: lint"
