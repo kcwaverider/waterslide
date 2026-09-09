@@ -72,6 +72,21 @@ describe("collapse (graph model §3.3)", () => {
     });
   });
 
+  it("keeps annotated wherever it sorts, with that occurrence's reason", () => {
+    const out = collapseEdges([
+      site(3),
+      site(9, "a.py", {
+        confidence: "annotated",
+        confidence_reason: "hand-annotated: dynamic dispatch",
+      }),
+    ]);
+    expect(out[0]).toMatchObject({
+      confidence: "annotated",
+      confidence_reason: "hand-annotated: dynamic dispatch",
+      source: { line_start: 3 },
+    });
+  });
+
   it("keeps different kinds, targets and fork alternatives apart, and collapses same-key fork edges", () => {
     const out = collapseEdges([
       site(1),

@@ -174,6 +174,42 @@ describe("stage 4: symbol resolution (parser §4.1, §3.4)", () => {
     expect(gone?.message).toContain("via alias to 'svc.missing.thing'");
   });
 
+  it("treats duplicate aliases and reconverging alias paths as one target, not a cycle", () => {
+    const d = node("api:svc/d.py#d");
+    const r = resolve(
+      corpus({
+        nodes: [caller, d],
+        edges: [ref(caller.id, sym("a"), API), ref(caller.id, sym("dup"), API)],
+        provides: [
+          // Diamond: a -> b, a -> c, b -> d, c -> d.
+          provide("a", null, STORE, { alias_of: "b" }),
+          provide(
+            "a",
+            null,
+            { repo: "api", path: "svc/other.py" },
+            { alias_of: "c" },
+          ),
+          provide("b", null, STORE, { alias_of: "svc.d.d" }),
+          provide("c", null, STORE, { alias_of: "svc.d.d" }),
+          // Same-level duplicate: two identical alias entries.
+          provide("dup", null, STORE, { alias_of: "svc.d.d" }),
+          provide(
+            "dup",
+            null,
+            { repo: "api", path: "svc/other.py" },
+            { alias_of: "svc.d.d" },
+          ),
+          provide("svc.d.d", d.id, { repo: "api", path: "svc/d.py" }),
+        ],
+      }),
+    );
+    expect(r.edges.map((e) => e.to)).toEqual([d.id, d.id]);
+    expect(
+      r.diagnostics.filter((x) => x.code === "unresolvable_provide_alias"),
+    ).toEqual([]);
+    expect(r.stats).toMatchObject({ resolved: 2, ambiguous: 0, dangling: 0 });
+  });
+
   it("respects visibility: private is same file, module is same repo", () => {
     const priv = node("api:svc/store.py#_hidden");
     const mod = node("api:svc/store.py#internal");
@@ -628,7 +664,10 @@ describe("stage 4: topics, datastores, externals", () => {
       label: "Anthropic v1",
       confidence: "inferred",
     });
-    expect(r.edges.find((e) => e.to === "ext:anthropic/v1")?.confidence).toBe(
+    const byUrl = r.edges.find((e) => e.to === "ext:anthropic/v1");
+    expect(byUrl?.confidence).toBe("inferred");
+    expect(byUrl?.confidence_reason).toContain("api.anthropic.com");
+    expect(r.edges.find((e) => e.to === "ext:cohere/embed")?.confidence).toBe(
       "certain",
     );
     expect(r.nodes.some((n) => n.id.startsWith("unknown:external:https"))).toBe(
@@ -695,6 +734,43 @@ describe("stage 4: factory-returned receivers (C9)", () => {
     );
     expect(r.edges[0]?.confidence_reason).toContain("api:services/__init__.py");
     expect(r.stats).toMatchObject({ resolved: 1, via_factory: 1, dangling: 0 });
+  });
+
+  it("fans out over every return annotation a factory was given", () => {
+    const other = node("api:services/other_service.py#OtherService");
+    const otherUpload = node(
+      "api:services/other_service.py#OtherService.upload_bytes",
+    );
+    const OTHER: Origin = { repo: "api", path: "services/other_service.py" };
+    const r = resolve(
+      corpus({
+        nodes: [caller, s3, upload, other, otherUpload],
+        edges: [
+          ref(
+            caller.id,
+            sym("services.get_s3_service().upload_bytes", 12),
+            API,
+          ),
+        ],
+        provides: [
+          ...provides,
+          provide("services.other_service.OtherService", other.id, OTHER),
+          provide(
+            "services.other_service.OtherService.upload_bytes",
+            otherUpload.id,
+            OTHER,
+          ),
+          provide("services.get_s3_service()", null, OTHER, {
+            alias_of: "services.other_service.OtherService",
+          }),
+        ],
+      }),
+    );
+    expect(r.edges.map((e) => e.to).sort()).toEqual(
+      [otherUpload.id, upload.id].sort(),
+    );
+    expect(r.edges.every((e) => e.confidence === "inferred")).toBe(true);
+    expect(r.stats.ambiguous).toBe(1);
   });
 
   it("only splits at prefixes ending in '()', and makes one pass", () => {

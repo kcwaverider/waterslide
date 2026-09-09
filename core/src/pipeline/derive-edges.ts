@@ -74,8 +74,10 @@ export function collapseEdges(
     const sameCondition = ordered.every(
       (e) => JSON.stringify(e.condition) === firstCondition,
     );
+    // Position-independent: an author's annotation survives wherever it sorts.
+    const annotated = ordered.find((e) => e.confidence === "annotated");
     const confidence =
-      first.confidence === "annotated"
+      annotated !== undefined
         ? "annotated"
         : anyInferred
           ? "inferred"
@@ -84,7 +86,11 @@ export function collapseEdges(
       ...first,
       confidence,
       confidence_reason:
-        confidence === "inferred" ? inferredReason : first.confidence_reason,
+        confidence === "annotated"
+          ? (annotated?.confidence_reason ?? null)
+          : confidence === "inferred"
+            ? inferredReason
+            : first.confidence_reason,
       condition: sameCondition ? first.condition : null,
       is_error_path: ordered.every((e) => e.is_error_path),
       source: first.source,

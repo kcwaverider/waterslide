@@ -165,8 +165,18 @@ function resolveTargets(
     }
     return { origin: start, targets: [id], terminal: start.provide.name };
   }
-  let frontier: string[] = [start.provide.alias_of];
-  const seen = new Set<string>([start.provide.name]);
+  // Each hop carries its own ancestry. A cycle is a path revisiting one of ITS
+  // OWN ancestors; two paths reaching the same name (a duplicate alias, or a
+  // diamond that reconverges) are not a cycle and lose nothing. A name already
+  // expanded through another path is not expanded again, which bounds the walk.
+  interface Hop {
+    readonly name: string;
+    readonly ancestry: ReadonlySet<string>;
+  }
+  let frontier: Hop[] = [
+    { name: start.provide.alias_of, ancestry: new Set([start.provide.name]) },
+  ];
+  const expanded = new Set<string>();
   const targets = new Set<string>();
   let terminal = start.provide.alias_of;
   for (let depth = 1; frontier.length > 0; depth++) {
@@ -180,30 +190,43 @@ function resolveTargets(
       );
       return null;
     }
-    const next: string[] = [];
-    for (const name of [...frontier].sort(byteCompare)) {
-      if (seen.has(name)) {
+    const next = new Map<string, Hop>();
+    for (const hop of [...frontier].sort((a, b) =>
+      byteCompare(a.name, b.name),
+    )) {
+      if (hop.ancestry.has(hop.name)) {
         diagnostics.push(
           diag(
             "unresolvable_provide_alias",
-            `provide "${start.provide.name}" (${kind}) aliases in a cycle through "${name}"; dropped`,
+            `provide "${start.provide.name}" (${kind}) aliases in a cycle through "${hop.name}"; dropped`,
             start,
           ),
         );
         return null;
       }
-      seen.add(name);
-      terminal = name;
-      const candidates = (direct.get(indexKey(kind, name)) ?? []).filter(
+      if (expanded.has(hop.name)) continue;
+      expanded.add(hop.name);
+      terminal = hop.name;
+      const candidates = (direct.get(indexKey(kind, hop.name)) ?? []).filter(
         (c) => c.provide.scope === "global",
       );
+      const ancestry = new Set([...hop.ancestry, hop.name]);
       for (const c of candidates) {
-        if (c.provide.alias_of !== null) next.push(c.provide.alias_of);
-        else if (c.provide.node_id !== null && nodeIds.has(c.provide.node_id))
+        if (c.provide.alias_of !== null) {
+          if (!next.has(c.provide.alias_of))
+            next.set(c.provide.alias_of, {
+              name: c.provide.alias_of,
+              ancestry,
+            });
+        } else if (
+          c.provide.node_id !== null &&
+          nodeIds.has(c.provide.node_id)
+        ) {
           targets.add(c.provide.node_id);
+        }
       }
     }
-    frontier = next;
+    frontier = [...next.values()];
   }
   return { origin: start, targets: [...targets].sort(byteCompare), terminal };
 }
@@ -400,7 +423,8 @@ export function resolve(corpus: Corpus): ResolveOutput {
     const name = refLookupName(ref);
     let candidates = lookupVisible(ref.ref_kind, name, origin);
     let targets = uniqueTargets(candidates);
-    let factory: { call: string; terminal: string; file: string } | null = null;
+    let factory: { call: string; terminals: string[]; files: string[] } | null =
+      null;
 
     if (targets.length === 0 && ref.ref_kind === "symbol") {
       // C9: a factory-returned receiver. `services.get_s3_service().upload_bytes`
@@ -411,13 +435,18 @@ export function resolve(corpus: Corpus): ResolveOutput {
       const hit = factoryPrefix(name, origin);
       if (hit !== null) {
         factory = hit;
-        candidates = lookupVisible(ref.ref_kind, hit.retargeted, origin);
+        // Every return annotation the factory was given is a candidate
+        // receiver type; the second lookup fans out over all of them and the
+        // ordinary ambiguity path reports every target.
+        candidates = hit.retargeted.flatMap((n) =>
+          lookupVisible(ref.ref_kind, n, origin),
+        );
         targets = uniqueTargets(candidates);
         if (targets.length === 0) {
           dangle(
             p,
             from,
-            `matched factory '${hit.call}' with return annotation '${hit.terminal}' (${hit.file}), but '${hit.retargeted}' matched no definition`,
+            `matched factory '${hit.call}' with return annotation '${hit.terminals.join("' or '")}' (${hit.files.join(", ")}), but '${hit.retargeted.join("', '")}' matched no definition`,
           );
           return;
         }
@@ -445,7 +474,7 @@ export function resolve(corpus: Corpus): ResolveOutput {
         out.push(
           downgrade(
             { ...base, to },
-            `resolved through factory '${factory.call}': its return annotation '${factory.terminal}' in ${factory.file} names the receiver type; the annotation was not verified at the call site`,
+            `resolved through factory '${factory.call}': its return annotation '${factory.terminals.join("' or '")}' in ${factory.files.join(", ")} names the receiver type; the annotation was not verified at the call site`,
           ),
         );
       } else if (ref.ref_kind === "http") {
@@ -493,9 +522,9 @@ export function resolve(corpus: Corpus): ResolveOutput {
     origin: EdgeOrigin,
   ): {
     call: string;
-    terminal: string;
-    file: string;
-    retargeted: string;
+    terminals: string[];
+    files: string[];
+    retargeted: string[];
   } | null {
     for (
       let i = name.lastIndexOf(".");
@@ -506,19 +535,19 @@ export function resolve(corpus: Corpus): ResolveOutput {
       if (!prefix.endsWith("()")) continue;
       const entries = lookupVisible("symbol", prefix, origin);
       if (entries.length === 0) continue;
-      // Several entries for one factory name would be an ambiguity of the
-      // factory itself; take them all into account by retargeting against
-      // each terminal and letting the second lookup fan out.
+      // Several entries for one factory name (annotated in several files, or
+      // with several return types) all count; the caller fans out over them.
       const terminals = [...new Set(entries.map((en) => en.terminal))].sort(
         byteCompare,
       );
-      const first = entries[0] as IndexEntry;
-      const terminal = terminals[0] as string;
+      const files = [...new Set(entries.map((en) => originOf(en)))].sort(
+        byteCompare,
+      );
       return {
         call: prefix,
-        terminal,
-        file: originOf(first),
-        retargeted: `${terminal}${name.slice(i)}`,
+        terminals,
+        files,
+        retargeted: terminals.map((t) => `${t}${name.slice(i)}`),
       };
     }
     return null;
@@ -639,7 +668,10 @@ export function resolve(corpus: Corpus): ResolveOutput {
     }
     stats.resolved += 1;
     const base = p.origin.edge;
-    if (p.ref.ref_kind === "topic")
+    // Topics are always inferred (the broker holds the mapping); an external
+    // matched by bare URL host is inferred; a datastore or SDK-symbol external
+    // keeps the pack's confidence.
+    if (p.ref.ref_kind === "topic" || mint.confidence === "inferred")
       out.push(downgrade({ ...base, to: mint.id }, mint.reason));
     else out.push({ ...base, to: mint.id });
   }
