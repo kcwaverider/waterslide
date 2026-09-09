@@ -96,6 +96,23 @@ describe("stage 1: discovery (parser §1)", () => {
     expect(state.dirty).toBe(true);
   });
 
+  it("ignores GIT_DIR from an enclosing hook: a non-git directory is still non-git", async () => {
+    const saved = process.env.GIT_DIR;
+    // Point GIT_DIR at this repository, as a pre-commit hook would.
+    process.env.GIT_DIR = new URL("../../.git", import.meta.url).pathname;
+    try {
+      const state = await captureRepoState({
+        name: "api",
+        path: `${tree.root}/api`,
+      });
+      expect(state.commit).toBe(NULL_COMMIT);
+      expect(state.dirty).toBe(true);
+    } finally {
+      if (saved === undefined) delete process.env.GIT_DIR;
+      else process.env.GIT_DIR = saved;
+    }
+  });
+
   it("captures HEAD and dirtiness for a git checkout", async () => {
     tree.gitInit("ios");
     const clean = await captureRepoState({

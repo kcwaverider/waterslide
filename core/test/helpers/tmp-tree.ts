@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { gitCleanEnv } from "../../src/pipeline/discover.js";
 
 /** A throwaway directory tree for pipeline tests. */
 export class TmpTree {
@@ -28,7 +29,14 @@ export class TmpTree {
       execFileSync(
         "git",
         ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args],
-        { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+        {
+          cwd: dir,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+          // Never inherit GIT_DIR: under a git hook that would point these
+          // commands at the real repository.
+          env: gitCleanEnv(),
+        },
       );
     git("init", "-q");
     git("add", "-A");
@@ -39,6 +47,7 @@ export class TmpTree {
     return execFileSync("git", ["rev-parse", "HEAD"], {
       cwd: path.join(this.root, rel),
       encoding: "utf8",
+      env: gitCleanEnv(),
     }).trim();
   }
 

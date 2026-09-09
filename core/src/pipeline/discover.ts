@@ -10,6 +10,20 @@ import { FIXED_ID_SCOPES } from "../model/enums.js";
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * The environment git subprocesses run with: the caller's, minus every
+ * `GIT_*` variable. When this code runs inside a git hook, git has exported
+ * GIT_DIR and GIT_INDEX_FILE, and a bare `git -C <repo>` would silently
+ * operate on the hook's repository rather than the one being parsed.
+ */
+export function gitCleanEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (!k.startsWith("GIT_")) env[k] = v;
+  }
+  return env;
+}
+
 /** Parser §1.1 — one entry of the repo list. */
 export const RepoInputSchema = z.strictObject({
   name: z.string(),
@@ -173,18 +187,17 @@ async function walk(
 export async function captureRepoState(repo: RepoInput): Promise<RepoState> {
   const root = nodePath.resolve(expandHome(repo.path));
   try {
-    const { stdout: head } = await execFileAsync("git", [
-      "-C",
-      root,
-      "rev-parse",
-      "HEAD",
-    ]);
-    const { stdout: status } = await execFileAsync("git", [
-      "-C",
-      root,
-      "status",
-      "--porcelain",
-    ]);
+    const env = gitCleanEnv();
+    const { stdout: head } = await execFileAsync(
+      "git",
+      ["-C", root, "rev-parse", "HEAD"],
+      { env },
+    );
+    const { stdout: status } = await execFileAsync(
+      "git",
+      ["-C", root, "status", "--porcelain"],
+      { env },
+    );
     return {
       name: repo.name,
       path: root,
