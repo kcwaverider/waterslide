@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import {
-  NodeUpdateSchema,
   PackResultSchema,
   edgeId,
   serializeCanonical,
   validate,
+  toPerFileResult,
   type PartialEdge,
   type PerFileResult,
   type UnresolvedRef,
@@ -30,7 +30,11 @@ async function fileResult(
   path: string,
   content: string,
 ): Promise<PerFileResult> {
-  return { repo, path, result: await swift.parse(repo, path, content, {}) };
+  return toPerFileResult(
+    repo,
+    path,
+    await swift.parse(repo, path, content, {}),
+  );
 }
 
 function ref(e: PartialEdge): UnresolvedRef | null {
@@ -48,15 +52,18 @@ describe("manifest and module export", () => {
     expect(pack.manifest.frameworks).toContain("swiftui");
   });
 
-  it("returns exactly the five contract returns from parse()", async () => {
+  it("returns the five contract returns plus file-level pack_data from parse()", async () => {
     const r = await pack.parse("k", "Kitchen.swift", kitchen, {});
     expect(Object.keys(r).sort()).toEqual([
       "diagnostics",
       "edges",
       "nodes",
+      "pack_data",
       "provides",
       "schemas",
     ]);
+    expect(r.pack_data?.swift).toBeDefined();
+    expect(r.nodes.every((n) => n.pack_data === undefined)).toBe(true);
     expect(PackResultSchema.safeParse(r).success).toBe(true);
   });
 });
@@ -287,9 +294,11 @@ describe("branch detection and the error-path table (§6)", () => {
     );
     const guardElse = login.find((e) => e.condition?.expr.startsWith("guard"));
     expect(guardElse?.is_error_path).toBe(true);
-    expect(guardElse?.exclusive_group).toBe(
-      "k:Kitchen.swift#NoteService.login/branch[0]",
-    );
+    // The guard's continue limb holds only sites claimed by the nested if/else
+    // and do/catch forks, so the guard has a single alternative left and forms
+    // no group; the else edge keeps its condition and error-path flag.
+    expect(guardElse?.exclusive_group).toBeNull();
+    expect(guardElse?.condition?.expr).toContain("guard");
     const ifLimb = login.find((e) => e.condition?.expr === "if data.isEmpty");
     const elseLimb = login.find(
       (e) =>
@@ -303,6 +312,9 @@ describe("branch detection and the error-path table (§6)", () => {
     const catchThrows = login.find((e) => e.condition?.expr === "catch");
     expect(catchThrows?.is_error_path).toBe(true);
     expect(catchThrows?.confidence).toBe("certain");
+    // The do limb's only call is JSONDecoder, a cross-file candidate that is
+    // never drawn, so catch is the sole definite alternative: ordinal 0.
+    expect(catchThrows?.branch_ordinal).toBe(0);
     // A catch that only logs is the §10 open question: defaulted to true, said so.
     const upload = r.edges.filter((e) =>
       e.from.endsWith("#NoteService.upload"),
@@ -472,26 +484,36 @@ class MemoryService { private let apiClient = APIClient.shared
       "sch:r:Services/MemoryService.swift#Memory",
     );
     const merged = applyPatch(results, patch);
-    if ("kind" in NodeUpdateSchema.shape) {
-      expect(
-        merged.nodes.find(
-          (n) => n.id === "r:Services/MemoryService.swift#MemoryService",
-        )?.kind,
-      ).toBe("client_service");
-    } else {
-      // Until core's NodeUpdate carries kind, the change is reported, never dropped.
-      expect(
-        patch.diagnostics.some(
-          (d) =>
-            d.code === "kind_update_unrepresentable" &&
-            d.message.includes("MemoryService"),
-        ),
-      ).toBe(true);
-    }
+    expect(
+      merged.nodes.find(
+        (n) => n.id === "r:Services/MemoryService.swift#MemoryService",
+      )?.kind,
+    ).toBe("client_service");
     // The consumed Endpoint construction carries no edge of its own.
     expect(
       merged.edges.filter((e) => e.from.endsWith("#MemoryService.getMemory")),
     ).toHaveLength(1);
+  });
+
+  it("numbers a candidate-only fork limb after the definite alternatives, contiguously", async () => {
+    const a = `class Logger { static let shared = Logger(); func log(_ s: String) {} }\n`;
+    const b = `class Svc {\n  func f(x: Bool) {\n    if x {\n      Logger.shared.log("a")\n    } else {\n      helper()\n    }\n  }\n  func helper() {}\n}\n`;
+    const results = [
+      await fileResult("r", "A.swift", a),
+      await fileResult("r", "B.swift", b),
+    ];
+    const merged = applyPatch(results, compose(results));
+    const fork = merged.edges.filter(
+      (e) => e.from === "r:B.swift#Svc.f" && e.exclusive_group !== null,
+    );
+    expect(fork).toHaveLength(2);
+    const helper = fork.find((e) => e.to === "r:B.swift#Svc.helper");
+    const log = fork.find((e) => ref(e)?.value === "Logger.log");
+    // The definite limb (else) is numbered per-file as 0; the candidate-only
+    // limb (if) is appended by compose as 1: contiguous, drawn alternatives only.
+    expect(helper?.branch_ordinal).toBe(0);
+    expect(log?.branch_ordinal).toBe(1);
+    expect(log?.exclusive_group).toBe(helper?.exclusive_group);
   });
 
   it("drops calls on framework types with a visible count and keeps calls on declared types as symbol refs", async () => {
@@ -518,7 +540,7 @@ describe("rePath (amendment B3)", () => {
     const before = await fileResult("k", "Old/Kitchen.swift", kitchen);
     const after = rePath(before, "k", "New/Dir/Kitchen.swift");
     const fresh = await fileResult("k", "New/Dir/Kitchen.swift", kitchen);
-    expect(JSON.stringify(after.result)).toBe(JSON.stringify(fresh.result));
+    expect(JSON.stringify(after)).toBe(JSON.stringify(fresh));
   });
 });
 
@@ -547,11 +569,8 @@ describe("determinism and the validator (handoff §6 items 1 and 2)", () => {
     const { graph } = assemble(await parseAll("sorted"), "fx", "0".repeat(40));
     const bytes = serializeCanonical(graph);
     const v = validate(JSON.parse(bytes), { shape: "canonical" });
-    // Pending core's invariant-15 change: same-limb edges share an ordinal.
-    const real = v.ok
-      ? []
-      : v.errors.filter((e) => e.code !== "E_BRANCH_ORDINAL_DUPLICATE");
-    expect(real).toEqual([]);
+    expect(v.errors).toEqual([]);
+    expect(v.ok).toBe(true);
   });
 
   it("is byte-identical across runs and under shuffled discovery order", async () => {

@@ -714,6 +714,7 @@ function pushCandidate(
     args,
     result_type: resultType(call),
     consumed: false,
+    pending_fork: null,
     from_type:
       fromType === null || fromType.declaration_kind === "extension"
         ? null

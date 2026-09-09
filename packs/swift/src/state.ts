@@ -160,6 +160,19 @@ export const CandidateSchema = z.strictObject({
   result_type: z.string().nullable(),
   /** A construction whose value feeds a call carries no edge of its own. */
   consumed: z.boolean(),
+  /**
+   * Set when the candidate sits in a fork limb that has no definite (in-file)
+   * edge. Whether that limb is an alternative at all depends on whether the
+   * candidate is drawn, which compose decides; compose then appends the
+   * limb's ordinal after the `definite_count` alternatives numbered per-file,
+   * in limb source order, keeping ordinals contiguous (graph model §3.3).
+   */
+  pending_fork: z
+    .strictObject({
+      limb_position: z.int().nonnegative(),
+      definite_count: z.int().nonnegative(),
+    })
+    .nullable(),
   from_type: z.string().nullable(),
 });
 export type Candidate = z.infer<typeof CandidateSchema>;

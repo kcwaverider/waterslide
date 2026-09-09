@@ -23,6 +23,7 @@ import {
   type Edge,
   type Node as GraphNode,
   type PartialEdge,
+  toPerFileResult,
   type PerFileResult,
 } from "@waterslide/core";
 import { execSync } from "node:child_process";
@@ -223,7 +224,7 @@ export async function runTree(
       path,
       readFileSync(f, "utf8"),
     );
-    results.push({ repo: repoName, path, result: analysis.result });
+    results.push(toPerFileResult(repoName, path, analysis.result));
   }
   const assembled = assemble(results, repoName, gitCommit(root));
   return { assembled, bytes: serializeCanonical(assembled.graph), results };
@@ -254,24 +255,6 @@ async function main(): Promise<void> {
   if (out !== null) writeFileSync(out, bytes);
 
   const result = validate(JSON.parse(bytes), { shape: "canonical" });
-  // Pending: the settled ordinal rule lets two edges in one limb share an
-  // ordinal; core is dropping invariant 15's uniqueness clause. Until it lands,
-  // that one code is reported separately rather than failing the run.
-  const pending = result.ok
-    ? []
-    : result.errors.filter((e) => e.code === "E_BRANCH_ORDINAL_DUPLICATE");
-  const real = result.ok
-    ? []
-    : result.errors.filter((e) => e.code !== "E_BRANCH_ORDINAL_DUPLICATE");
-  if (pending.length > 0) {
-    console.log(
-      `validator: ${String(pending.length)} E_BRANCH_ORDINAL_DUPLICATE (pending core's invariant-15 change; same-limb edges share an ordinal by the settled rule)`,
-    );
-  }
-  if (!args.includes("--quiet")) {
-    console.log(formatSummary(assembled.merged, assembled.report));
-    console.log("");
-  }
   const limbViolations = assembled.merged.diagnostics.filter(
     (d) => d.code === "branch_ordinal_limb_mismatch",
   );
@@ -282,16 +265,18 @@ async function main(): Promise<void> {
     process.exitCode = 1;
   } else {
     console.log(
-      `same-limb check: OK (${String(pending.length)} shared ordinal(s), every one from a single limb)`,
+      "same-limb check: OK (every shared ordinal comes from a single limb)",
     );
   }
-  if (real.length === 0) {
+  if (result.ok) {
     console.log(
       `validator: OK (${String(assembled.graph.nodes.length)} nodes, ${String(assembled.graph.edges.length)} edges, ${String(assembled.graph.schemas.length)} schemas) in ${String(Date.now() - started)} ms`,
     );
   } else {
-    console.log(`validator: FAILED with ${String(real.length)} error(s)`);
-    for (const e of real.slice(0, 40))
+    console.log(
+      `validator: FAILED with ${String(result.errors.length)} error(s)`,
+    );
+    for (const e of result.errors.slice(0, 40))
       console.log(`  ${e.code} ${e.path}: ${e.message}`);
     process.exitCode = 1;
   }

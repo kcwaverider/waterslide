@@ -20,7 +20,7 @@ cross-file `compose` pass for extensions and helper-routed URL reconstruction.
 | `src/recognizers/branches.ts` | Forks: `exclusive_group`, `branch_ordinal`, `condition`, `is_error_path` |
 | `src/compose.ts` | Cross-file pass (item 1): extension merge, candidate resolution, `client_service` |
 | `src/repath.ts` | `rePath` for cache hits on moved files (amendment B3) |
-| `src/state.ts` | The JSON-serializable per-file state compose consumes, carried on the module node's `pack_data` |
+| `src/state.ts` | The JSON-serializable per-file state compose consumes, carried as file-level `pack_data` (`PerFileResult.pack_data`) |
 | `scripts/run.ts` | Dev driver: walk a tree, parse, compose, assemble, validate, print the summary |
 
 ## Running against a tree
@@ -59,11 +59,6 @@ for unresolved refs are minted by the driver only; core mints the real
   naming the declaration skipped. Two tapistree views still lose their struct
   to an unisolated gap and are reported as flattened: `QuestionsView.swift`
   and `SharedWithMeView.swift`.
-- **Pending core changes.** `NodeUpdate.kind` (client_service through a
-  helper) is emitted once core's schema carries it, reported as
-  `kind_update_unrepresentable` until then; the driver and tests tolerate
-  `E_BRANCH_ORDINAL_DUPLICATE` until invariant 15's uniqueness clause is
-  dropped, since same-limb edges share an ordinal by the settled rule.
 - **Visibility.** Access modifiers only; no module boundary (parser §10 open
   question). `project.pbxproj` is not read.
 - **Protocol-typed receivers.** `provider.load()` with `provider: Providing`

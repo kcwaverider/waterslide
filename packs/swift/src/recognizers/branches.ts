@@ -335,34 +335,56 @@ export function assignBranches(ctx: FileContext): void {
     const points = branchPointsOf(ctx, owner, owner.body);
     if (points.length === 0) continue;
 
-    // Which limbs hold sites; a branch point qualifies with two or more.
-    const qualifying = new Map<BranchPoint, Limb[]>();
-    for (const bp of points) {
-      const occupied = bp.limbs.filter((l) => sites.some((s) => within(s, l)));
-      if (occupied.length >= 2) qualifying.set(bp, occupied);
+    // A site belongs to the innermost branch point that qualifies around it,
+    // and a branch point qualifies when two or more of its limbs hold sites
+    // that no nested branch point has already claimed. Innermost first, so a
+    // `do`/`catch` inside a `case` limb takes its sites before the switch
+    // counts that limb as occupied. Ordinals are numbered over limbs with a
+    // DEFINITE edge (resolved in this file, or an http ref): a limb whose only
+    // sites are cross-file candidates is an alternative only if compose draws
+    // one, so compose numbers it (candidate.pending_fork).
+    type Hit = {
+      bp: BranchPoint;
+      limb: Limb;
+      k: number;
+      ordinal: number | null;
+      definite_count: number;
+    };
+    const claimed = new Map<CallSite, Hit>();
+    const innermostFirst = points
+      .map((bp, k) => ({ bp, k }))
+      .sort((x, y) => y.bp.node.startIndex - x.bp.node.startIndex);
+    for (const { bp, k } of innermostFirst) {
+      const free = sites.filter((s) => !claimed.has(s));
+      const occupied = bp.limbs.filter((l) => free.some((s) => within(s, l)));
+      if (occupied.length < 2) continue;
+      const definite = occupied.filter((l) =>
+        free.some((s) => s.candidate === null && within(s, l)),
+      );
+      for (const s of free) {
+        const limb = bp.limbs.find((l) => within(s, l));
+        if (limb === undefined) continue;
+        const idx = definite.indexOf(limb);
+        claimed.set(s, {
+          bp,
+          limb,
+          k,
+          ordinal: idx < 0 ? null : idx,
+          definite_count: definite.length,
+        });
+      }
     }
 
     for (const site of sites) {
-      // Innermost branch point containing the site decides its condition;
-      // innermost *qualifying* one decides its group.
-      type Hit = { bp: BranchPoint; limb: Limb; k: number; ordinal: number };
-      let chosen: Hit | null = null;
-      let g: Hit | null = null;
-      for (let k = 0; k < points.length; k++) {
-        const bp = points[k];
-        if (bp === undefined) continue;
+      // The innermost branch point containing the site labels its condition.
+      let chosen: { bp: BranchPoint; limb: Limb } | null = null;
+      for (const bp of points) {
         const limb = bp.limbs.find((l) => within(site, l));
         if (limb === undefined) continue;
         if (chosen === null || bp.node.startIndex >= chosen.bp.node.startIndex)
-          chosen = { bp, limb, k, ordinal: 0 };
-        const occupied = qualifying.get(bp);
-        if (
-          occupied !== undefined &&
-          (g === null || bp.node.startIndex >= g.bp.node.startIndex)
-        ) {
-          g = { bp, limb, k, ordinal: occupied.indexOf(limb) };
-        }
+          chosen = { bp, limb };
       }
+      const g: Hit | null = claimed.get(site) ?? null;
       if (chosen === null) continue;
       const edge = site.edge;
       edge.condition = {
@@ -373,19 +395,34 @@ export function assignBranches(ctx: FileContext): void {
       // from one limb are the same alternative (settled ordinal rule).
       if (g !== null) {
         edge.exclusive_group = `${owner.node_id}/branch[${String(g.k)}]`;
-        edge.branch_ordinal = g.ordinal;
-        const key = `${edge.exclusive_group} ${String(g.ordinal)}`;
-        const seen = limbsByOrdinal.get(key);
-        if (seen === undefined) {
-          limbsByOrdinal.set(key, { limb: g.limb, line: lineStart(site.call) });
-        } else if (seen.limb !== g.limb) {
-          diag(
-            ctx,
-            "error",
-            SAME_LIMB_VIOLATION,
-            `edges at lines ${String(seen.line)} and ${String(lineStart(site.call))} share ${edge.exclusive_group} ordinal ${String(g.ordinal)} but come from different limbs (\`${seen.limb.condition}\` vs \`${g.limb.condition}\`)`,
-            lineStart(site.call),
-          );
+        if (g.ordinal === null) {
+          // Candidate-only limb: compose decides whether it is drawn and
+          // numbers it after the definite alternatives.
+          edge.branch_ordinal = null;
+          if (site.candidate !== null) {
+            site.candidate.pending_fork = {
+              limb_position: g.bp.limbs.indexOf(g.limb),
+              definite_count: g.definite_count,
+            };
+          }
+        } else {
+          edge.branch_ordinal = g.ordinal;
+          const key = `${edge.exclusive_group} ${String(g.ordinal)}`;
+          const seen = limbsByOrdinal.get(key);
+          if (seen === undefined) {
+            limbsByOrdinal.set(key, {
+              limb: g.limb,
+              line: lineStart(site.call),
+            });
+          } else if (seen.limb !== g.limb) {
+            diag(
+              ctx,
+              "error",
+              SAME_LIMB_VIOLATION,
+              `edges at lines ${String(seen.line)} and ${String(lineStart(site.call))} share ${edge.exclusive_group} ordinal ${String(g.ordinal)} but come from different limbs (\`${seen.limb.condition}\` vs \`${g.limb.condition}\`)`,
+              lineStart(site.call),
+            );
+          }
         }
       }
       const ep = isErrorPath(constructsIn(chosen.limb, chosen.bp, owner));

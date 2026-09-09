@@ -5,18 +5,17 @@
  * with `results` sorted by (repo, path) byte-wise. Everything here iterates in
  * that order and relies on it; nothing is re-sorted.
  *
- * The per-file pass hands its private state to compose through the module
- * node's `pack_data`, which core strips after compose runs. Compose MAY add
+ * The per-file pass hands its private state to compose through the file-level
+ * `pack_data` (`PerFileResult.pack_data`), cached with the parse output,
+ * recomputed by rePath and stripped by core after compose. Compose MAY add
  * nodes, edges, schemas and provides; add source spans; set `parent`; annotate
  * `label`, `is_entry_point`, `entry_point_kind`, `tags` and `kind`. It MAY NOT
  * change a node id or remove a node.
  */
 import {
   DEFAULT_TIER_BY_KIND,
-  NodeUpdateSchema,
   type Diagnostic,
   type NodeKind,
-  type NodeUpdate,
   type PackNode,
   type PackPatch,
   type PackResult,
@@ -42,28 +41,14 @@ import {
   type TypeFact,
 } from "./state.js";
 
-export type { NodeUpdate, PackPatch } from "@waterslide/core";
+export type { PackPatch } from "@waterslide/core";
 
-/** The key under which the per-file pass stores its state on the module node. */
+/** The key under which the per-file pass stores its state in file-level pack_data. */
 export const PACK_DATA_KEY = "swift";
 
-/**
- * Read the per-file state back.
- *
- * TODO(core four-item contract PR: PerFileResult.pack_data, NodeUpdate.kind,
- * invariant 15, package exports): migrate the state to
- * `PerFileResult.pack_data` when it lands and stop writing it on the module
- * node. The file-level slot is cached with the parse output and recomputed by
- * rePath, so compose sees it on a warm run; module-node pack_data is stripped
- * after compose and never cached, and it presumes a module node exists. Until
- * then the module node is the interim carrier; a file-level slot is read
- * first if one is present.
- */
+/** Read the per-file state back out of `PerFileResult.pack_data`. */
 export function stateOf(r: PerFileResult): SwiftFileState | null {
-  const fileLevel = (r as { pack_data?: Record<string, unknown> | null })
-    .pack_data?.[PACK_DATA_KEY];
-  const module = r.result.nodes.find((n) => n.id === moduleId(r.repo, r.path));
-  const raw = fileLevel ?? module?.pack_data?.[PACK_DATA_KEY];
+  const raw = r.pack_data?.[PACK_DATA_KEY];
   if (raw === undefined || raw === null) return null;
   const parsed = SwiftFileStateSchema.safeParse(raw);
   return parsed.success ? parsed.data : null;
@@ -241,13 +226,6 @@ function encodedType(args: Candidate["args"]): string | null {
   return null;
 }
 
-/**
- * `NodeUpdate.kind` is being added to the contract (review decision). Until
- * core's schema carries it, the reclassification is reported instead of
- * emitted, so it is never silently dropped. Remove the fallback once it lands.
- */
-const NODE_UPDATE_HAS_KIND = "kind" in NodeUpdateSchema.shape;
-
 export function compose(results: readonly PerFileResult[]): PackPatch {
   return composeWithReport(results).patch;
 }
@@ -365,6 +343,12 @@ export function composeWithReport(results: readonly PerFileResult[]): {
     if (idx === undefined) continue;
     const facts = factsIndex(idx);
     const externals = new Map<string, number>();
+    // Edges are buffered so candidate-only fork limbs can be numbered once it
+    // is known which of them are drawn (graph model §3.3: contiguous ordinals).
+    const emitted: { edge: PartialEdge; c: Candidate }[] = [];
+    const emit = (edge: PartialEdge, c: Candidate): void => {
+      emitted.push({ edge, c });
+    };
     for (const c of state.candidates) {
       if (c.consumed) continue;
       if (c.form === "free_function") {
@@ -378,7 +362,7 @@ export function composeWithReport(results: readonly PerFileResult[]): {
           continue;
         }
         const http = tryHttp(declared, c, facts, patch, r, report);
-        patch.edges.push(http ?? symbolEdge(c, name, null));
+        emit(http ?? symbolEdge(c, name, null), c);
         if (http === null) report.symbol_edges++;
         if (http !== null && c.from_type !== null) httpTypes.add(c.from_type);
         continue;
@@ -402,7 +386,7 @@ export function composeWithReport(results: readonly PerFileResult[]): {
           externals.set(typeName, (externals.get(typeName) ?? 0) + 1);
           continue;
         }
-        patch.edges.push(symbolEdge(c, typeName, typeName, resolved.reason));
+        emit(symbolEdge(c, typeName, typeName, resolved.reason), c);
         report.symbol_edges++;
         continue;
       }
@@ -419,15 +403,18 @@ export function composeWithReport(results: readonly PerFileResult[]): {
       if (http !== null) {
         http.response_schema_id = schemaFor(idx, c.result_type);
         http.schema_id = schemaFor(idx, encodedType(c.args));
-        patch.edges.push(http);
+        emit(http, c);
         if (c.from_type !== null) httpTypes.add(c.from_type);
         continue;
       }
-      patch.edges.push(
+      emit(
         symbolEdge(c, `${typeName}.${member}`, typeName, resolved.reason),
+        c,
       );
       report.symbol_edges++;
     }
+    numberPendingForks(emitted);
+    for (const { edge } of emitted) patch.edges.push(edge);
     if (externals.size > 0) {
       const entries = [...externals.entries()].sort(
         (a, b) => b[1] - a[1] || byteCmp(a[0], b[0]),
@@ -475,24 +462,11 @@ export function composeWithReport(results: readonly PerFileResult[]): {
     for (const idx of repos.values()) kind ??= idx.kinds.get(id);
     if (kind === "class") reclassify.push(id);
   }
-  if (NODE_UPDATE_HAS_KIND) {
-    for (const id of reclassify) {
-      const update = {
-        node_id: id,
-        add_sources: [],
-        kind: "client_service",
-      } as unknown as NodeUpdate;
-      patch.node_updates.push(update);
-    }
-  } else if (reclassify.length > 0) {
-    patch.diagnostics.push({
-      severity: "warning",
-      code: "kind_update_unrepresentable",
-      message: `${String(reclassify.length)} type(s) issue HTTP requests only through a helper and should be client_service (decisions item 7); core's NodeUpdate does not carry kind yet, left as class: ${reclassify.map((id) => id.split("#")[1] ?? id).join(", ")}`,
-      repo: null,
-      path: null,
-      line: null,
-      pack: "swift",
+  for (const id of reclassify) {
+    patch.node_updates.push({
+      node_id: id,
+      add_sources: [],
+      kind: "client_service",
     });
   }
 
@@ -501,6 +475,40 @@ export function composeWithReport(results: readonly PerFileResult[]): {
     byteCmp(`${a.name} ${a.node_id ?? ""}`, `${b.name} ${b.node_id ?? ""}`),
   );
   return { patch, report };
+}
+
+/**
+ * A candidate-only limb is an alternative only if one of its candidates was
+ * drawn. Such limbs, per group, are numbered after the `definite_count`
+ * alternatives the per-file pass numbered, in limb source order, so ordinals
+ * stay contiguous from 0 and two edges from one limb share an ordinal.
+ */
+function numberPendingForks(
+  emitted: { edge: PartialEdge; c: Candidate }[],
+): void {
+  const byGroup = new Map<string, { edge: PartialEdge; c: Candidate }[]>();
+  for (const e of emitted) {
+    if (e.c.pending_fork === null || e.edge.exclusive_group === null) continue;
+    const list = byGroup.get(e.edge.exclusive_group) ?? [];
+    list.push(e);
+    byGroup.set(e.edge.exclusive_group, list);
+  }
+  for (const list of byGroup.values()) {
+    const positions = [
+      ...new Set(list.map((e) => e.c.pending_fork?.limb_position ?? 0)),
+    ].sort((a, b) => a - b);
+    for (const e of list) {
+      const pf = e.c.pending_fork;
+      if (pf === null) continue;
+      e.edge.branch_ordinal =
+        pf.definite_count + positions.indexOf(pf.limb_position);
+    }
+  }
+  // Safety: a fork edge never leaves here without an ordinal.
+  for (const e of emitted) {
+    if (e.edge.exclusive_group !== null && e.edge.branch_ordinal === null)
+      e.edge.exclusive_group = null;
+  }
 }
 
 function symbolEdge(
@@ -632,10 +640,9 @@ export function applyPatch(
     if (u.entry_point_kind !== undefined)
       n.entry_point_kind = u.entry_point_kind;
     if (u.tags !== undefined) n.tags = u.tags;
-    const kind = (u as { kind?: NodeKind }).kind;
-    if (kind !== undefined) {
-      n.kind = kind;
-      n.tier = DEFAULT_TIER_BY_KIND[kind] ?? n.tier;
+    if (u.kind !== undefined) {
+      n.kind = u.kind;
+      n.tier = DEFAULT_TIER_BY_KIND[u.kind] ?? n.tier;
     }
   }
   out.nodes = [...nodes.values()].sort((a, b) => byteCmp(a.id, b.id));

@@ -55,14 +55,15 @@ export function rePath(
     return v;
   };
 
-  // The per-file state rides inside the module node's pack_data and is
-  // rewritten by the same walk (its own repo/path fields included).
-  const rewritten = walk({ result: result.result }) as Pick<
-    PerFileResult,
-    "result"
-  >;
-  const state = rewritten.result.nodes.find((n) => n.id === newPrefix)
-    ?.pack_data?.swift as { repo: string; path: string } | undefined;
+  // Node ids, spans, edge sources and the file-level pack_data (whose own
+  // repo/path fields and every node id inside it are path-derived) all go
+  // through the same walk.
+  const rewritten = walk({
+    result: result.result,
+    pack_data: result.pack_data,
+  }) as Pick<PerFileResult, "result" | "pack_data">;
+  const state = rewritten.pack_data?.swift as
+    { repo: string; path: string } | undefined;
   if (state !== undefined) {
     state.repo = repo;
     state.path = path;
@@ -73,5 +74,10 @@ export function rePath(
     const i = path.lastIndexOf("/");
     moduleNode.label = i < 0 ? path : path.slice(i + 1);
   }
-  return { repo, path, result: rewritten.result };
+  return {
+    repo,
+    path,
+    result: rewritten.result,
+    pack_data: rewritten.pack_data,
+  };
 }
