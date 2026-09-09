@@ -20,6 +20,7 @@ import {
   ProvideSchema,
   UnresolvedRefSchema,
   assertPackCompatible,
+  toPerFileResult,
   type LanguagePack,
 } from "../src/model/pack.js";
 
@@ -245,14 +246,73 @@ describe("PerFileResult, PackPatch and NodeUpdate (compose hook)", () => {
     diagnostics: [],
   };
 
-  it("PerFileResult carries repo, path and one PackResult", () => {
+  it("PerFileResult carries repo, path, one file result and file-level pack_data", () => {
+    expect(
+      PerFileResultSchema.safeParse({
+        repo: "r",
+        path: "a.py",
+        result: empty,
+        pack_data: null,
+      }).success,
+    ).toBe(true);
+    expect(
+      PerFileResultSchema.safeParse({
+        repo: "r",
+        path: "a.py",
+        result: empty,
+        pack_data: { helpers: ["a"] },
+      }).success,
+    ).toBe(true);
+    // pack_data is required at file level (present, null when none)...
     expect(
       PerFileResultSchema.safeParse({ repo: "r", path: "a.py", result: empty })
         .success,
-    ).toBe(true);
+    ).toBe(false);
+    // ...and lives beside `result`, not inside it.
+    expect(
+      PerFileResultSchema.safeParse({
+        repo: "r",
+        path: "a.py",
+        result: { ...empty, pack_data: null },
+        pack_data: null,
+      }).success,
+    ).toBe(false);
     expect(
       PerFileResultSchema.safeParse({ repo: "r", result: empty }).success,
     ).toBe(false);
+  });
+
+  it("toPerFileResult lifts a parse return's file-level pack_data out of the result", () => {
+    const lifted = toPerFileResult("r", "a.py", {
+      ...empty,
+      pack_data: { spans: [1, 2] },
+    });
+    expect(lifted).toEqual({
+      repo: "r",
+      path: "a.py",
+      result: empty,
+      pack_data: { spans: [1, 2] },
+    });
+    expect("pack_data" in lifted.result).toBe(false);
+    expect(toPerFileResult("r", "a.py", empty).pack_data).toBeNull();
+  });
+
+  it("NodeUpdate may change kind but still has no id", () => {
+    expect(
+      NodeUpdateSchema.safeParse({
+        node_id: "n",
+        add_sources: [],
+        kind: "client_service",
+      }).success,
+    ).toBe(true);
+    expect(
+      NodeUpdateSchema.safeParse({
+        node_id: "n",
+        add_sources: [],
+        kind: "widget",
+      }).success,
+    ).toBe(false);
+    expect(Object.keys(NodeUpdateSchema.shape)).not.toContain("id");
   });
 
   it("PackPatch requires every collection, node_updates included", () => {
@@ -262,7 +322,7 @@ describe("PerFileResult, PackPatch and NodeUpdate (compose hook)", () => {
     expect(PackPatchSchema.safeParse(empty).success).toBe(false);
   });
 
-  it("NodeUpdate may omit a field to leave it unchanged, and cannot carry id or kind", () => {
+  it("NodeUpdate may omit a field to leave it unchanged, and cannot carry id", () => {
     expect(
       NodeUpdateSchema.safeParse({ node_id: "n", add_sources: [] }).success,
     ).toBe(true);
@@ -280,13 +340,6 @@ describe("PerFileResult, PackPatch and NodeUpdate (compose hook)", () => {
     expect(
       NodeUpdateSchema.safeParse({ node_id: "n", add_sources: [], id: "m" })
         .success,
-    ).toBe(false);
-    expect(
-      NodeUpdateSchema.safeParse({
-        node_id: "n",
-        add_sources: [],
-        kind: "function",
-      }).success,
     ).toBe(false);
     expect(NodeUpdateSchema.safeParse({ node_id: "n" }).success).toBe(false);
   });
@@ -332,7 +385,7 @@ describe("PerFileResult, PackPatch and NodeUpdate (compose hook)", () => {
     const parsed = pack.parse("r", "a.t", "", { source_roots: ["server"] });
     expect(parsed).not.toBeInstanceOf(Promise);
     const patch = pack.compose?.(
-      [{ repo: "r", path: "a.t", result: empty }],
+      [{ repo: "r", path: "a.t", result: empty, pack_data: null }],
       {},
     );
     expect(patch?.node_updates.map((u) => u.node_id)).toEqual(["r:a.t"]);

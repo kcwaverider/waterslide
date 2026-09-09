@@ -6,6 +6,7 @@ import {
   DiagnosticSeveritySchema,
   EdgeKindSchema,
   EntryPointKindSchema,
+  NodeKindSchema,
   ProvideScopeSchema,
   RefKindSchema,
   TopicDirectionSchema,
@@ -267,8 +268,21 @@ export const PackResultSchema = z.strictObject({
   schemas: z.array(PayloadSchemaSchema),
   provides: z.array(ProvideSchema),
   diagnostics: z.array(DiagnosticSchema),
+  /**
+   * File-level `pack_data`: the third home, beside nodes and edges. Written by
+   * `parse` for the same pack's `compose` — extension spans with hashes, helper
+   * bodies, cross-file call sites, anything the five returns cannot carry
+   * without re-reading source. Core lifts it out into
+   * `PerFileResult.pack_data`; it is not a graph field and is stripped before
+   * derivation like the other two.
+   */
+  pack_data: PackDataSchema.optional(),
 });
 export type PackResult = z.infer<typeof PackResultSchema>;
+
+/** `PackResult` with the file-level `pack_data` lifted out: the `result` inside a `PerFileResult`. */
+export const FileResultSchema = PackResultSchema.omit({ pack_data: true });
+export type FileResult = z.infer<typeof FileResultSchema>;
 
 /**
  * A pack's own resolved options block from `config.yaml` (`packs.{id}`), with
@@ -280,13 +294,41 @@ export type PackResult = z.infer<typeof PackResultSchema>;
 export const PackOptionsSchema = z.record(z.string(), z.unknown());
 export type PackOptions = z.infer<typeof PackOptionsSchema>;
 
-/** One file's stage-3 output together with the file it came from. */
+/**
+ * One file's stage-3 output together with the file it came from, and the
+ * pack's file-level `pack_data`.
+ *
+ * All three `pack_data` homes — node, edge, file — are per-file stage-3
+ * output: written by `parse`, read by the same pack's `compose`, stripped by
+ * core after compose and before derivation, never in `graph.json` or the
+ * canonical graph. All three are cached with the file's parse output, for one
+ * reason: compose runs over cached and freshly parsed files alike, and a
+ * cached file whose `pack_data` had been dropped would give compose different
+ * inputs on a warm run than on a cold one. Their freshness is the cache key's
+ * job (content, pack version, options), not the payload's.
+ *
+ * `rePath` receives and returns this whole shape, `pack_data` included, since
+ * file-level data may be path-derived. Core treats file-level `pack_data`
+ * returned unchanged across a path change as suspicious, not fatal: a pack may
+ * legitimately keep path-independent data there.
+ */
 export const PerFileResultSchema = z.strictObject({
   repo: z.string(),
   path: z.string(),
-  result: PackResultSchema,
+  result: FileResultSchema,
+  pack_data: PackDataSchema,
 });
 export type PerFileResult = z.infer<typeof PerFileResultSchema>;
+
+/** Builds a `PerFileResult` from a pack's `parse` return, lifting the file-level `pack_data` out. */
+export function toPerFileResult(
+  repo: string,
+  path: string,
+  result: PackResult,
+): PerFileResult {
+  const { pack_data, ...rest } = result;
+  return { repo, path, result: rest, pack_data: pack_data ?? null };
+}
 
 // ---------------------------------------------------------------------------
 // The compose hook — a pack-level cross-file pass, run by core after stage 3,
@@ -294,10 +336,11 @@ export type PerFileResult = z.infer<typeof PerFileResultSchema>;
 //
 // A `PackPatch` MAY add nodes, edges, schemas and provides; add a source span
 // to a node emitted by another file; set or overwrite `parent`; and annotate
-// `label`, `is_entry_point`, `entry_point_kind` and `tags`. It MAY NOT change a
-// node id or remove a node: identity is owned by exactly one component, and a
-// renamed node breaks every saved position and the baseline. Core enforces
-// this — a violating update is dropped with a `rejected_pack_patch` diagnostic.
+// `label`, `kind`, `is_entry_point`, `entry_point_kind` and `tags`. It MAY NOT
+// change a node id or remove a node: identity is owned by exactly one
+// component, and a renamed node breaks every saved position and the baseline.
+// Core enforces this — a violating update is dropped with a
+// `rejected_pack_patch` diagnostic.
 //
 // In a `NodeUpdate` an absent key means "leave unchanged", so this is the one
 // place graph model §2.5's always-present rule does not apply: `parent` absent
@@ -307,6 +350,13 @@ export type PerFileResult = z.infer<typeof PerFileResultSchema>;
 export const NodeUpdateSchema = z.strictObject({
   node_id: z.string(),
   add_sources: z.array(SourceSpanSchema),
+  /**
+   * `kind` is not identity — `id` is — so compose may change it: a Swift type
+   * becomes `client_service` once any method, possibly via a helper in another
+   * file, issues an HTTP request, and only compose can see that. There is
+   * still no `id` field, so a rename stays unrepresentable.
+   */
+  kind: NodeKindSchema.optional(),
   parent: z.string().nullable().optional(),
   label: z.string().optional(),
   is_entry_point: z.boolean().optional(),
