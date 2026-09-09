@@ -67,9 +67,9 @@ Format: `{scope}:{locator}`
   `#` is followed by a non-empty `qualified_name`.
 - **The validator checks id format** (handoff §5, invariant 18): the scope is one
   of the five fixed prefixes or a name in `repos[]`; `mongo`/`sql` locators contain
-  a `.`, `ext` locators a `/`; and a repo-scoped node with a `source` has
-  `source.repo` equal to its scope and `source.path` equal to the path part of its
-  locator.
+  a `.`, `ext` locators a `/`; and for a repo-scoped node with `sources`, every
+  span's `repo` is the id's scope and at least one span's `path` is the path part
+  of the locator.
 - Identity is never derived from array index or parse order.
 - `qualified_name` includes the class for methods: `NoteService.update`.
 - Paths are relative to repo root, forward slashes, no leading slash.
