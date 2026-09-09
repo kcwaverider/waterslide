@@ -86,16 +86,16 @@ nowhere to sit.
 
 #### Every node needs a baseline hash, including source-less ones
 
-`modified` was originally defined against `source.hash`, but not every node has a
+`modified` was originally defined against a single `source.hash`, but not every node has a
 source. A Mongo collection, an external service surface and a tombstone all carry
-`source: null`, so they could never be classified.
+`sources: []`, so they could never be classified.
 
 **`baseline_hash` is defined for every node kind:**
 
 | Node has | `baseline_hash` is |
 |---|---|
-| `source` non-null | `source.hash` — the file content hash, as before |
-| `source: null` | Hash of the node's identity-bearing fields: `id`, `kind`, `label`, `tier` |
+| `sources` non-empty | Hash over every span's `hash`, taken in canonical span order (graph model §7.2). A change in *any* defining file marks the node modified, where a single-source hash would have missed a change in a secondary file |
+| `sources` empty | Hash of the node's identity-bearing fields: `id`, `kind`, `label`, `tier` |
 
 A synthetic node is therefore `modified` when its label or tier changes — a
 collection that moves band because config changed, say — and `unchanged`

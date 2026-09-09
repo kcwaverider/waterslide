@@ -328,6 +328,7 @@ What a pack emits in an edge's `to` when the target lives elsewhere.
   "confidence": "certain",
   "condition": null,
   "exclusive_group": null,
+  "branch_ordinal": null,
   "is_error_path": false
 }
 ```
@@ -415,6 +416,8 @@ model rests on it (UI spec §7.5), and it is per-language work.
 For each branch point that gates *different outgoing edges*:
 
 - One `exclusive_group` id shared by the alternative edges.
+- `branch_ordinal` per branch: its position within the group in source order,
+  from 0 (graph model §3.3). The pack already knows the order while walking.
 - `condition.expr` per branch, verbatim from source.
 - `is_error_path` per branch.
 

@@ -217,7 +217,7 @@ against.
 | 7 | `is_entry_point: true` → `entry_point_kind` non-null |
 | 8 | `is_broken: true` → `broken_reason` non-null |
 | 9 | `exclusive_group` non-null → `source` non-null (graph model §3.2) |
-| 10 | Node `kind: tombstone` → node `source` is null (nodes only; `tombstone` is not an edge kind) |
+| 10 | Node `kind: tombstone` → node `sources` is empty (nodes only; `tombstone` is not an edge kind) |
 | 11 | Every `skips_tiers` member is a legal `tier` enum value |
 | 12 | Every field-table key with Required `yes` or a condition is **present**, per graph model §2.5. Volatile fields (§7.1) are required in the artifact shape and must be absent in the canonical shape; the caller names the shape explicitly, §7.3 |
 | 13 | `source == null` if and only if `source_count == 0` (graph model §3.3) |
@@ -226,8 +226,11 @@ against.
 | 16 | `skips_tiers` is empty when either endpoint is `external_service`, `topic` or `tombstone`, or has `tier: external` (graph model §3.4) |
 | 17 | **Canonical shape only.** `nodes`, `edges`, `schemas` sorted ascending by `id` byte-wise; `repos` by `name`; `skips_tiers`, `classification`, `tags` sorted ascending; every string NFC-normalized (graph model §7.2). Key order and whitespace are the serializer's, checked by byte diff |
 | 18 | Every node id is `{scope}:{locator}` with scope one of `svc`, `mongo`, `sql`, `topic`, `ext` or a name in `repos[]`; no repo is named after a fixed scope, empty, or containing `:`; a repo-scoped node with a `source` agrees with it on repo and path (graph model §1) |
-| 19 | Every `source.repo` on a node, edge or schema names a repo in `repos[]` (graph model §2.4) |
+| 19 | Every `repo` on a node span (`sources[]`), edge `source` or schema `source` names a repo in `repos[]` (graph model §2.4) |
 | 20 | The `parent` chain is acyclic; no node is its own ancestor (graph model §2.3). Self-loop edges remain legal |
+| 21 | `line_end`, where non-null, is never less than `line_start` — on node spans, edge sources and schema sources (graph model §2.4). A pack must not repair this with `null` |
+| 22 | Node `kind: tombstone` → `confidence` is `inferred` and `confidence_reason` is non-null (graph model §5.1) |
+| 23 | `tags`, `classification` and `skips_tiers` contain no duplicates (graph model §7.2, §3.4). Rejected, never deduplicated |
 
 **Not an invariant:** a broken edge does *not* have to point at a tombstone.
 Tombstones cover a removed target *node*; a removed *field* breaks an edge whose

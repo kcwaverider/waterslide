@@ -57,6 +57,10 @@ Format: `{scope}:{locator}`
   is an id scope, and those five are taken. A repo name is also non-empty and
   contains no `:`, for the same reason, and is unique within `repos[]`
   (handoff §5, invariant 1).
+- **A split definition keeps one id.** When a node has several `sources`, the id
+  names the declaring file: every span shares the id's repo scope, and at least
+  one span's `path` is the path in the id. The validator checks both (invariant
+  18).
 - **Locators are non-empty.** For `mongo`/`sql`, both sides of the `.` are
   non-empty; for `ext`, both sides of the `/`. For repo-scoped ids the path is
   relative, uses forward slashes, has no leading slash and no backslash, and a
@@ -82,13 +86,13 @@ Format: `{scope}:{locator}`
 | `kind` | enum | yes | Structural type. Drives colour. See §2.1 |
 | `label` | string | yes | Human display text, e.g. `PUT /notes/{id}` |
 | `tier` | enum | yes | Band placement. Drives vertical position. See §6 |
-| `parent` | string \| null | yes | Containing node one semantic level up. Null at top level |
-| `source` | object \| null | yes | Location. Null for synthetic nodes such as external services |
-| `source.repo` | string | if source | Repo name |
-| `source.path` | string | if source | Path from repo root |
-| `source.line_start` | int | if source | First line |
-| `source.line_end` | int \| null | if source | Last line. Null where not determinable |
-| `source.hash` | string | if source | Hash of the defining source span. Drives `modified` detection |
+| `parent` | string \| null | yes | Containing node one semantic level up. Null at top level. The chain is acyclic — see §2.3 |
+| `sources` | SourceSpan[] | yes | Every file span that defines this node. One for the common case, several for a definition split across files, **empty** for synthetic nodes such as external services. See §2.4 |
+| `sources[].repo` | string | yes | Repo name. Must be in `repos[]` |
+| `sources[].path` | string | yes | Path from repo root |
+| `sources[].line_start` | int | yes | First line, 1-based |
+| `sources[].line_end` | int \| null | yes | Last line. Null where not determinable. Never less than `line_start` |
+| `sources[].hash` | string | yes | Hash of this defining span. Drives `modified` detection with the other spans, persisted-files §1.5 |
 | `confidence` | enum | yes | `certain` \| `inferred` \| `annotated`. See §5 |
 | `confidence_reason` | string \| null | yes | Required when confidence is not `certain` |
 | `is_entry_point` | bool | yes | Whether control enters here from outside |
@@ -104,12 +108,14 @@ Format: `{scope}:{locator}`
   "label": "PUT /notes/{id}",
   "tier": "api",
   "parent": "tapistree:api/routers/notes.py",
-  "source": {
-    "repo": "tapistree",
-    "path": "api/routers/notes.py",
-    "line_start": 42, "line_end": 58,
-    "hash": "sha256:9f2c…"
-  },
+  "sources": [
+    {
+      "repo": "tapistree",
+      "path": "api/routers/notes.py",
+      "line_start": 42, "line_end": 58,
+      "hash": "sha256:9f2c…"
+    }
+  ],
   "confidence": "certain",
   "confidence_reason": null,
   "is_entry_point": true,
@@ -130,7 +136,7 @@ drives position — a `function` may sit in `domain` or in `data_access`.
 
 `tombstone` is the exception to everything else in this enum: it is the only kind
 minted from `baseline.json` rather than from source, it always has
-`source: null`, and it exists solely to give a broken edge a resolvable target.
+`sources: []`, and it exists solely to give a broken edge a resolvable target.
 See §5.1. Fifteen values, six hue groups — `tombstone` shares the muted/grey
 group with nothing else, since it is the absence of a thing.
 
@@ -163,7 +169,14 @@ An earlier draft said edge `source` had "the same shape as node source", which
 made `hash` required on edges and schemas. It isn't, and every example correctly
 omitted it. Two distinct shapes:
 
-**`SourceSpan`** — nodes only. A definition that can change.
+**`SourceSpan`** — nodes only, and always as an **array**, `sources`. A
+definition can be split across files: a Swift type declared in
+`Models/Note.swift` and extended in `Extensions/Note+JSON.swift` is one node with
+two definition sites, and a single object could only name one of them — the
+rest would be silently unrepresented. So a node carries every span that defines
+it. One span is the common case; several for a split definition; an empty array
+for synthetic nodes (collections, external services, tombstones), replacing what
+was `null`.
 
 | Field | Type | Required |
 |---|---|---|
@@ -173,7 +186,8 @@ omitted it. Two distinct shapes:
 | `line_end` | int \| null | yes |
 | `hash` | string | yes |
 
-**`SourceLocation`** — edges and schemas. A place in a file.
+**`SourceLocation`** — edges and schemas, as a single nullable `source`. A
+call site is a point, not a span; it cannot be split across files.
 
 | Field | Type | Required |
 |---|---|---|
@@ -183,9 +197,22 @@ omitted it. Two distinct shapes:
 | `line_end` | int \| null | yes |
 
 **Both shapes reference a repo.** `repo` must name an entry in `repos[]`
-(handoff §5, invariant 19) — on every node, edge and schema that carries a
-source. It is the same class of dangling reference as an edge endpoint or a
-`schema_id`, and the validator treats it the same way.
+(handoff §5, invariant 19) — on every span of every node, and on every edge and
+schema that carries a source. It is the same class of dangling reference as an
+edge endpoint or a `schema_id`, and the validator treats it the same way.
+
+**`line_end` is never less than `line_start`** (invariant 21). A pack that
+computes an end before its start has a bug, and the right outcome is a rejected
+graph so someone fixes the parser. A pack must **not** repair this by emitting
+`line_end: null` — null is reserved for ends that genuinely are not determinable,
+and degrading a wrong value to null would swap a loud failure for a quiet one
+(parser §9).
+
+**Open question, recorded not resolved.** `line_end` is nullable, but tree-sitter
+always knows where a matched node ends, so on a parsed node a null end is
+suspicious rather than normal. The genuine null cases are hand-written
+annotations and edges. This may want tightening to non-null on parsed nodes, and
+`line_end` on edges may be droppable entirely. Neither is worth changing now.
 
 `hash` exists on nodes because it drives `modified` detection against the
 baseline (persisted-files §1.5). An edge has no independent existence to be
@@ -456,7 +483,10 @@ fixtures and fixtures that exercise other invariants may use any unique string.
 
 Populated when an edge jumps more than one band — a `ui_view` writing straight to
 a collection, say. Also the basis for a coupling metric: count edges crossing
-distant parts of the tree and watch whether that number grows.
+distant parts of the tree and watch whether that number grows — which is why a
+duplicate entry is rejected, not deduplicated (invariant 23): `["domain","domain"]`
+would make one edge look like it skipped two bands, and a pack emitting it has a
+bug it should learn about.
 
 **Computed only between the six ordered bands.** `ui`, `ui_logic`, `api`,
 `domain`, `data_access`, `store` have a depth relationship; nothing else does.
@@ -612,8 +642,8 @@ needs minting.
 | `id` | The id the target had in `baseline.json`, unchanged |
 | `kind` | `tombstone` |
 | `label` | The last known label, from the baseline |
-| `source` | `null` — the definition is gone |
-| `confidence` | `inferred` |
+| `sources` | `[]` — the definition is gone |
+| `confidence` | `inferred` — **enforced**, invariant 22. A tombstone appears nowhere in source, so `certain` would claim the parser saw something it definitionally did not |
 | `confidence_reason` | e.g. `present in previous parse, absent now; edge from api/routers/notes.py still references it` |
 | `tier` | Whatever the baseline recorded, so it renders where it used to sit |
 
@@ -698,6 +728,15 @@ Three of these deserve a note, because they were the ones the table was missing:
 None of these three should be resolved by better defaults. They should be
 resolved by config, which is why declared always wins.
 
+**Declared wins even when the result is unusual.** An `external_service` placed
+in a non-`external` tier by config is legal, and no invariant should ever be
+added for it: tier is config-controlled, and the tool draws the structure it is
+told to without an opinion on whether the arrangement is wise. The reverse case
+comes up too: an external service *reaching into* your datastore is an edge, not
+a tier. `ext:cohere/embed → mongo:tapistree.notes` is fully representable with
+Cohere still in the `external` column, and renders as a long edge crossing every
+band — the correct and appropriately alarming picture.
+
 ---
 
 ## 7. Graph metadata
@@ -758,7 +797,8 @@ Two runs over identical inputs must produce byte-identical canonical graphs.
 | `schemas` | Array, sorted ascending by `id`, byte-wise |
 | `repos` | Array, sorted ascending by `name` |
 | Object key order | The order keys appear in this document's field tables |
-| Arrays of scalars (`skips_tiers`, `classification`, `tags`) | Sorted ascending |
+| Arrays of scalars (`skips_tiers`, `classification`, `tags`) | Sorted ascending, no duplicates (invariant 23) |
+| `nodes[].sources` | Sorted ascending by `repo`, then `path` (byte-wise), then `line_start` |
 | `schemas[].fields` | **Declaration order from source.** Not sorted — field order is meaningful and reordering would hide a real change |
 | Indentation | Two spaces |
 | Line endings | `\n` |
@@ -777,7 +817,7 @@ checked on a parsed graph:
 
 | Survives parsing | Rules | Enforced by |
 |---|---|---|
-| Yes | Array order of `repos`, `nodes`, `edges`, `schemas`; order of `skips_tiers`, `classification`, `tags`; NFC normalization of every string | The **validator**, canonical shape only — handoff §5, invariant 17. A caller who validates without round-tripping still gets a signal |
+| Yes | Array order of `repos`, `nodes`, `edges`, `schemas`, `nodes[].sources`; order of `skips_tiers`, `classification`, `tags`; NFC normalization of every string | The **validator**, canonical shape only — handoff §5, invariant 17. A caller who validates without round-tripping still gets a signal |
 | No | Top-level and object key order, indentation, line endings, trailing newline, string escaping | The **serializer**, checked by byte diff against the fixture files |
 
 `schemas[].fields` order is declaration order, which the validator cannot know,
@@ -829,7 +869,7 @@ to both.
 **Errors are collected within a phase, not across phases.** Validation runs in
 two phases. The *structural* phase (Zod: presence, types, enums, shape) either
 passes or returns every structural error. The *semantic* phase (ids resolve,
-invariants 1–18) runs only after the structural phase passes, and returns every
+every invariant in the handoff §5 table) runs only after the structural phase passes, and returns every
 semantic error. A graph with both kinds of problem therefore reports the
 structural ones first and the semantic ones on the next run. This is
 deliberate: the semantic checks index nodes by id and dereference fields, which
