@@ -2,7 +2,13 @@
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "."
+    "rootDir": ".",
+    "lib": ["es2022", "dom", "dom.iterable"]
   },
-  "include": ["src", "test"]
+  "include": ["src", "test"],
+  "references": [
+    {
+      "path": "../core"
+    }
+  ]
 }

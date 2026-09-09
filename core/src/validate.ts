@@ -90,6 +90,11 @@ export function validate(
   input: unknown,
   options: { shape: "artifact" },
 ): ValidationResult<GraphArtifact>;
+/** For a shape decided at runtime; the caller still names it explicitly. */
+export function validate(
+  input: unknown,
+  options: { shape: GraphShape },
+): ValidationResult<CanonicalGraph> | ValidationResult<GraphArtifact>;
 export function validate(
   input: unknown,
   options: { shape: GraphShape },

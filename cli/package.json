@@ -11,5 +11,14 @@
   },
   "files": [
     "dist"
-  ]
+  ],
+  "bin": {
+    "waterslide": "./dist/src/index.js"
+  },
+  "dependencies": {
+    "@waterslide/core": "0.0.0",
+    "@waterslide/web": "0.0.0",
+    "@waterslide/pack-python": "0.0.0",
+    "@waterslide/pack-swift": "0.0.0"
+  }
 }
