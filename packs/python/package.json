@@ -5,12 +5,14 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
     }
   },
   "files": [
-    "dist"
+    "dist/src",
+    "data",
+    "queries"
   ],
   "dependencies": {
     "@waterslide/core": "*",

@@ -11,6 +11,7 @@ import {
   TAG_APP,
   TAG_PATH_DYNAMIC,
   TAG_PREFIX,
+  TAG_PREFIX_DYNAMIC,
   TAG_ROUTER,
   parseMountLabel,
   parseRouteLabel,
@@ -35,6 +36,8 @@ interface Router {
   readonly id: string;
   readonly isApp: boolean;
   readonly ownPrefix: string;
+  /** `APIRouter(prefix=<expr>)`: the prefix is unknown, so no path under it is. */
+  readonly dynamicPrefix: boolean;
   readonly repo: string;
   readonly path: string;
 }
@@ -62,6 +65,7 @@ export function composeFastApi(results: readonly PerFileResult[]): PackPatch {
           id: node.id,
           isApp,
           ownPrefix: prefixTag ? prefixTag.slice(TAG_PREFIX.length) : "",
+          dynamicPrefix: node.tags.includes(TAG_PREFIX_DYNAMIC),
           repo: file.repo,
           path: file.path,
         });
@@ -205,7 +209,17 @@ export function composeFastApi(results: readonly PerFileResult[]): PackPatch {
       return null;
     }
     let result: string[] | null;
-    if (router.isApp) {
+    if (router.dynamicPrefix) {
+      diagnostics.push(
+        diag(
+          "warning",
+          "incomplete_mount",
+          `router ${id} has a non-literal own prefix; its routes keep their local paths and get no http provides`,
+          { repo: router.repo, path: router.path, line: null },
+        ),
+      );
+      result = null;
+    } else if (router.isApp) {
       result = [router.ownPrefix];
     } else {
       const parents = mountsByChild.get(id) ?? [];

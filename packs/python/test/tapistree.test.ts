@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { formatUnresolved, summarizeUnresolved } from "../src/index.js";
 import { parseTree, shuffle, walkPython } from "./support/harness.js";
@@ -15,7 +16,11 @@ const SERVER = { source_roots: ["server"] };
  */
 const TAPISTREE =
   process.env["WATERSLIDE_TAPISTREE"] ??
-  resolve(new URL("../../..", import.meta.url).pathname, "..", "tapistree");
+  resolve(
+    fileURLToPath(new URL("../../..", import.meta.url)),
+    "..",
+    "tapistree",
+  );
 const present = existsSync(join(TAPISTREE, "server", "main.py"));
 
 /**
@@ -43,18 +48,21 @@ describe.skipIf(!present)("tapistree Python backend (M1 gate)", () => {
     const assembled = assemble(pack, results, REPO, SERVER);
 
     // Item 7: nothing threw; syntax errors, if any, are diagnostics.
-    const errors = assembled.diagnostics.filter((d) => d.severity === "error");
-    expect(
-      errors.filter(
-        (d) => d.code === "recognizer_failure" || d.code === "pack_failure",
-      ),
-    ).toEqual([]);
+    const failures = assembled.diagnostics.filter(
+      (d) => d.code === "recognizer_failure" || d.code === "pack_failure",
+    );
+    expect(failures).toEqual([]);
 
-    // Item 1: all 23 invariants.
-    expect(
-      assembled.validation.ok,
-      JSON.stringify(assembled.validation.errors?.slice(0, 5), null, 2),
-    ).toBe(true);
+    // Item 1: all invariants. TEMPORARY: the 2026-09-09 amendment drops
+    // invariant 15's uniqueness clause (edges from one alternative share an
+    // ordinal); until core's validator lands that change, only that code is
+    // tolerated here. Delete the filter when it does.
+    const errors = assembled.validation.ok
+      ? []
+      : assembled.validation.errors.filter(
+          (e) => e.code !== "E_BRANCH_ORDINAL_DUPLICATE",
+        );
+    expect(errors, JSON.stringify(errors.slice(0, 5), null, 2)).toEqual([]);
 
     // Item 3: every route, against the hand count.
     const routes = assembled.graph.nodes.filter(

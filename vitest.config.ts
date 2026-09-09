@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
@@ -7,8 +8,9 @@ export default defineConfig({
   // this block and the matching `paths` entry in packs/python/tsconfig.json.
   resolve: {
     alias: {
-      "@waterslide/core": new URL("./core/src/index.ts", import.meta.url)
-        .pathname,
+      "@waterslide/core": fileURLToPath(
+        new URL("./core/src/index.ts", import.meta.url),
+      ),
     },
   },
   test: {

@@ -53,31 +53,30 @@ export const mongoRecognizer: FrameworkRecognizer = {
         : write.has(method)
           ? "write"
           : null;
+      if (operation === null) {
+        // Decision item 6, as landed: `operation` is required inside hints and
+        // an edge kind cannot be defaulted, so an unrecognised method draws
+        // nothing and says so.
+        em.unsupported(
+          `Mongo method ${method} on ${receiverText}.${collection} is not in the read/write table; no edge emitted`,
+          site.line,
+        );
+        continue;
+      }
       // Typed hints (parser §3.6): `namespace` is the Mongo db, null when it
-      // lives outside this file. A method outside the read/write table has no
-      // legal `operation`, so the ref goes out without hints and with the
-      // diagnostic below; the collection name still travels in `value`.
+      // lives outside this file (tapistree: an env default elsewhere).
       const ref: UnresolvedRef = {
         ref_kind: "datastore",
         value: collection,
-        ...(operation
-          ? { hints: { operation, store: "mongo" as const, namespace: null } }
-          : {}),
+        hints: { operation, store: "mongo", namespace: null },
         source_line: site.line,
       };
       const why =
         strong ?? `receiver ${receiverText} is named like a database handle`;
-      let reason = `inferred collection '${collection}' from attribute access on ${receiverText}; ${why}`;
-      if (operation === null) {
-        reason += `; method ${method} is not in the read/write table, edge kind defaulted to read`;
-        em.unsupported(
-          `Mongo method ${method} on ${receiverText}.${collection} is not in the read/write table; emitted with operation omitted`,
-          site.line,
-        );
-      }
+      const reason = `inferred collection '${collection}' from attribute access on ${receiverText}; ${why}`;
       em.edgeFromSite(site, {
         to: ref,
-        kind: operation ?? "read",
+        kind: operation,
         label: method,
         confidence: "inferred",
         confidence_reason: reason,

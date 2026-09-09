@@ -30,8 +30,10 @@ import {
   firstErrorNode,
   lineStart,
   parseSource,
+  resetPythonLanguage,
   type Runtime,
 } from "./tree-sitter/runtime.js";
+import type { Node } from "web-tree-sitter";
 
 export {
   PythonPackOptionsSchema,
@@ -108,8 +110,29 @@ let defaultPack: Promise<PythonPack> | null = null;
 const lazy = (): Promise<PythonPack> => (defaultPack ??= createPythonPack());
 export const pack: LanguagePack = {
   manifest,
-  parse: async (repo, path, content, options) =>
-    (await lazy()).parse(repo, path, content, options),
+  parse: async (repo, path, content, options) => {
+    let ready: PythonPack;
+    try {
+      ready = await lazy();
+    } catch (error) {
+      // Parser §9 applies to initialisation too: a missing wasm or a malformed
+      // data file is a diagnostic on this file, and the next call retries.
+      defaultPack = null;
+      resetPythonLanguage();
+      const result = EMPTY();
+      result.diagnostics.push(
+        diagnostic(
+          { repo, path },
+          "error",
+          "pack_failure",
+          `python pack failed to initialise: ${errorMessage(error)}; nothing emitted from it`,
+          null,
+        ),
+      );
+      return result;
+    }
+    return ready.parse(repo, path, content, options);
+  },
   compose: (results, options) => compose(results, resolveOptions(options)),
 };
 
@@ -146,8 +169,34 @@ function parseFile(
         content === "" ? 1 : content.replace(/\n$/, "").split("\n").length,
     };
     const tree = parseSource(runtime, content);
-    const root = tree.rootNode;
+    try {
+      return parseTree(tree.rootNode, runtime, data, file, site);
+    } finally {
+      tree.delete(); // the Tree owns wasm memory; nothing below keeps a Node
+    }
+  } catch (error) {
+    const result = EMPTY();
+    result.diagnostics.push(
+      diagnostic(
+        site,
+        "error",
+        "pack_failure",
+        `python pack failed on this file: ${errorMessage(error)}; nothing emitted from it`,
+        null,
+      ),
+    );
+    return result;
+  }
+}
 
+function parseTree(
+  root: Node,
+  runtime: Runtime,
+  data: PackData,
+  file: FileContext,
+  site: { repo: string; path: string },
+): PackResult {
+  {
     if (root.hasError) {
       const at = firstErrorNode(root);
       const result = EMPTY();
@@ -166,7 +215,7 @@ function parseFile(
     const em = new Emitter(file, data);
     const model = analyzeFile(runtime, file, root, data);
     emitStructure(model, em);
-    if (content.trim() === "") {
+    if (file.content.trim() === "") {
       em.diag(
         "info",
         "empty_file",
@@ -188,18 +237,6 @@ function parseFile(
     }
     emitCalls(model, em);
     return em.finalize();
-  } catch (error) {
-    const result = EMPTY();
-    result.diagnostics.push(
-      diagnostic(
-        site,
-        "error",
-        "pack_failure",
-        `python pack failed on this file: ${errorMessage(error)}; nothing emitted from it`,
-        null,
-      ),
-    );
-    return result;
   }
 }
 

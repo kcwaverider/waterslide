@@ -43,6 +43,29 @@ describe("branch detection and is_error_path (parser §6, data table)", () => {
     ).toBe(true);
   });
 
+  it("edges from one limb share an ordinal; limbs that gate nothing are skipped, ordinals stay contiguous", async () => {
+    const pack = await getPack();
+    const src = [
+      "from services import audit, mailer",
+      "def h(x):",
+      "    if x.a:",
+      "        audit.record(x)",
+      "        mailer.send(x)",
+      "    elif x.b:",
+      "        pass",
+      "    else:",
+      "        audit.skip(x)",
+      "",
+    ].join("\n");
+    const edges = pack.parse("b", "h.py", src).edges;
+    expect(edges.map((e) => [target(e), e.branch_ordinal])).toEqual([
+      ["services.audit.record", 0],
+      ["services.mailer.send", 0],
+      ["services.audit.skip", 1], // the else limb is index 2, renumbered to 1
+    ]);
+    expect(new Set(edges.map((e) => e.exclusive_group)).size).toBe(1);
+  });
+
   it("try/except is a fork; the except limb is uncertain and says so", async () => {
     const edges = (await flow()).filter(
       (e) => e.exclusive_group === "flow.py:handle:L15",
@@ -161,7 +184,10 @@ describe("branch detection and is_error_path (parser §6, data table)", () => {
       ]);
     }
     expect(groups.size).toBeGreaterThanOrEqual(5);
-    for (const ords of groups.values())
-      expect(new Set(ords).size).toBe(ords.length);
+    // Contiguous from 0; repeats are legal (one alternative, several edges).
+    for (const ords of groups.values()) {
+      const distinct = [...new Set(ords)].sort((a, b) => a - b);
+      expect(distinct).toEqual(distinct.map((_, i) => i));
+    }
   });
 });

@@ -41,6 +41,11 @@ export function loadPythonLanguage(): Promise<Language> {
   return languagePromise;
 }
 
+/** Forget a failed load so the next `createRuntime` retries instead of replaying the rejection. */
+export function resetPythonLanguage(): void {
+  languagePromise = null;
+}
+
 export type QueryName =
   "imports" | "definitions" | "calls" | "assignments" | "dict-literals";
 

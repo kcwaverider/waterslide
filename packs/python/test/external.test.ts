@@ -100,7 +100,7 @@ describe("external vendors (decision items 4 and 7)", () => {
 });
 
 describe("Mongo access (parser §8, decision item 6)", () => {
-  it("infers collection from the attribute, read/write from the method, never mints a node", async () => {
+  it("infers collection from the attribute, read/write from the method, never mints a node, and draws nothing for an unrecognised method", async () => {
     const pack = await getPack();
     const results = parseTree(
       pack,
@@ -158,16 +158,6 @@ describe("Mongo access (parser §8, decision item 6)", () => {
         "inferred",
       ],
       [
-        "NoteRepository.touch",
-        "read",
-        "rename",
-        "notes",
-        null,
-        null,
-        null,
-        "inferred",
-      ],
-      [
         "handle_member_exit",
         "write",
         "update_one",
@@ -181,13 +171,13 @@ describe("Mongo access (parser §8, decision item 6)", () => {
     expect(mongo[0]?.confidence_reason).toMatch(
       /inferred collection 'notes' from attribute access on db; receiver resolves to db\.db/,
     );
-    expect(mongo[4]?.confidence_reason).toMatch(/named like a database handle/);
+    expect(mongo[3]?.confidence_reason).toMatch(/named like a database handle/);
     expect(repo?.nodes.some((n) => n.id.startsWith("mongo:"))).toBe(false);
     const unknown = repo?.diagnostics.find(
       (d) => d.code === "unsupported_construct",
     );
     expect(unknown?.message).toMatch(
-      /Mongo method rename .* not in the read\/write table/,
+      /Mongo method rename .* not in the read\/write table; no edge emitted/,
     );
   });
 

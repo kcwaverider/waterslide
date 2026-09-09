@@ -18,12 +18,18 @@ export function summarizeUnresolved(
   results: readonly PerFileResult[],
   isResolved: (ref: UnresolvedRef, at: PerFileResult) => boolean = () => false,
 ): UnresolvedSummary {
+  // Null-prototype maps: a Python identifier named `constructor` or `__proto__`
+  // must count like any other value.
+  const bucket = (): { count: number; values: Record<string, number> } => ({
+    count: 0,
+    values: Object.create(null) as Record<string, number>,
+  });
   const by_kind: UnresolvedSummary["by_kind"] = {
-    symbol: { count: 0, values: {} },
-    http: { count: 0, values: {} },
-    topic: { count: 0, values: {} },
-    datastore: { count: 0, values: {} },
-    external: { count: 0, values: {} },
+    symbol: bucket(),
+    http: bucket(),
+    topic: bucket(),
+    datastore: bucket(),
+    external: bucket(),
   };
   let total = 0;
   for (const file of results) {

@@ -105,9 +105,14 @@ describe("graph fragments validate and are deterministic (handoff §6 items 1 an
       "fx",
       SERVER,
     );
-    for (const e of assembled.graph.edges) {
-      if (e.confidence !== "certain")
-        expect(e.confidence_reason, e.id).toMatch(/\w+ \w+/);
-    }
+    const entities = [
+      ...assembled.graph.nodes,
+      ...assembled.graph.edges,
+      ...assembled.graph.schemas,
+    ];
+    const uncertain = entities.filter((e) => e.confidence !== "certain");
+    expect(uncertain.length).toBeGreaterThan(0);
+    for (const e of uncertain)
+      expect(e.confidence_reason, e.id).toMatch(/\w+ \w+/);
   });
 });

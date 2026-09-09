@@ -91,7 +91,7 @@ describe("FastAPI per-file recognizers (parser §8)", () => {
       {
         name: "body",
         type: "str",
-        optional: true,
+        optional: false,
         classification: ["free_text", "may_contain_pii"],
         ref_schema_id: null,
       },
@@ -112,7 +112,7 @@ describe("FastAPI per-file recognizers (parser §8)", () => {
     ]);
     expect(schemas.find((s) => s.name === "Author")?.fields[0]).toMatchObject({
       name: "user_id",
-      optional: true,
+      optional: false,
       classification: ["identifier"],
     });
     expect(

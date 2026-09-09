@@ -6,7 +6,7 @@ import {
 import type { Emitter } from "../emitter.js";
 import { lineStart, stringLiteral } from "../tree-sitter/runtime.js";
 import { annotationChain, qualify, resolveTypeChain } from "./analyze.js";
-import type { CallSite, Definition, FileModel } from "./model.js";
+import type { CallSite, Definition, DictTable, FileModel } from "./model.js";
 
 /**
  * Language emission — the part of the pack that knows Python and nothing else.
@@ -165,12 +165,19 @@ function emitModuleGetattr(model: FileModel, em: Emitter): void {
     /getattr\(\s*import_module\([^)]*\)\s*,\s*["']([A-Za-z_]\w*)["']\s*\)/.exec(
       body,
     )?.[1] ?? null;
-  const tables = [...model.dictTables.values()].filter(
-    (t) =>
-      t.entries !== null &&
-      t.entries.length > 0 &&
-      t.entries.every((e) => stringLiteral(e.valueNode) !== null),
-  );
+  // The map is the dict the body indexes (`_ROUTER_MODULES.get(name)` or
+  // `_ROUTER_MODULES[name]`), not any string dict that happens to be in the file.
+  const indexed = [...body.matchAll(/\b([A-Za-z_]\w*)\s*(?:\[|\.get\s*\()/g)]
+    .map((m) => m[1] as string)
+    .filter((name) => model.dictTables.has(name));
+  const tables = indexed
+    .map((name) => model.dictTables.get(name) as DictTable)
+    .filter(
+      (t) =>
+        t.entries !== null &&
+        t.entries.length > 0 &&
+        t.entries.every((e) => stringLiteral(e.valueNode) !== null),
+    );
   if (tables.length === 0) {
     em.unsupported(
       "module __getattr__ re-exports names through a mapping that is not a literal dict of strings; the names it exposes cannot be resolved",

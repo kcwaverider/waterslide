@@ -7,7 +7,9 @@ import {
   keywordArguments,
   lineEnd,
   lineStart,
+  positionalArguments,
   stringLiteral,
+  unwrapExpression,
 } from "../tree-sitter/runtime.js";
 import type { FrameworkRecognizer } from "./types.js";
 
@@ -94,7 +96,7 @@ function schemaFor(
     fields.push({
       name: left.text,
       type: typeText,
-      optional: right !== null || isOptionalType(typeText),
+      optional: hasDefault(right),
       classification: classificationOf(right),
       ref_schema_id: refSchemaId(typeText, models),
     });
@@ -114,8 +116,30 @@ function schemaFor(
   };
 }
 
-function isOptionalType(t: string): boolean {
-  return /^Optional\[/.test(t) || /\|\s*None\b/.test(t) || /^None\s*\|/.test(t);
+/**
+ * A field may be absent only when it has a default. `Field(...)` — the ellipsis
+ * default — and a bare `Field()` are required; `Field(default=...)`,
+ * `Field(default_factory=...)` and any plain value are defaults. Nullability
+ * (`Optional[str]` with no default) is not absence.
+ */
+function hasDefault(right: Node | null): boolean {
+  if (!right) return false;
+  const expr = unwrapExpression(right);
+  if (expr.type === "ellipsis") return false;
+  if (expr.type === "call") {
+    const fn = expr.childForFieldName("function");
+    const chain = fn ? attributeChain(fn) : null;
+    if (chain && chain[chain.length - 1] === "Field") {
+      const args = expr.childForFieldName("arguments");
+      const first = positionalArguments(args)[0];
+      if (first && first.type !== "ellipsis") return true;
+      const kwargs = keywordArguments(args);
+      const dflt = kwargs.get("default");
+      if (dflt && dflt.type !== "ellipsis") return true;
+      return kwargs.has("default_factory");
+    }
+  }
+  return true;
 }
 
 /**
@@ -157,7 +181,7 @@ function refSchemaId(
         t,
       );
     if (!m) break;
-    const inner = (m[2] as string).split(",");
+    const inner = splitTopLevel(m[2] as string);
     t =
       (m[1] === "Dict" || m[1] === "dict"
         ? inner[inner.length - 1]
@@ -166,4 +190,22 @@ function refSchemaId(
   }
   t = t.replace(/\s*\|\s*None$/, "").replace(/^None\s*\|\s*/, "");
   return models.get(t) ?? null;
+}
+
+/** Split type arguments on top-level commas only: `Dict[str, Dict[str, Item]]` keeps its nesting. */
+function splitTopLevel(text: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "[") depth++;
+    else if (ch === "]") depth--;
+    else if (ch === "," && depth === 0) {
+      parts.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(text.slice(start));
+  return parts;
 }

@@ -1,5 +1,5 @@
 import type { Node } from "web-tree-sitter";
-import { loadPackData, type PackData } from "../data.js";
+import type { PackData } from "../data.js";
 import {
   attributeChain,
   lineEnd,
@@ -84,6 +84,7 @@ export function analyzeFile(
       owner,
       file,
       classes,
+      data,
       resolveChain,
     );
 
@@ -739,6 +740,7 @@ function receiverTypeOf(
   value: ValueInfo | null,
   file: FileContext,
   scope: Scope,
+  stdlib: ReadonlySet<string>,
 ): string | null {
   if (!value) return null;
   if (value.callee.kind === "in_file") {
@@ -746,7 +748,9 @@ function receiverTypeOf(
     if (def.kind === "class") return qualify(file, def.qualifiedName);
     // A factory defined in this file: its return annotation is the type.
     const chain = def.returnType ? annotationChain(def.returnType) : null;
-    return chain ? nonStdlib(resolveTypeChain(chain, scope, file)) : null;
+    return chain
+      ? nonStdlib(resolveTypeChain(chain, scope, file), stdlib)
+      : null;
   }
   if (value.callee.kind === "symbol")
     return isTypeLike(value.callee) ? value.callee.value : null;
@@ -754,13 +758,14 @@ function receiverTypeOf(
 }
 
 /** `typing.Any`, `datetime.datetime`: the standard library is not a receiver type the map can follow. */
-function nonStdlib(qualified: string | null): string | null {
-  return qualified !== null &&
-    STDLIB_ROOTS.has(qualified.split(".")[0] as string)
+function nonStdlib(
+  qualified: string | null,
+  stdlib: ReadonlySet<string>,
+): string | null {
+  return qualified !== null && stdlib.has(qualified.split(".")[0] as string)
     ? null
     : qualified;
 }
-const STDLIB_ROOTS: ReadonlySet<string> = loadPackData().stdlibModules;
 
 export function qualify(file: FileContext, qualifiedName: string): string {
   return file.module === "" ? qualifiedName : `${file.module}.${qualifiedName}`;
@@ -812,7 +817,12 @@ function resolveChainImpl(
           uncertainty: null,
         };
       }
-      const traced = receiverTypeOf(attribute?.value ?? null, file, scope);
+      const traced = receiverTypeOf(
+        attribute?.value ?? null,
+        file,
+        scope,
+        data.stdlibModules,
+      );
       if (traced) {
         return {
           kind: "symbol",
@@ -942,7 +952,12 @@ function resolveChainImpl(
       };
     }
     case "variable": {
-      const traced = receiverTypeOf(binding.value, file, scope);
+      const traced = receiverTypeOf(
+        binding.value,
+        file,
+        scope,
+        data.stdlibModules,
+      );
       const root: RootInfo = {
         name: rootName,
         binding,
@@ -1078,6 +1093,7 @@ function resolveCallResultImpl(
   owner: Definition | null,
   file: FileContext,
   classes: Map<string, ClassInfo>,
+  data: PackData,
   resolveChain: FileModel["resolveChain"],
 ): Callee {
   const fn = receiverCall.childForFieldName("function");
@@ -1086,7 +1102,7 @@ function resolveCallResultImpl(
     return { kind: "dynamic", text: receiverCall.text };
   const inner = resolveChain(chain, scope, owner);
   const value: ValueInfo = { call: receiverCall, callee: inner, chain };
-  const traced = receiverTypeOf(value, file, scope);
+  const traced = receiverTypeOf(value, file, scope, data.stdlibModules);
   const root: RootInfo = {
     name: `${chain.join(".")}()`,
     binding: null,

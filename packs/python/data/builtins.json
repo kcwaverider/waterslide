@@ -101,6 +101,10 @@
     "KeyboardInterrupt",
     "Warning",
     "UserWarning",
-    "DeprecationWarning"
+    "DeprecationWarning",
+    "BaseExceptionGroup",
+    "ExceptionGroup",
+    "aiter",
+    "anext"
   ]
 }

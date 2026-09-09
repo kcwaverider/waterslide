@@ -63,6 +63,8 @@ export const TAG_ROUTER = "fastapi:router";
 export const TAG_ROUTE = "fastapi:route";
 export const TAG_PATH_DYNAMIC = "fastapi:path_dynamic";
 export const TAG_PREFIX = "fastapi:prefix=";
+/** The router's own prefix is not a literal: nothing under it can be composed. */
+export const TAG_PREFIX_DYNAMIC = "fastapi:prefix_dynamic";
 export const LABEL_ROUTE = "route";
 export const LABEL_MOUNT_PREFIX = "include_router(prefix=";
 export const LABEL_MOUNT_UNKNOWN = "include_router(prefix=?)";
@@ -155,6 +157,7 @@ function emitRouterObjects(
     const id = codeNodeId(model.file.repo, model.file.path, name);
     const tags = [isApp ? TAG_APP : TAG_ROUTER];
     if (prefix !== null && prefix !== "") tags.push(`${TAG_PREFIX}${prefix}`);
+    if (prefix === null) tags.push(TAG_PREFIX_DYNAMIC);
     const node: GraphNode = {
       id,
       kind: isApp ? "service" : "class",

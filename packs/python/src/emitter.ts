@@ -1,11 +1,9 @@
 import {
   DEFAULT_TIER_BY_KIND,
-  edgeId,
   type Confidence,
   type Diagnostic,
   type DiagnosticSeverity,
   type EdgeKind,
-  type EntryPointKind,
   type Node as GraphNode,
   type NodeKind,
   type PartialEdge,
@@ -173,7 +171,6 @@ export class Emitter {
     this.edges.push({
       edge,
       limb: null,
-      statementIndex: at ? at.startIndex : 0,
       fixed: null,
     });
   }
@@ -232,7 +229,7 @@ export class Emitter {
         line_end: lineEnd(at),
       },
     };
-    this.edges.push({ edge, limb, statementIndex: at.startIndex, fixed });
+    this.edges.push({ edge, limb, fixed });
   }
 
   // --- the rest -------------------------------------------------------------
@@ -266,11 +263,12 @@ export class Emitter {
   }
 
   /**
-   * Assign `branch_ordinal` within each limb-derived group: edges in source
-   * order, deduplicated on (to, kind) within a limb so two call sites of one
-   * relationship stay one edge, numbered consecutively across limbs. See the
-   * report-back note: invariant 15 forbids two edges sharing an ordinal, so a
-   * limb with several outgoing edges gets several ordinals.
+   * `branch_ordinal` is the position of the ALTERNATIVE within its group
+   * (graph model §3.3, amended 2026-09-09): every edge from one limb shares an
+   * ordinal, and ordinals run contiguously from 0 over the limbs that actually
+   * produced edges — a limb that gates no edge contributes no alternative
+   * (parser §6.1). Two call sites of one relationship are collapsed by core
+   * (§3.3), not here.
    */
   finalize(): PackResult {
     const byGroup = new Map<string, PendingEdge[]>();
@@ -281,30 +279,21 @@ export class Emitter {
         byGroup.set(p.edge.exclusive_group, list);
       }
     }
-    const drop = new Set<PendingEdge>();
     for (const list of byGroup.values()) {
-      list.sort(
-        (a, b) =>
-          (a.limb as Limb).index - (b.limb as Limb).index ||
-          a.statementIndex - b.statementIndex,
+      const limbs = [...new Set(list.map((p) => (p.limb as Limb).index))].sort(
+        (a, b) => a - b,
       );
-      const seen = new Set<string>();
-      let ordinal = 0;
+      const ordinalOf = new Map(limbs.map((idx, i) => [idx, i] as const));
       for (const p of list) {
-        const key = `${String((p.limb as Limb).index)} ${p.edge.from} ${targetKey(p.edge.to)} ${p.edge.kind}`;
-        if (seen.has(key)) {
-          drop.add(p);
-          continue;
-        }
-        seen.add(key);
-        p.edge = { ...p.edge, branch_ordinal: ordinal };
-        ordinal += 1;
+        p.edge = {
+          ...p.edge,
+          branch_ordinal: ordinalOf.get((p.limb as Limb).index) as number,
+        };
       }
     }
-    const edges = this.edges.filter((p) => !drop.has(p)).map((p) => p.edge);
     return {
       nodes: this.nodeOrder.map((id) => this.nodes.get(id) as GraphNode),
-      edges,
+      edges: this.edges.map((p) => p.edge),
       schemas: this.schemas,
       provides: this.provides,
       diagnostics: this.diagnostics,
@@ -332,14 +321,5 @@ export interface FixedBranch {
 interface PendingEdge {
   edge: PartialEdge;
   readonly limb: Limb | null;
-  readonly statementIndex: number;
   readonly fixed: FixedBranch | null;
 }
-
-function targetKey(to: PartialEdge["to"]): string {
-  return typeof to === "string" ? to : `${to.ref_kind}:${to.value}`;
-}
-
-/** Re-exported so recognizers resolving both endpoints in one file can mint ids (graph model §3.3.1). */
-export { edgeId };
-export type { EntryPointKind };
