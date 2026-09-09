@@ -41,6 +41,7 @@ import {
 } from "./network.js";
 import { resolveBinding, typeOfExpr, type Receiver } from "./scope.js";
 
+/** The labelled argument nodes of a call. */
 function rawArgs(call: Node): { label: string | null; value: Node }[] {
   const suffix = childrenOfType(call, "call_suffix")[0] ?? null;
   if (suffix === null) return [];
@@ -56,6 +57,7 @@ function rawArgs(call: Node): { label: string | null; value: Node }[] {
   return out;
 }
 
+/** The text of a string literal with no interpolation, or null. */
 function literalText(lit: Node): string | null {
   if (
     lit.namedChildren.some(
@@ -118,6 +120,7 @@ function effectiveCallee(first: Node): Node {
 /** Marks constructions whose value feeds a call; they carry no edge of their own. */
 export type Consumed = Set<number>;
 
+/** Classify an argument expression for the helper walk: literal, template, construction, call, encoded value or opaque expression. */
 function argValue(
   ctx: FileContext,
   owner: Owner,
@@ -162,6 +165,7 @@ function argValue(
   }
 }
 
+/** Classify a call used as an argument: a construction of a type (consumed), an `encode` of a typed value, or an opaque call. */
 function callValue(
   ctx: FileContext,
   owner: Owner,
@@ -236,6 +240,7 @@ function resultType(call: Node): string | null {
   return null;
 }
 
+/** A call edge skeleton from `owner` at `call`, target to be filled in. */
 function baseEdge(
   ctx: FileContext,
   owner: Owner,
@@ -264,6 +269,7 @@ function baseEdge(
   };
 }
 
+/** Turn a call edge into an http edge from a helper resolution, with the reason naming the hops and the base URL expression. */
 export function httpEdgeFrom(
   base: PartialEdge,
   res: HttpResolution,
@@ -321,6 +327,7 @@ export function fileIndex(ctx: FileContext): FactsIndex {
   };
 }
 
+/** Walk every call site: in-file targets become edges, cross-file targets become candidates for compose. */
 export function collectCalls(
   ctx: FileContext,
   q: Query,
@@ -343,6 +350,10 @@ export function collectCalls(
       ctx.implicit_member_calls++;
       continue;
     }
+    // `layout.branches[index]` parses as a call whose suffix is the subscript:
+    // a subscript is a value access, not a call.
+    const suffixNode = childrenOfType(call, "call_suffix")[0] ?? null;
+    if (suffixNode !== null && suffixNode.text.startsWith("[")) continue;
     const urlParts = (n: Node): ArgValue => ({
       kind: "template",
       text: n.text,
@@ -497,6 +508,13 @@ export function collectCalls(
         continue;
       }
       if (r.in_file !== null) {
+        // `APIError.networkError(error)`: an enum case with a payload is a value
+        // construction, not a call. Dropped silently.
+        if (
+          r.in_file.declaration_kind === "enum" &&
+          r.in_file.cases.includes(member)
+        )
+          continue;
         const members = r.in_file.members.get(member);
         if (members !== undefined && members.length > 0) {
           const wanted = members.filter(
@@ -543,6 +561,7 @@ export function collectCalls(
   }
 }
 
+/** The leftmost expression of a navigation chain. */
 function rootOf(n: Node): Node {
   let cur = unwrapExpr(n);
   while (cur.type === "navigation_expression") {
@@ -553,10 +572,12 @@ function rootOf(n: Node): Node {
   return cur;
 }
 
+/** Count a call form no recognizer handles. */
 function bump(ctx: FileContext, kind: string): void {
   ctx.unsupported.set(kind, (ctx.unsupported.get(kind) ?? 0) + 1);
 }
 
+/** The URL parts of a string argument, for templates. */
 function urlPartsForArg(
   ctx: FileContext,
   owner: Owner,
@@ -565,6 +586,7 @@ function urlPartsForArg(
   return urlPartsOf(ctx, n, owner);
 }
 
+/** Emit edges to in-file targets, resolving through a helper when one builds a URL from the arguments. */
 function emitInFile(
   ctx: FileContext,
   owner: Owner,
@@ -672,6 +694,7 @@ function emitInFile(
   }
 }
 
+/** Record a cross-file call for compose, with the best-effort symbol ref as its edge target. */
 function pushCandidate(
   ctx: FileContext,
   owner: Owner,

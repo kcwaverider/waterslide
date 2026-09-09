@@ -24,6 +24,7 @@ import {
   type TypeDecl,
 } from "../context.js";
 import { basename, codeId, schemaId, spanHash, visibilityOf } from "../ids.js";
+import { isViewLike, receiverTypeName } from "../noise.js";
 import type { FunctionFact, PropertyFact } from "../state.js";
 import {
   TYPE_NODE_KINDS,
@@ -40,8 +41,8 @@ import {
 
 const DECLARATION_KEYWORDS = ["class", "struct", "enum", "actor", "extension"];
 const CODABLE = new Set(["Codable", "Decodable", "Encodable"]);
-const VIEW_LIKE = new Set(["View", "ViewModifier", "Scene", "Widget"]);
 
+/** A node's source span with core's span hash. */
 export function span(ctx: FileContext, n: Node): SourceSpan {
   return {
     repo: ctx.repo,
@@ -52,12 +53,14 @@ export function span(ctx: FileContext, n: Node): SourceSpan {
   };
 }
 
+/** The modifier tokens on a declaration. */
 function modifierTexts(decl: Node): string[] {
   const mods = firstChildOfType(decl, "modifiers");
   if (mods === null) return [];
   return mods.children.filter((c): c is Node => c !== null).map((c) => c.text);
 }
 
+/** The access-level modifier on a declaration, ignoring `private(set)`-style setter modifiers. */
 export function visibilityModifier(decl: Node): string | null {
   const mods = firstChildOfType(decl, "modifiers");
   if (mods === null) return null;
@@ -67,10 +70,12 @@ export function visibilityModifier(decl: Node): string | null {
   return null;
 }
 
+/** Whether a declaration is `static` or `class`. */
 function isStatic(decl: Node): boolean {
   return modifierTexts(decl).some((t) => t === "static" || t === "class");
 }
 
+/** Whether a declaration carries `@name`. */
 function hasAttribute(decl: Node, name: string): boolean {
   const mods = firstChildOfType(decl, "modifiers");
   if (mods === null) return false;
@@ -79,6 +84,7 @@ function hasAttribute(decl: Node, name: string): boolean {
   );
 }
 
+/** The inherited or adopted type names on a declaration. */
 function conformancesOf(decl: Node): string[] {
   const out: string[] = [];
   for (const spec of childrenOfType(decl, "inheritance_specifier")) {
@@ -89,15 +95,31 @@ function conformancesOf(decl: Node): string[] {
   return out;
 }
 
+/** A function's return type, when written. */
 function returnTypeOf(decl: Node): TypeRef | null {
   // Both the name and the return type sit under the `name` field; the return
   // type is the child whose node kind is a type.
   for (const c of fieldChildren(decl, "name")) {
     if (TYPE_NODE_KINDS.has(c.type)) return typeRef(c);
   }
-  return null;
+  // A protocol requirement carries its return type as a bare direct child.
+  const direct = decl.namedChildren.filter(
+    (c): c is Node => c !== null && TYPE_NODE_KINDS.has(c.type),
+  );
+  const last = direct[direct.length - 1];
+  return last === undefined ? null : typeRef(last);
 }
 
+/** A protocol requirement's name: the first identifier child, when there is no `name` field. */
+function functionNameOf(decl: Node): string {
+  return (
+    decl.namedChildren.find(
+      (c): c is Node => c !== null && c.type === "simple_identifier",
+    )?.text ?? "<anonymous>"
+  );
+}
+
+/** A function's parameters with their labels and types. */
 function paramsOf(decl: Node): Param[] {
   const out: Param[] = [];
   for (const p of childrenOfType(decl, "parameter")) {
@@ -163,9 +185,10 @@ function newType(
     extension_target: extensionTarget,
     merged_into: null,
     properties: [],
+    cases: [],
     members: new Map(),
     has_explicit_init: false,
-    is_view: conformances.some((c) => VIEW_LIKE.has(c)),
+    is_view: isViewLike(conformances),
     is_app: conformances.includes("App"),
     is_codable: conformances.some((c) => CODABLE.has(c)),
     fact: null,
@@ -175,7 +198,7 @@ function newType(
 
 interface RawOwner {
   decl: Node;
-  form: "function" | "init" | "computed";
+  form: "function" | "init" | "computed" | "requirement" | "slot";
   member: string;
   type: TypeDecl | null;
   prefix: string;
@@ -293,11 +316,15 @@ export function collectDeclarations(ctx: FileContext): void {
         for (const c of body.namedChildren) if (c !== null) precount(c, q);
       return;
     }
-    if (n.type === "function_declaration" || n.type === "init_declaration") {
+    if (
+      n.type === "function_declaration" ||
+      n.type === "protocol_function_declaration" ||
+      n.type === "init_declaration"
+    ) {
       const member =
         n.type === "init_declaration"
           ? "init"
-          : (n.childForFieldName("name")?.text ?? "<anonymous>");
+          : (n.childForFieldName("name")?.text ?? functionNameOf(n));
       const key = `${prefix} ${member}`;
       overloadCounts.set(key, (overloadCounts.get(key) ?? 0) + 1);
       const body = n.childForFieldName("body");
@@ -336,12 +363,53 @@ export function collectDeclarations(ctx: FileContext): void {
     if (body === null) return;
     for (const m of body.namedChildren) {
       if (m === null) continue;
+      if (m.type === "enum_entry") {
+        for (const c of m.namedChildren) {
+          if (c !== null && c.type === "simple_identifier")
+            t.cases.push(c.text);
+        }
+        continue;
+      }
+      if (m.type === "protocol_property_declaration") {
+        const ann = firstChildOfType(m, "type_annotation");
+        const type = ann === null ? null : typeRef(ann);
+        const id = m.descendantsOfType("simple_identifier")[0];
+        if (id !== undefined) {
+          t.properties.push({
+            name: id.text,
+            type,
+            is_static: isStatic(m),
+            is_stored: false,
+            init: null,
+            decl: m,
+          });
+        }
+        continue;
+      }
       if (m.type === "property_declaration") {
         if (skipWithSyntaxError(ctx, m, qualified)) continue;
         const props = propertyDecls(m);
         t.properties.push(...props);
         const computed = m.childForFieldName("computed_value");
         const only = props[0];
+        // A stored property of closure type is a callable slot: the call
+        // `parent.onProjectorExit()` targets it, and whatever was injected
+        // into it runs.
+        if (
+          computed === null &&
+          props.length === 1 &&
+          only !== undefined &&
+          only.type?.is_function === true
+        ) {
+          raw.push({
+            decl: m,
+            form: "slot",
+            member: only.name,
+            type: t,
+            prefix: qualified,
+          });
+          continue;
+        }
         if (computed !== null && props.length === 1 && only !== undefined) {
           raw.push({
             decl: m,
@@ -399,16 +467,25 @@ export function collectDeclarations(ctx: FileContext): void {
       collectMembers(n, t, qualified);
       return;
     }
-    if (n.type === "function_declaration" || n.type === "init_declaration") {
+    if (
+      n.type === "function_declaration" ||
+      n.type === "protocol_function_declaration" ||
+      n.type === "init_declaration"
+    ) {
       if (inError) return; // a member spilled out of a flattened type; reported above
       if (skipWithSyntaxError(ctx, n, prefix)) return;
       const member =
         n.type === "init_declaration"
           ? "init"
-          : (n.childForFieldName("name")?.text ?? "<anonymous>");
+          : (n.childForFieldName("name")?.text ?? functionNameOf(n));
       raw.push({
         decl: n,
-        form: n.type === "init_declaration" ? "init" : "function",
+        form:
+          n.type === "init_declaration"
+            ? "init"
+            : n.type === "protocol_function_declaration"
+              ? "requirement"
+              : "function",
         member,
         type,
         prefix,
@@ -448,9 +525,11 @@ export function collectDeclarations(ctx: FileContext): void {
     const body =
       r.form === "computed"
         ? r.decl.childForFieldName("computed_value")
-        : r.decl.childForFieldName("body");
+        : r.form === "requirement" || r.form === "slot"
+          ? null
+          : r.decl.childForFieldName("body");
     let returnType: TypeRef | null;
-    if (r.form === "computed") {
+    if (r.form === "computed" || r.form === "slot") {
       const ann = firstChildOfType(r.decl, "type_annotation");
       returnType = ann === null ? null : typeRef(ann);
     } else {
@@ -465,7 +544,8 @@ export function collectDeclarations(ctx: FileContext): void {
       body,
       owner_type: r.type,
       is_static: isStatic(r.decl),
-      params: r.form === "computed" ? [] : paramsOf(r.decl),
+      params:
+        r.form === "computed" || r.form === "slot" ? [] : paramsOf(r.decl),
       return_type: returnType,
       fact: null,
     };
@@ -582,7 +662,7 @@ function schemaFor(ctx: FileContext, t: TypeDecl): PayloadSchema {
 function propertyFacts(props: PropertyDecl[]): PropertyFact[] {
   return props.map((p) => ({
     name: p.name,
-    type: p.type?.base ?? inferredInitType(p.init),
+    type: p.type === null ? inferredInitType(p.init) : receiverTypeName(p.type),
     is_static: p.is_static,
     is_stored: p.is_stored,
   }));
@@ -600,13 +680,18 @@ export function ownerFact(o: Owner): FunctionFact {
         ? "init"
         : o.form === "computed"
           ? "computed"
-          : "function",
+          : o.form === "requirement"
+            ? "requirement"
+            : o.form === "slot"
+              ? "slot"
+              : "function",
     params: o.params.map((p) => ({
       label: p.label,
       name: p.name,
-      type: p.type?.base ?? null,
+      type: p.type === null ? null : receiverTypeName(p.type),
     })),
-    return_type: o.return_type?.base ?? null,
+    return_type:
+      o.return_type === null ? null : receiverTypeName(o.return_type),
     url_constructions: [],
     forwards: [],
     sends_request: false,
@@ -687,6 +772,7 @@ export function emitDeclarations(ctx: FileContext): void {
       declaration_kind:
         t.declaration_kind === "extension" ? "struct" : t.declaration_kind,
       conformances: t.conformances,
+      cases: [...t.cases],
       properties: propertyFacts(t.properties),
       has_explicit_init: t.has_explicit_init,
       is_codable: isCodable,
@@ -708,7 +794,12 @@ export function emitDeclarations(ctx: FileContext): void {
     ctx.nodes.push({
       id: o.node_id,
       kind: "function",
-      label: o.qualified,
+      label:
+        o.form === "requirement"
+          ? `${o.qualified} (requirement)`
+          : o.form === "slot"
+            ? `${o.qualified} (closure property)`
+            : o.qualified,
       tier: DEFAULT_TIER_BY_KIND.function ?? "domain",
       parent,
       sources: [span(ctx, o.decl)],

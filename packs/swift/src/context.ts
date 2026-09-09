@@ -31,7 +31,16 @@ export interface PropertyDecl {
 }
 
 export type OwnerForm =
-  "function" | "init" | "computed" | "handler" | "type" | "module";
+  | "function"
+  | "init"
+  | "computed"
+  /** A protocol requirement: declared, no body; conformers implement it. */
+  | "requirement"
+  /** A closure-typed stored property: a callable slot whose implementation is injected. */
+  | "slot"
+  | "handler"
+  | "type"
+  | "module";
 
 /** Something edges can originate from: a declaration with a body, or a handler closure. */
 export interface Owner {
@@ -63,6 +72,8 @@ export interface TypeDecl {
   /** The declared type this same-file extension was merged into, if any. */
   merged_into: TypeDecl | null;
   properties: PropertyDecl[];
+  /** Enum case names, for enums. */
+  cases: string[];
   members: Map<string, Owner[]>;
   has_explicit_init: boolean;
   is_view: boolean;
@@ -117,6 +128,7 @@ export interface FileContext {
   entry_point_refs: { type_name: string; member: string }[];
 }
 
+/** Append a diagnostic for this file (graph model §10 shape). */
 export function diag(
   ctx: FileContext,
   severity: Diagnostic["severity"],
@@ -157,6 +169,7 @@ export function typeAt(ctx: FileContext, n: Node): TypeDecl | null {
   return best;
 }
 
+/** Whether a syntax-error node lies inside `n`. */
 export function hasErrorInside(ctx: FileContext, n: Node): boolean {
   return ctx.errorNodes.some(
     (e) => n.startIndex <= e.startIndex && e.endIndex <= n.endIndex,

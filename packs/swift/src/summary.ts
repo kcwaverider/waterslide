@@ -148,6 +148,14 @@ export function formatSummary(
     lines.push(
       `extensions: ${String(report.extensions_merged)} merged into a declared type, ${String(report.extensions_minted)} minted at the extension file (declaring file not in pack); hop-cap stops: ${String(report.hop_cap_hits)}`,
     );
+    const dispatch = [...report.dispatch.entries()].sort(
+      (a, b) => b[1] - a[1] || byteCmp(a[0], b[0]),
+    );
+    lines.push(
+      `protocol dispatch: ${String(dispatch.length)} protocol(s) with conformers, ${String(report.dispatch_edges)} implements edge(s); widest ${dispatch[0] === undefined ? "n/a" : `${dispatch[0][0]} → ${String(dispatch[0][1])}`}`,
+    );
+    for (const [p, n] of dispatch)
+      lines.push(`    ${p} → ${String(n)} conformer(s)`);
   }
 
   lines.push("");

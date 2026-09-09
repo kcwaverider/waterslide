@@ -5,6 +5,7 @@
  */
 import type { Node } from "web-tree-sitter";
 import type { FileContext, Owner, TypeDecl } from "../context.js";
+import { receiverTypeName, synthesizedStaticType } from "../noise.js";
 import type { ChainStep } from "../state.js";
 import {
   TYPE_NODE_KINDS,
@@ -221,6 +222,15 @@ function instanceReceiver(ctx: FileContext, name: string): Receiver {
   };
 }
 
+/**
+ * An instance of a declared type, seen through its collection wrapper: a
+ * value typed `[Memory]` is an `Array`, and a call on it is a Standard
+ * Library call, never a member of `Memory`. Optional is transparent.
+ */
+function instanceOf(ctx: FileContext, t: TypeRef): Receiver {
+  return instanceReceiver(ctx, receiverTypeName(t));
+}
+
 /** The type an expression evaluates to, as far as this file can tell. */
 export function typeOfExpr(
   ctx: FileContext,
@@ -236,9 +246,21 @@ export function typeOfExpr(
     case "simple_identifier": {
       const name = expr.text;
       if (name === "self") return selfReceiver(ctx, expr, owner);
+      if (name === "Self") {
+        // `Self` is the enclosing type in type form. The chain root must say
+        // so, or compose looks its static members up as instance members.
+        const self = selfReceiver(ctx, expr, owner);
+        return self === null || self.type_name === null
+          ? null
+          : {
+              ...self,
+              form: "type",
+              chain: [{ kind: "type", name: self.type_name }],
+            };
+      }
       const b = resolveBinding(ctx, name, expr, owner);
       if (b !== null) {
-        if (b.type !== null) return instanceReceiver(ctx, b.type.base);
+        if (b.type !== null) return instanceOf(ctx, b.type);
         if (b.init !== null) return typeOfExpr(ctx, b.init, owner, depth + 1);
         return null;
       }
@@ -271,20 +293,25 @@ export function typeOfExpr(
             (p) => p.name === member && p.is_static,
           );
           if (prop !== undefined) {
-            if (prop.type !== null)
-              return instanceReceiver(ctx, prop.type.base);
+            if (prop.type !== null) return instanceOf(ctx, prop.type);
             if (prop.init !== null) {
               const t = typeOfExpr(ctx, prop.init, owner, depth + 1);
               if (t !== null) return t;
             }
           }
+          // Not declared in this file's part of the type: a synthesized
+          // member has a knowable type; anything else may be declared in an
+          // extension in another file, so the chain is left for compose,
+          // which sees every file and still never assumes a singleton.
+          const synthesized = synthesizedStaticType(member);
+          if (synthesized !== null) return instanceReceiver(ctx, synthesized);
           return {
             type_name: null,
             form: "instance",
             chain: [...r.chain, { kind: "member", name: member }],
             in_file: null,
             certain: false,
-            reason: `receiver \`${expr.text}\` names static member \`${member}\` of ${r.type_name ?? "?"} whose type is not written in this file`,
+            reason: `receiver \`${expr.text}\` names static member \`${member}\` of ${r.type_name ?? "?"}, not declared in this file`,
           };
         }
         return {
@@ -302,7 +329,7 @@ export function typeOfExpr(
           (p) => p.name === member && !p.is_static,
         );
         if (prop !== undefined) {
-          if (prop.type !== null) return instanceReceiver(ctx, prop.type.base);
+          if (prop.type !== null) return instanceOf(ctx, prop.type);
           if (prop.init !== null) {
             const t = typeOfExpr(ctx, prop.init, owner, depth + 1);
             if (t !== null) return t;
@@ -334,13 +361,12 @@ export function typeOfExpr(
         const method = (declaredType?.members.get(name) ?? []).find(
           (m) => m.return_type !== null,
         );
-        if (method?.return_type)
-          return instanceReceiver(ctx, method.return_type.base);
+        if (method?.return_type) return instanceOf(ctx, method.return_type);
         const o = ctx.owners.find(
           (x) =>
             x.owner_type === null && x.member === name && x.form === "function",
         );
-        if (o?.return_type) return instanceReceiver(ctx, o.return_type.base);
+        if (o?.return_type) return instanceOf(ctx, o.return_type);
         return null;
       }
       if (callee.type === "navigation_expression") {
@@ -355,7 +381,7 @@ export function typeOfExpr(
           const owners = r.in_file.members.get(member) ?? [];
           const withReturn = owners.find((o) => o.return_type !== null);
           if (withReturn?.return_type)
-            return instanceReceiver(ctx, withReturn.return_type.base);
+            return instanceOf(ctx, withReturn.return_type);
         }
         return null;
       }
@@ -365,16 +391,14 @@ export function typeOfExpr(
       const t = fieldChildren(expr, "name").find((c) =>
         TYPE_NODE_KINDS.has(c.type),
       );
-      return t === undefined ? null : instanceReceiver(ctx, typeRef(t).base);
+      return t === undefined ? null : instanceOf(ctx, typeRef(t));
     }
     case "line_string_literal":
     case "multi_line_string_literal":
       return instanceReceiver(ctx, "String");
     case "constructor_expression": {
       const t = expr.namedChildren[0];
-      return t === null || t === undefined
-        ? null
-        : instanceReceiver(ctx, typeRef(t).base);
+      return t === null || t === undefined ? null : instanceOf(ctx, typeRef(t));
     }
     default:
       return null;

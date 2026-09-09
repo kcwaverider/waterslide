@@ -15,6 +15,7 @@ import {
   SwiftPack,
   applyPatch,
   compose,
+  composeWithReport,
   pack,
   rePath,
   spanHash,
@@ -571,6 +572,221 @@ class MemoryService { private let apiClient = APIClient.shared
           d.message.includes("JSONEncoder"),
       ),
     ).toBe(true);
+  });
+});
+
+describe("noise: calls that tell a reader nothing are not drawn (data/noise.json)", () => {
+  const models = `struct Note: Codable { let id: String }\nenum Kind: CaseIterable { case a, b }\nenum Failure: Error { case network(Error?), decoding }\n`;
+
+  it("treats a call on a collection of a user type as a Standard Library call, not a member of the type", async () => {
+    const svc = `class Svc {\n  var notes: [Note] = []\n  func f(items: [Note]) -> [String] {\n    let ids = items.map { $0.id }\n    notes.append(Note(id: "x"))\n    let extra = Note(id: "y")\n    return ids + notes.filter { $0.id != "" }.map(\\.id)\n  }\n}\n`;
+    const results = [
+      await fileResult("r", "Models.swift", models),
+      await fileResult("r", "Svc.swift", svc),
+    ];
+    const merged = applyPatch(results, compose(results));
+    const values = merged.edges.map((e) =>
+      typeof e.to === "string" ? e.to : e.to.value,
+    );
+    expect(values.some((v) => /^Note\.(map|append|filter)$/.test(v))).toBe(
+      false,
+    );
+    // A construction that is not consumed as an argument is still drawn.
+    expect(values.some((v) => v.endsWith("#Note") || v === "Note")).toBe(true);
+  });
+
+  it("keeps a user type's own filter method: membership is checked before any name", async () => {
+    const svc = `class Svc {\n  func g(n: Note) { n.filter() }\n}\nextension Note { func filter() {} }\n`;
+    const results = [
+      await fileResult("r", "Models.swift", models),
+      await fileResult("r", "Svc.swift", svc),
+    ];
+    const merged = applyPatch(results, compose(results));
+    expect(
+      merged.edges.some(
+        (e) => typeof e.to !== "string" && e.to.value === "Note.filter",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not draw an enum case construction, a SwiftUI modifier on a user view, a subscript, or a synthesized static", async () => {
+    const src = `struct Row: View { var body: some View { Text("x") } }\nclass Svc {\n  var rows: [Row] = []\n  func h() throws {\n    let r = rows[0]\n    Row().padding()\n    let k = Kind.allCases.enumerated()\n    throw Failure.network(nil)\n  }\n}\n`;
+    const results = [
+      await fileResult("r", "Models.swift", models),
+      await fileResult("r", "Svc.swift", src),
+    ];
+    const merged = applyPatch(results, compose(results));
+    const values = merged.edges
+      .filter((e) => e.from.endsWith("#Svc.h"))
+      .map((e) => (typeof e.to === "string" ? e.to : e.to.value));
+    expect(values.filter((v) => !v.endsWith("#Row") && v !== "Row")).toEqual(
+      [],
+    );
+    expect(
+      merged.diagnostics.filter(
+        (d) => d.severity === "warning" && d.path === "Svc.swift",
+      ),
+    ).toEqual([]);
+  });
+
+  it("never applies the stdlib-name guard to a protocol requirement", async () => {
+    const src = `protocol Session { func append(_ b: Int) }\nclass Rec {\n  let s: Session\n  init(s: Session) { self.s = s }\n  func push() { s.append(1) }\n}\n`;
+    const results = [await fileResult("r", "Rec.swift", src)];
+    const merged = applyPatch(results, compose(results));
+    // The requirement is declared in this file, so the call resolves to it directly.
+    expect(
+      merged.edges.some((e) => e.to === "r:Rec.swift#Session.append"),
+    ).toBe(true);
+  });
+
+  it("does not guess that an undeclared static member is a singleton instance", async () => {
+    const src = `enum Theme: CaseIterable { case warm, cold }\nclass Svc {\n  func t() { Theme.registry.render(); Theme.allCases.enumerated() }\n}\n`;
+    const results = [await fileResult("r", "Svc.swift", src)];
+    const merged = applyPatch(results, compose(results));
+    expect(
+      merged.edges.some(
+        (e) => typeof e.to !== "string" && /^Theme\./.test(e.to.value),
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("protocol requirements, dispatch fan-out and closure slots (item 2)", () => {
+  const proto = `protocol Backend {\n  var isReady: Bool { get }\n  func send(_ x: Int) async throws\n  func stop()\n}\n`;
+  const live = `struct LiveBackend: Backend {\n  var isReady: Bool { true }\n  func send(_ x: Int) async throws {}\n  func stop() {}\n}\n`;
+  const stub = `final class StubBackend: Backend {\n  var isReady: Bool { false }\n  func send(_ x: Int) async throws {}\n  func stop() {}\n}\n`;
+  const user = `class VM {\n  let backend: Backend\n  init(backend: Backend = LiveBackend()) { self.backend = backend }\n  func go() async throws { try await backend.send(1); backend.stop() }\n}\n`;
+
+  it("emits a certain node and a provide for each protocol requirement, and a call on a protocol-typed value resolves to it", async () => {
+    const results = [
+      await fileResult("r", "Backend.swift", proto),
+      await fileResult("r", "Live.swift", live),
+      await fileResult("r", "Stub.swift", stub),
+      await fileResult("r", "VM.swift", user),
+    ];
+    const merged = applyPatch(results, compose(results));
+    const req = merged.nodes.find(
+      (n) => n.id === "r:Backend.swift#Backend.send",
+    );
+    expect(req?.kind).toBe("function");
+    expect(req?.confidence).toBe("certain");
+    expect(req?.label).toBe("Backend.send (requirement)");
+    expect(
+      merged.provides.some(
+        (p) => p.name === "Backend.send" && p.node_id === req?.id,
+      ),
+    ).toBe(true);
+    const call = merged.edges.find(
+      (e) =>
+        e.from === "r:VM.swift#VM.go" &&
+        typeof e.to !== "string" &&
+        e.to.value === "Backend.send",
+    );
+    expect(call).toBeDefined();
+  });
+
+  it("fans each requirement out to every conformer's implementation, inferred, with the conformer count in the reason", async () => {
+    const results = [
+      await fileResult("r", "Backend.swift", proto),
+      await fileResult("r", "Live.swift", live),
+      await fileResult("r", "Stub.swift", stub),
+    ];
+    const { patch, report } = composeWithReport(results);
+    const fan = patch.edges.filter(
+      (e) => e.from === "r:Backend.swift#Backend.send",
+    );
+    expect(fan.map((e) => e.to).sort()).toEqual([
+      "r:Live.swift#LiveBackend.send",
+      "r:Stub.swift#StubBackend.send",
+    ]);
+    expect(
+      fan.every(
+        (e) =>
+          e.confidence === "inferred" &&
+          e.exclusive_group === null &&
+          e.source === null,
+      ),
+    ).toBe(true);
+    expect(fan[0]?.confidence_reason).toContain("2 conformers of Backend");
+    expect(report.dispatch.get("Backend")).toBe(2);
+    expect(report.dispatch_edges).toBe(4);
+  });
+
+  it("gives a closure-typed stored property a slot node so calls on it resolve, instance and static", async () => {
+    const src = `struct Scene {\n  let onExit: () -> Void\n  var onUpdate: ((Int) -> Void)?\n  class Coordinator {\n    let parent: Scene\n    init(parent: Scene) { self.parent = parent }\n    func done() { parent.onExit(); parent.onUpdate?(1); Services.make() }\n  }\n}\nenum Services {\n  static var make: () -> Int = { 1 }\n}\n`;
+    const r = await pack.parse("r", "Scene.swift", src, {});
+    const slot = r.nodes.find((n) => n.id === "r:Scene.swift#Scene.onExit");
+    expect(slot?.kind).toBe("function");
+    expect(slot?.label).toBe("Scene.onExit (closure property)");
+    const targets = r.edges
+      .filter((e) => e.from === "r:Scene.swift#Scene.Coordinator.done")
+      .map((e) => e.to);
+    expect(targets).toEqual(
+      expect.arrayContaining([
+        "r:Scene.swift#Scene.onExit",
+        "r:Scene.swift#Scene.onUpdate",
+        "r:Scene.swift#Services.make",
+      ]),
+    );
+  });
+
+  it("drops a SwiftUI modifier on a UIViewRepresentable, which is a View too", async () => {
+    const src = `struct SceneView: UIViewRepresentable { func makeUIView(context: Context) -> UIView { UIView() } }\nstruct Host: View { var body: some View { SceneView().ignoresSafeArea() } }\n`;
+    const results = [await fileResult("r", "SceneView.swift", src)];
+    const merged = applyPatch(results, compose(results));
+    expect(
+      merged.edges.some(
+        (e) =>
+          typeof e.to !== "string" &&
+          e.to.value === "SceneView.ignoresSafeArea",
+      ),
+    ).toBe(false);
+    expect(
+      merged.nodes.find((n) => n.id === "r:SceneView.swift#SceneView")?.kind,
+    ).toBe("ui_view");
+  });
+});
+
+describe("review of #24: Self in extensions, cross-file static properties, table validation", () => {
+  it("resolves a static call through `Self` inside a cross-file extension", async () => {
+    const decl = `struct Config {\n  static func probe(_ s: String) -> Bool { true }\n}\n`;
+    const ext = `extension Config {\n  func detect() { _ = Self.probe("x") }\n}\n`;
+    const results = [
+      await fileResult("r", "Config.swift", decl),
+      await fileResult("r", "Config+Detect.swift", ext),
+    ];
+    const merged = applyPatch(results, compose(results));
+    const e = merged.edges.find(
+      (x) => x.from === "r:Config+Detect.swift#Config.detect",
+    );
+    expect(e).toBeDefined();
+    expect(typeof e?.to === "string" ? e?.to : e?.to.value).toMatch(
+      /Config\.probe$/,
+    );
+  });
+
+  it("resolves a call through a static property declared in another file's extension of an in-file type", async () => {
+    const a = `final class Svc {\n  func run() {}\n  func go() { Svc.shared.run() }\n}\n`;
+    const b = `extension Svc {\n  static let shared = Svc()\n}\n`;
+    const results = [
+      await fileResult("r", "Svc.swift", a),
+      await fileResult("r", "Svc+Shared.swift", b),
+    ];
+    const merged = applyPatch(results, compose(results));
+    const e = merged.edges.find((x) => x.from === "r:Svc.swift#Svc.go");
+    expect(e).toBeDefined();
+    expect(typeof e?.to === "string" ? e?.to : e?.to.value).toMatch(
+      /Svc\.run$/,
+    );
+  });
+
+  it("still does not guess when the static member is declared nowhere", async () => {
+    const a = `final class Svc {\n  func run() {}\n  func go() { Svc.mystery.run() }\n}\n`;
+    const results = [await fileResult("r", "Svc.swift", a)];
+    const merged = applyPatch(results, compose(results));
+    expect(merged.edges.some((x) => x.from === "r:Svc.swift#Svc.go")).toBe(
+      false,
+    );
   });
 });
 

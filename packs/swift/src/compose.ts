@@ -24,6 +24,12 @@ import {
   type SymbolHints,
 } from "@waterslide/core";
 import { codeId, moduleId } from "./ids.js";
+import {
+  isStdlibSequenceMember,
+  isViewLike,
+  isViewModifier,
+  synthesizedStaticType,
+} from "./noise.js";
 import { httpEdgeFrom } from "./recognizers/calls.js";
 import {
   HOP_CAP,
@@ -77,6 +83,9 @@ export interface ComposeReport {
   hop_cap_hits: number;
   extensions_merged: number;
   extensions_minted: number;
+  /** Protocol → number of conformers its requirements fanned out to (item 2). */
+  dispatch: Map<string, number>;
+  dispatch_edges: number;
 }
 
 const byteCmp = (a: string, b: string): number =>
@@ -93,15 +102,19 @@ interface RepoIndex {
   functions: Map<string, FunctionFact[]>;
   /** Properties contributed by extensions, by type name. */
   extProps: Map<string, PropertyFact[]>;
+  /** Conformances added by extensions, by type name. */
+  extConformances: Map<string, string[]>;
   /** Node kind by id, as emitted by the per-file pass. */
   kinds: Map<string, NodeKind>;
   schemaByType: Map<string, string>;
 }
 
+/** Index key for a function: `${type}#${member}`, empty type for top level. */
 function fkey(type: string | null, member: string): string {
   return `${type ?? ""}#${member}`;
 }
 
+/** One index per repo over every file with state: types, functions, extension properties and conformances, node kinds, schema ids. */
 function buildIndex(
   files: readonly FileWithState[],
   diagnostics: Diagnostic[],
@@ -114,6 +127,7 @@ function buildIndex(
         types: new Map(),
         functions: new Map(),
         extProps: new Map(),
+        extConformances: new Map(),
         kinds: new Map(),
         schemaByType: new Map(),
       };
@@ -147,11 +161,16 @@ function buildIndex(
       const list = idx.extProps.get(e.type_name);
       if (list === undefined) idx.extProps.set(e.type_name, [...e.properties]);
       else list.push(...e.properties);
+      const conf = idx.extConformances.get(e.type_name);
+      if (conf === undefined)
+        idx.extConformances.set(e.type_name, [...e.conformances]);
+      else conf.push(...e.conformances);
     }
   }
   return repos;
 }
 
+/** The repo index as the FactsIndex the URL helper walk consumes. */
 function factsIndex(idx: RepoIndex): FactsIndex {
   return {
     functions: (typeName, member) =>
@@ -205,7 +224,12 @@ function resolveChain(c: Candidate, idx: RepoIndex): Resolved | null {
       continue;
     }
     if (form === "type") {
-      reason = `receiver reaches static member \`${step.name}\` of ${cur} whose type is not written in source; taken as an instance of ${cur} (singleton convention)`;
+      // An undeclared static member is knowable only when the compiler
+      // synthesizes it (`allCases`); otherwise the receiver is unknown and the
+      // call is not drawn. Never assumed to be a singleton instance.
+      const synthesized = synthesizedStaticType(step.name);
+      if (synthesized === null) return null;
+      cur = synthesized;
       form = "instance";
       continue;
     }
@@ -214,6 +238,7 @@ function resolveChain(c: Candidate, idx: RepoIndex): Resolved | null {
   return { type_name: cur, form, reason };
 }
 
+/** Schema id for a Codable type name declared in this repo, or null. */
 function schemaFor(
   idx: RepoIndex,
   typeName: string | null | undefined,
@@ -222,6 +247,7 @@ function schemaFor(
   return idx.schemaByType.get(typeName) ?? null;
 }
 
+/** The type passed to `JSONEncoder().encode(...)` anywhere in the arguments, for the request schema. */
 function encodedType(args: Candidate["args"]): string | null {
   const walk = (v: ArgValue): string | null => {
     if (v.kind === "encoded") return v.type_name ?? null;
@@ -238,10 +264,12 @@ function encodedType(args: Candidate["args"]): string | null {
   return null;
 }
 
+/** The contract-facing cross-file pass; `composeWithReport` also returns the coverage figures. */
 export function compose(results: readonly PerFileResult[]): PackPatch {
   return composeWithReport(results).patch;
 }
 
+/** Run the cross-file pass and return the patch plus the figures the summary prints. */
 export function composeWithReport(results: readonly PerFileResult[]): {
   patch: PackPatch;
   report: ComposeReport;
@@ -262,6 +290,8 @@ export function composeWithReport(results: readonly PerFileResult[]): {
     hop_cap_hits: 0,
     extensions_merged: 0,
     extensions_minted: 0,
+    dispatch: new Map(),
+    dispatch_edges: 0,
   };
   const files: FileWithState[] = [];
   for (const r of results) {
@@ -421,6 +451,13 @@ export function composeWithReport(results: readonly PerFileResult[]): {
         externals.set(typeName, (externals.get(typeName) ?? 0) + 1);
         continue;
       }
+      if (
+        declaredType !== undefined &&
+        memberFacts.length === 0 &&
+        isNoise(declaredType.fact, idx, member)
+      ) {
+        continue; // data/noise.json: drawn as nothing, by design
+      }
       const http =
         memberFacts.length === 0
           ? null
@@ -476,6 +513,69 @@ export function composeWithReport(results: readonly PerFileResult[]): {
           is_entry_point: true,
           entry_point_kind: "ui_handler",
         });
+      }
+    }
+  }
+
+  // --- Protocol dispatch (item 2) ---------------------------------------------
+  // A call on a protocol-typed value resolves to the requirement, which is
+  // what the source names. Which implementation runs is decided where the
+  // value is injected, so each requirement fans out to every conformer's
+  // implementation: the scope doc's dynamic-dispatch blind spot, drawn as a
+  // labelled fan-out of possible destinations. Independent inferred edges, not
+  // an exclusive_group (no condition selects among them). Never capped; the
+  // conformer count is in the reason so a reader knows how wide the guess is.
+  for (const idx of repos.values()) {
+    const conformersOf = new Map<string, string[]>();
+    for (const [name, t] of idx.types) {
+      const all = [
+        ...t.fact.conformances,
+        ...(idx.extConformances.get(name) ?? []),
+      ];
+      for (const c of all) {
+        const p = idx.types.get(c);
+        if (p === undefined || p.fact.declaration_kind !== "protocol") continue;
+        const list = conformersOf.get(c) ?? [];
+        if (!list.includes(name)) list.push(name);
+        conformersOf.set(c, list);
+      }
+    }
+    for (const [protocol, conformers] of conformersOf) {
+      conformers.sort(byteCmp);
+      report.dispatch.set(protocol, conformers.length);
+      const requirements = [...idx.functions.values()]
+        .flat()
+        .filter((f) => f.owner_type === protocol && f.form === "requirement")
+        .sort((a, b) => byteCmp(a.node_id, b.node_id));
+      for (const req of requirements) {
+        for (const conformer of conformers) {
+          const impls = (
+            idx.functions.get(fkey(conformer, req.member)) ?? []
+          ).filter(
+            (f) =>
+              f.form !== "requirement" &&
+              f.form !== "slot" &&
+              f.params.length === req.params.length,
+          );
+          for (const impl of impls) {
+            patch.edges.push({
+              from: req.node_id,
+              to: impl.node_id,
+              kind: "call",
+              label: `implements ${req.member}`,
+              schema_id: null,
+              response_schema_id: null,
+              confidence: "inferred",
+              confidence_reason: `dynamic dispatch: ${conformer} conforms to ${protocol}, so a call to ${protocol}.${req.member} may run here; which implementation runs is chosen where the value is injected (${String(conformers.length)} conformer${conformers.length === 1 ? "" : "s"} of ${protocol} in the pack)`,
+              condition: null,
+              exclusive_group: null,
+              branch_ordinal: null,
+              is_error_path: false,
+              source: null,
+            });
+            report.dispatch_edges++;
+          }
+        }
       }
     }
   }
@@ -536,6 +636,27 @@ function numberPendingForks(
   }
 }
 
+/**
+ * A member declared nowhere in the pack on a type that IS declared here is
+ * either a framework-provided member or a real gap. The noise table names the
+ * framework-provided ones (data/noise.json); everything else keeps emitting so
+ * a genuine gap stays visible as an unknown node. The receiver must be a
+ * concrete type: a protocol requirement may legitimately be named `append`.
+ */
+function isNoise(fact: TypeFact, idx: RepoIndex, member: string): boolean {
+  const props = [
+    ...fact.properties,
+    ...(idx.extProps.get(fact.qualified) ?? []),
+  ];
+  if (props.some((p) => p.name === member)) return false;
+  if (fact.declaration_kind === "enum" && fact.cases.includes(member))
+    return true;
+  if (fact.declaration_kind === "protocol") return false;
+  if (isViewLike(fact.conformances) && isViewModifier(member)) return true;
+  return isStdlibSequenceMember(member);
+}
+
+/** A candidate as a symbol-ref edge, downgraded to inferred when the receiver chain needed an assumption. */
 function symbolEdge(
   c: Candidate,
   value: string,
@@ -565,6 +686,7 @@ function symbolEdge(
   return e;
 }
 
+/** Resolve a candidate through its callees into an http edge, or null when no callee builds a URL from the arguments. */
 function tryHttp(
   callees: FunctionFact[],
   c: Candidate,
