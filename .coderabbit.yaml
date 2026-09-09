@@ -74,18 +74,27 @@ reviews:
             the language-pack interface, analysis semantics (node or edge
             identity, tier assignment, confidence, resolution, diagnostic codes),
             policy-check behavior, or rendering behavior
-          - No file under `docs/` receives a substantive modification in the
-            same PR — formatting-only or typo-only edits do not count
+          - No file under `docs/` receives a substantive modification covering
+            the changed behavior in the same PR — formatting-only or typo-only
+            edits, and substantive edits to a document that does not govern the
+            behavior that changed, do not count
 
           PASS if ANY of the following are true:
           - No implementation file under a workspace `src/` directory is modified
           - The change is internal only — refactoring, renaming of non-exported
             symbols, performance work, dependency bumps, formatting, comments,
             logging, or test-only changes — with no change to observable behavior
-          - A file under `docs/` is modified in the same PR and the modification is
-            substantive, not merely formatting or typo fixes
+          - A file under `docs/` is modified in the same PR, the modification is
+            substantive rather than formatting or typo fixes, and it covers the
+            observable behavior that changed
           - The PR description explicitly states that the specifications were
             reviewed and require no change, and gives the reason
+
+          The PR-description exception is the one condition that overrides a
+          FAIL: if the description states the specifications were reviewed and
+          require no change and gives the reason, the check passes even when the
+          FAIL conditions hold. Otherwise FAIL and PASS are complements and
+          exactly one applies.
 
           When failing, state which observable behavior changed, name the specific
           specification document and section that appears to cover it, and quote
