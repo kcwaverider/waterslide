@@ -77,10 +77,12 @@ export {
   depthOf,
   hideUnresolved,
   levelsOf,
+  representativesFor,
 } from "./browser/aggregate.js";
 export type {
   AggregatedGraph,
   FilteredGraph,
+  Focus,
   Level,
 } from "./browser/aggregate.js";
 

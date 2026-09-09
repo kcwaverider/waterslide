@@ -24,6 +24,25 @@ export interface Level {
   readonly name: string;
 }
 
+/**
+ * Regional focus: the level-`level` nodes the reader is looking at. Nodes
+ * whose level representative is near stay unfolded; everything else folds up
+ * to the branch point where it leaves the focus, so an edge from a near
+ * function to a far file lands on the far file's directory box, and fifty
+ * calls into one directory draw as one weighted edge.
+ */
+export interface Focus {
+  readonly near: ReadonlySet<string>;
+  /**
+   * The most far siblings one ancestor may show as separate boxes. Folding to
+   * the branch point makes every far sibling of the focus its own box, and a
+   * directory of sixty files would put sixty boxes in the row; past this
+   * many, the far siblings fold into the ancestor's residual box instead.
+   * Default 12.
+   */
+  readonly maxBranchBoxes?: number;
+}
+
 export interface AggregatedGraph extends GraphView {
   readonly level: number;
   /** Merged-edge id → how many original edges it stands for. Absent means 1. */
@@ -32,6 +51,8 @@ export interface AggregatedGraph extends GraphView {
   readonly representative: ReadonlyMap<string, string>;
   /** Drawn node id → the original ids folded into it, itself included. */
   readonly members: ReadonlyMap<string, readonly string[]>;
+  /** Drawn node id → how many boxes at the level folded into it beyond itself. Non-zero only for boxes folded below the level by a focus. */
+  readonly folded: ReadonlyMap<string, number>;
 }
 
 function byteCompare(a: string, b: string): number {
@@ -198,26 +219,132 @@ function worse(a: Confidence, b: Confidence): Confidence {
  * aggregation, because a branch point inside a module is not a branch point
  * of the module.
  */
+/**
+ * Which drawn node stands for each original node. Without a focus, the
+ * ancestor at `level` (or the node itself when shallower): one granularity
+ * everywhere. With a focus, the near part of the tree is unfolded to `level`
+ * and the far part folds to the child of its deepest ancestor that contains
+ * something near — the branch point off the focus — or, when that child
+ * would be the far node's own level box, to that ancestor itself as a
+ * residual box ("the rest of this directory"). A far subtree with no near
+ * ancestor below the root folds to its top-level box.
+ */
+export function representativesFor(
+  graph: GraphView,
+  level: number,
+  focus?: Focus,
+): Map<string, string> {
+  const depth = depthOf(graph.nodes);
+  const parentOf = new Map(graph.nodes.map((n) => [n.id, n.parent] as const));
+  const chainOf = (id: string): string[] => {
+    // Root first, the node itself last.
+    const chain = [id];
+    const seen = new Set<string>([id]);
+    let up = parentOf.get(id) ?? null;
+    while (up !== null && parentOf.has(up) && !seen.has(up)) {
+      seen.add(up);
+      chain.unshift(up);
+      up = parentOf.get(up) ?? null;
+    }
+    return chain;
+  };
+  const levelRep = (chain: string[]): string =>
+    chain[Math.min(level, chain.length - 1)] as string;
+  const representative = new Map<string, string>();
+  if (focus === undefined) {
+    for (const n of graph.nodes)
+      representative.set(n.id, levelRep(chainOf(n.id)));
+    return representative;
+  }
+  // Ancestors (and selves) of near level boxes: where the focus lives.
+  const containsNear = new Set<string>();
+  for (const n of graph.nodes) {
+    const chain = chainOf(n.id);
+    if (focus.near.has(levelRep(chain)))
+      for (const a of chain) containsNear.add(a);
+  }
+  // The branch point of every far node: the child of its deepest ancestor
+  // that contains something near. Counted per ancestor first, so an ancestor
+  // with too many far branches can fold them all into its residual box.
+  const branchOf = new Map<string, { j: number; chain: string[] }>();
+  const branchesUnder = new Map<string, Set<string>>();
+  for (const n of graph.nodes) {
+    const chain = chainOf(n.id);
+    if (focus.near.has(levelRep(chain))) continue;
+    let j = -1;
+    for (let i = 0; i < chain.length; i++)
+      if (containsNear.has(chain[i] as string)) j = i;
+    branchOf.set(n.id, { j, chain });
+    if (j >= 0 && j + 1 < chain.length) {
+      const set = branchesUnder.get(chain[j] as string) ?? new Set<string>();
+      set.add(chain[j + 1] as string);
+      branchesUnder.set(chain[j] as string, set);
+    }
+  }
+  const maxBranches = focus.maxBranchBoxes ?? 12;
+  for (const n of graph.nodes) {
+    const chain = chainOf(n.id);
+    const rep = levelRep(chain);
+    if (focus.near.has(rep)) {
+      representative.set(n.id, rep);
+      continue;
+    }
+    const j = branchOf.get(n.id)?.j ?? -1;
+    const own = chain.length - 1;
+    const crowded =
+      j >= 0 &&
+      (branchesUnder.get(chain[j] as string)?.size ?? 0) > maxBranches;
+    let target: number;
+    if (j < 0) target = 0;
+    else if (crowded)
+      // Too many far siblings to show one by one: the residual box of the
+      // shared ancestor, unless this node IS that ancestor or above it.
+      target = Math.min(j, own);
+    else if (own < level)
+      // A box shallower than the level — a directory — is the branch point
+      // for its own subtree, so it stands for itself, never below itself.
+      target = Math.min(j + 1, own);
+    // A level box, or deeper: the branch point off the focus, or the residual
+    // box of the ancestor it shares with the focus when the branch point
+    // would be its own level box.
+    else target = j + 1 < level ? j + 1 : j;
+    representative.set(n.id, chain[target] as string);
+  }
+  // A far box earns its place by touching the focus. One with no edge to a
+  // near box, or to an ancestor of the focus, folds on into the residual box
+  // of the ancestor it shares with the focus: fifty far files across three
+  // directories still draw three boxes when the focus calls into them, and
+  // the directories nothing near touches do not.
+  const drawnNear = new Set<string>();
+  for (const r of representative.values())
+    if (focus.near.has(r) || containsNear.has(r)) drawnNear.add(r);
+  const touched = new Set<string>();
+  for (const e of graph.edges) {
+    const a = representative.get(e.from);
+    const b = representative.get(e.to);
+    if (a === undefined || b === undefined || a === b) continue;
+    if (drawnNear.has(a)) touched.add(b);
+    if (drawnNear.has(b)) touched.add(a);
+  }
+  for (const n of graph.nodes) {
+    const r = representative.get(n.id) as string;
+    if (drawnNear.has(r) || touched.has(r)) continue;
+    const info = branchOf.get(n.id);
+    if (info === undefined || info.j < 0) continue;
+    const own = info.chain.length - 1;
+    representative.set(n.id, info.chain[Math.min(info.j, own)] as string);
+  }
+  void depth;
+  return representative;
+}
+
 export function aggregateGraph(
   graph: GraphView,
   level: number,
+  focus?: Focus,
 ): AggregatedGraph {
-  const depth = depthOf(graph.nodes);
-  const parentOf = new Map(graph.nodes.map((n) => [n.id, n.parent] as const));
-  const representative = new Map<string, string>();
-  for (const n of graph.nodes) {
-    let id = n.id;
-    let d = depth.get(id) ?? 0;
-    const seen = new Set<string>([id]);
-    while (d > level) {
-      const up = parentOf.get(id) ?? null;
-      if (up === null || !parentOf.has(up) || seen.has(up)) break;
-      seen.add(up);
-      id = up;
-      d -= 1;
-    }
-    representative.set(n.id, id);
-  }
+  const representative = representativesFor(graph, level, focus);
+  const levelOnly = representativesFor(graph, level);
   const members = new Map<string, string[]>();
   for (const [id, rep] of representative) {
     const list = members.get(rep);
@@ -225,16 +352,34 @@ export function aggregateGraph(
     else list.push(id);
   }
   for (const list of members.values()) list.sort(byteCompare);
+  // Level boxes folded below the level by the focus, per drawn box: the
+  // boxes AT the level (or leaves above it), so "+19" at functions level
+  // counts functions, not the files around them as well.
+  const depth = depthOf(graph.nodes);
+  const hasChild = new Set(
+    graph.nodes.map((n) => n.parent).filter((p): p is string => p !== null),
+  );
+  const folded = new Map<string, number>();
+  for (const [id, rep] of representative) {
+    const box = levelOnly.get(id) ?? id;
+    const atLevel = (depth.get(id) ?? 0) >= level || !hasChild.has(id);
+    if (box === id && box !== rep && atLevel)
+      folded.set(rep, (folded.get(rep) ?? 0) + 1);
+  }
   const nodes = graph.nodes
     .filter((n) => members.has(n.id))
     .map((n) => {
-      const folded = (members.get(n.id) ?? []).filter((m) => m !== n.id);
-      if (folded.length === 0) return n;
-      const inner = graph.nodes.filter((x) => folded.includes(x.id));
-      // An aggregate is an entry point if anything inside it is; it keeps its own label.
+      const inside = (members.get(n.id) ?? []).filter((m) => m !== n.id);
+      const foldedHere = folded.get(n.id) ?? 0;
+      if (inside.length === 0) return n;
+      const inner = graph.nodes.filter((x) => inside.includes(x.id));
+      // An aggregate is an entry point if anything inside it is. A box folded
+      // below the level says how many level boxes it stands for, so a reader
+      // can tell one file from forty.
       const entry = inner.find((x) => x.is_entry_point);
       return {
         ...n,
+        label: foldedHere > 0 ? `${n.label} +${String(foldedHere)}` : n.label,
         is_entry_point: n.is_entry_point || entry !== undefined,
         entry_point_kind: n.entry_point_kind ?? entry?.entry_point_kind ?? null,
       };
@@ -322,5 +467,5 @@ export function aggregateGraph(
     });
     weights.set(id, m.count);
   }
-  return { level, nodes, edges, weights, representative, members };
+  return { level, nodes, edges, weights, representative, members, folded };
 }

@@ -254,3 +254,251 @@ describe("hide unresolved: a view filter, not a graph change", () => {
     }
   });
 });
+
+describe("regional focus: near unfolded, far folded, edges land on folded boxes", () => {
+  const base = load("single-repo-minimal.json")
+    .nodes[0] as CanonicalGraph["nodes"][number];
+  const baseEdge = load("single-repo-minimal.json")
+    .edges[0] as CanonicalGraph["edges"][number];
+  const mk = (
+    id: string,
+    kind: CanonicalGraph["nodes"][number]["kind"],
+    parent: string | null,
+  ): CanonicalGraph["nodes"][number] => ({
+    ...base,
+    id,
+    kind,
+    label: id.split("/").pop() ?? id,
+    parent,
+    sources: [],
+    is_entry_point: false,
+    entry_point_kind: null,
+  });
+  const call = (from: string, to: string): CanonicalGraph["edges"][number] => ({
+    ...baseEdge,
+    id: `e_${from}_${to}`,
+    from,
+    to,
+    kind: "call",
+    condition: null,
+    exclusive_group: null,
+    branch_ordinal: null,
+    confidence: "certain",
+    confidence_reason: null,
+  });
+  // repo → server → {api → {a.py → a1,a2 ; b.py → b1}, svc → {c.py → c1, d.py → d1}} ; repo → ios → {v.swift → v1}
+  const nodes = [
+    mk("svc:r", "service", null),
+    mk("r:server", "module", "svc:r"),
+    mk("r:server/api", "module", "r:server"),
+    mk("r:server/api/a.py", "module", "r:server/api"),
+    mk("r:server/api/a.py#a1", "function", "r:server/api/a.py"),
+    mk("r:server/api/a.py#a2", "function", "r:server/api/a.py"),
+    mk("r:server/api/b.py", "module", "r:server/api"),
+    mk("r:server/api/b.py#b1", "function", "r:server/api/b.py"),
+    mk("r:server/svc", "module", "r:server"),
+    mk("r:server/svc/c.py", "module", "r:server/svc"),
+    mk("r:server/svc/c.py#c1", "function", "r:server/svc/c.py"),
+    mk("r:server/svc/d.py", "module", "r:server/svc"),
+    mk("r:server/svc/d.py#d1", "function", "r:server/svc/d.py"),
+    mk("r:ios", "module", "svc:r"),
+    mk("r:ios/v.swift", "module", "r:ios"),
+    mk("r:ios/v.swift#v1", "function", "r:ios/v.swift"),
+    // A directory nothing near touches.
+    mk("r:server/util", "module", "r:server"),
+    mk("r:server/util/u.py", "module", "r:server/util"),
+    mk("r:server/util/u.py#u1", "function", "r:server/util/u.py"),
+  ];
+  const edges = [
+    call("r:server/api/a.py#a1", "r:server/api/a.py#a2"),
+    call("r:server/api/a.py#a1", "r:server/api/b.py#b1"),
+    call("r:server/api/a.py#a2", "r:server/svc/c.py#c1"),
+    call("r:server/api/a.py#a2", "r:server/svc/d.py#d1"),
+    call("r:ios/v.swift#v1", "r:server/api/a.py#a1"),
+  ];
+  const g = { nodes, edges };
+  const FILES = 3; // depth of files
+
+  it("with every level box near, it is the plain level aggregation", () => {
+    const all = new Set(
+      nodes.filter((n) => depthOf(nodes).get(n.id) === FILES).map((n) => n.id),
+    );
+    const focused = aggregateGraph(g, FILES, { near: all });
+    const plain = aggregateGraph(g, FILES);
+    expect(focused.nodes.map((n) => n.id)).toEqual(
+      plain.nodes.map((n) => n.id),
+    );
+    expect(focused.edges.map((e) => e.id)).toEqual(
+      plain.edges.map((e) => e.id),
+    );
+    expect(focused.folded.size).toBe(0);
+  });
+
+  it("folds far siblings into a residual box, far directories into their box, far trees into their top box", () => {
+    const a = aggregateGraph(g, FILES, {
+      near: new Set(["r:server/api/a.py"]),
+    });
+    const ids = a.nodes.map((n) => n.id).sort();
+    // Ancestors shallower than the level draw as their own boxes, as at any level.
+    expect(ids).toEqual(
+      [
+        "svc:r",
+        "r:server",
+        "r:ios",
+        "r:server/api",
+        "r:server/api/a.py",
+        "r:server/svc",
+      ].sort(),
+    );
+    // b.py folded into its own directory's residual box; c.py and d.py into svc; v.swift into ios.
+    expect(a.representative.get("r:server/api/b.py#b1")).toBe("r:server/api");
+    // util is under server too, but nothing near touches it: it folds on into server's residual box.
+    expect(a.representative.get("r:server/util/u.py#u1")).toBe("r:server");
+    expect(a.folded.get("r:server")).toBe(1);
+    expect(a.representative.get("r:server/svc/d.py#d1")).toBe("r:server/svc");
+    expect(a.representative.get("r:ios/v.swift#v1")).toBe("r:ios");
+    // The near file stays itself, and so do its members at this level.
+    expect(a.representative.get("r:server/api/a.py#a2")).toBe(
+      "r:server/api/a.py",
+    );
+    // Boxes say how many level boxes they stand for.
+    expect(a.folded.get("r:server/api")).toBe(1);
+    expect(a.folded.get("r:server/svc")).toBe(2);
+    // ios holds two boxes of this level: the file v.swift (shallower than the level) and v1 at level depth.
+    expect(a.folded.get("r:ios")).toBe(1);
+    expect(a.nodes.find((n) => n.id === "r:server/svc")?.label).toBe("svc +2");
+    expect(a.nodes.find((n) => n.id === "r:server/api/a.py")?.label).toBe(
+      "a.py",
+    );
+  });
+
+  it("edges land on the folded boxes, weighted", () => {
+    const a = aggregateGraph(g, FILES, {
+      near: new Set(["r:server/api/a.py"]),
+    });
+    const toSvc = a.edges.find(
+      (e) => e.from === "r:server/api/a.py" && e.to === "r:server/svc",
+    );
+    expect(toSvc).toBeDefined();
+    expect(a.weights.get(toSvc?.id ?? "")).toBe(2);
+    expect(toSvc?.label).toBe("2 × call");
+    expect(
+      a.edges.some(
+        (e) => e.from === "r:server/api/a.py" && e.to === "r:server/api",
+      ),
+    ).toBe(true);
+    expect(
+      a.edges.some((e) => e.from === "r:ios" && e.to === "r:server/api/a.py"),
+    ).toBe(true);
+    // a1 → a2 is inside the near file: internal at this level, gone.
+    expect(a.edges).toHaveLength(3);
+    for (const e of a.edges) {
+      expect(a.nodes.some((n) => n.id === e.from)).toBe(true);
+      expect(a.nodes.some((n) => n.id === e.to)).toBe(true);
+    }
+  });
+
+  it("is deterministic and lays out", () => {
+    const focus = { near: new Set(["r:server/api/a.py"]) };
+    const x = aggregateGraph(g, FILES, focus);
+    const y = aggregateGraph(
+      { nodes: [...nodes].reverse(), edges: [...edges].reverse() },
+      FILES,
+      focus,
+    );
+    expect(JSON.stringify(y.edges)).toBe(JSON.stringify(x.edges));
+    expect(layoutGraph(x).nodes).toHaveLength(x.nodes.length);
+  });
+});
+
+describe("regional focus: crowded ancestors fold their far siblings into one residual box", () => {
+  const base = load("single-repo-minimal.json")
+    .nodes[0] as CanonicalGraph["nodes"][number];
+  const baseEdge = load("single-repo-minimal.json")
+    .edges[0] as CanonicalGraph["edges"][number];
+  const mk = (
+    id: string,
+    kind: CanonicalGraph["nodes"][number]["kind"],
+    parent: string | null,
+  ): CanonicalGraph["nodes"][number] => ({
+    ...base,
+    id,
+    kind,
+    label: id.split("/").pop() ?? id,
+    parent,
+    sources: [],
+    is_entry_point: false,
+    entry_point_kind: null,
+  });
+  const nodes = [mk("svc:r", "service", null), mk("r:d", "module", "svc:r")];
+  for (let i = 0; i < 20; i++) {
+    nodes.push(mk(`r:d/f${String(i)}.py`, "module", "r:d"));
+    nodes.push(
+      mk(`r:d/f${String(i)}.py#fn`, "function", `r:d/f${String(i)}.py`),
+    );
+  }
+  const g = { nodes, edges: [] };
+
+  it("at the files level far sibling files are the residual box regardless of the cap", () => {
+    const a = aggregateGraph(g, 2, {
+      near: new Set(["r:d/f0.py"]),
+      maxBranchBoxes: 30,
+    });
+    expect(
+      a.nodes.filter((n) => n.id.startsWith("r:d/f")).map((n) => n.id),
+    ).toEqual(["r:d/f0.py"]);
+    expect(a.folded.get("r:d")).toBe(19);
+  });
+
+  it("at the functions level, touched far sibling files are boxes below the cap and one residual box above it", () => {
+    // Every sibling file is touched by the near function, so the cap decides.
+    const touching = {
+      nodes,
+      edges: nodes
+        .filter((n) => n.id.endsWith("#fn") && n.id !== "r:d/f0.py#fn")
+        .map((n) => ({
+          ...baseEdge,
+          id: `e_${n.id}`,
+          from: "r:d/f0.py#fn",
+          to: n.id,
+          kind: "call" as const,
+          condition: null,
+          exclusive_group: null,
+          branch_ordinal: null,
+        })),
+    };
+    const few = aggregateGraph(touching, 3, {
+      near: new Set(["r:d/f0.py#fn"]),
+      maxBranchBoxes: 30,
+    });
+    expect(
+      few.nodes.filter((n) => n.id.startsWith("r:d/f") && !n.id.includes("#"))
+        .length,
+    ).toBe(20);
+    expect(few.folded.get("r:d/f7.py")).toBe(1);
+    // Untouched, they fold into the residual regardless of the cap.
+    const untouched = aggregateGraph(g, 3, {
+      near: new Set(["r:d/f0.py#fn"]),
+      maxBranchBoxes: 30,
+    });
+    expect(
+      untouched.nodes
+        .filter((n) => n.id.startsWith("r:d/f"))
+        .map((n) => n.id)
+        .sort(),
+    ).toEqual(["r:d/f0.py", "r:d/f0.py#fn"]);
+    const capped = aggregateGraph(touching, 3, {
+      near: new Set(["r:d/f0.py#fn"]),
+    });
+    expect(
+      capped.nodes
+        .filter((n) => n.id.startsWith("r:d/f"))
+        .map((n) => n.id)
+        .sort(),
+    ).toEqual(["r:d/f0.py", "r:d/f0.py#fn"]);
+    expect(capped.folded.get("r:d")).toBe(19);
+    expect(capped.nodes.find((n) => n.id === "r:d")?.label).toBe("r:d +19");
+    expect(capped.representative.get("r:d/f7.py#fn")).toBe("r:d");
+    expect(capped.representative.get("r:d/f7.py")).toBe("r:d");
+  });
+});

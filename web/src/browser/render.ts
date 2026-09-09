@@ -42,6 +42,7 @@ import {
   aggregateGraph,
   hideUnresolved,
   levelsOf,
+  representativesFor,
   type AggregatedGraph,
   type Level,
 } from "./aggregate.js";
@@ -293,6 +294,14 @@ export interface ViewerHandle {
   focus(fx: number, fy: number, nodePx: number): void;
   /** The layout point under the centre of the stage, as fractions of the layout. */
   centre(): { fx: number; fy: number };
+  /** The visible region in layout coordinates. */
+  viewport(): Viewport;
+  /** Where a drawn node's centre sits on the stage, in CSS pixels from the stage's top-left; null when not drawn. */
+  nodeScreenCentre(id: string): { x: number; y: number } | null;
+  /** Zoom so the mean node is `nodePx` wide and put this node's centre at a stage point. */
+  placeNodeAt(id: string, at: { x: number; y: number }, nodePx: number): void;
+  /** The mean node's on-screen width right now. */
+  nodePx(): number;
   /** §2.1: change the base size without touching zoom. */
   setMagnification(magnification: number): void;
 }
@@ -570,13 +579,26 @@ export function renderGraph(
     onZoom(fitNodePx() * lastTransform.k, lastTransform.k);
   };
 
+  // A transform the code applies — carrying the reader's place across a
+  // re-draw, or settling a level change — is not the reader zooming, and the
+  // level trigger must not act on it: the layout it lands on may be a very
+  // different size from the one the transform came from.
+  let programmatic = false;
+  const setTransform = (t: D3.ZoomTransform): void => {
+    programmatic = true;
+    try {
+      svg.call(zoom.transform, t);
+    } finally {
+      programmatic = false;
+    }
+  };
   const zoom = d3
     .zoom<SVGSVGElement, unknown>()
     .on("zoom", (event: D3.D3ZoomEvent<SVGSVGElement, unknown>) => {
       lastTransform = event.transform;
       applyTransform();
       updateOffscreen();
-      reportZoom();
+      if (!programmatic) reportZoom();
     });
   // The extent depends on how big the map is relative to the stage, so it is
   // recomputed whenever that changes: at draw, on resize, on magnification.
@@ -587,7 +609,7 @@ export function renderGraph(
   applyExtent();
   svg.call(zoom);
   if (options.initialTransform !== undefined)
-    svg.call(zoom.transform, options.initialTransform);
+    setTransform(options.initialTransform);
   svg.on("click", () => onSelect({ type: "none" }));
   window.addEventListener("resize", () => {
     applyExtent();
@@ -654,7 +676,7 @@ export function renderGraph(
           layout.height / 2 - k * magnification * fy * layout.height,
         )
         .scale(k);
-      svg.call(zoom.transform, t);
+      setTransform(t);
     },
     centre() {
       const view = visibleRegion(root, layout, lastTransform, magnification);
@@ -663,6 +685,43 @@ export function renderGraph(
         fy: (view.layout.y0 + view.layout.y1) / 2 / layout.height,
       };
     },
+    viewport() {
+      return visibleRegion(root, layout, lastTransform, magnification).layout;
+    },
+    nodeScreenCentre(id) {
+      const ln = layout.nodes.find((n) => n.node.id === id);
+      if (ln === undefined) return null;
+      const s = fitScale();
+      const rect = root.getBoundingClientRect();
+      const vb = lastTransform.apply([
+        magnification * (ln.x + ln.w / 2),
+        magnification * (ln.y + ln.h / 2),
+      ]);
+      // viewBox → stage pixels: the viewBox is centred in the stage (xMidYMid meet).
+      return {
+        x: (vb[0] - layout.width / 2) * s + rect.width / 2,
+        y: (vb[1] - layout.height / 2) * s + rect.height / 2,
+      };
+    },
+    placeNodeAt(id, at, nodePx) {
+      const ln = layout.nodes.find((n) => n.node.id === id);
+      if (ln === undefined) return;
+      const fit = fitNodePx();
+      const [kMin, kMax] = zoomExtent(fit, hasCoarser);
+      const k = Math.max(kMin, Math.min(kMax, fit > 0 ? nodePx / fit : 1));
+      const s = fitScale();
+      const rect = root.getBoundingClientRect();
+      const vbx = (at.x - rect.width / 2) / s + layout.width / 2;
+      const vby = (at.y - rect.height / 2) / s + layout.height / 2;
+      const t = d3.zoomIdentity
+        .translate(
+          vbx - k * magnification * (ln.x + ln.w / 2),
+          vby - k * magnification * (ln.y + ln.h / 2),
+        )
+        .scale(k);
+      setTransform(t);
+    },
+    nodePx: () => fitNodePx() * lastTransform.k,
     setMagnification(next) {
       // §2.2: magnification re-renders the same level at a different size. It
       // shifts where in the zoom range the next level change falls — the
@@ -963,6 +1022,8 @@ export function mountViewer(): void {
       const graph = JSON.parse(text) as GraphLike;
       if (panel !== null) renderPanel(panel, null);
       const session = new Session(stage, graph, changeState, panel, controls);
+      // For harnesses and debugging: the live session, never used by the page itself.
+      (window as unknown as { waterslide?: unknown }).waterslide = session;
       const layout = session.handle.layout;
       if (sidebar !== null) session.mountSidebar(sidebar);
       const legend = `${String(graph.nodes.length)} nodes · ${String(graph.edges.length)} edges · ${String(layout.bands.filter((b) => b.count > 0).length)} bands used · ${String(layout.nodes.filter((n) => n.external).length)} external`;
@@ -1041,6 +1102,35 @@ class Session {
   private magnification = 1;
   /** View filter: unknown nodes and their edges left out before aggregation and layout. */
   private hideUnresolvedNodes = HIDE_UNRESOLVED_DEFAULT;
+  /**
+   * Regional focus: the level boxes the reader is looking at. Everything else
+   * folds to the branch point off the focus, so the row on screen stays short
+   * at readable zoom and far edges land on folded boxes. Null means no focus
+   * yet — every box near — which is what a coarse level with everything on
+   * screen amounts to anyway.
+   */
+  private near: Set<string> | null = null;
+  /** Level boxes that stay near regardless of the viewport: the selected story's. */
+  private readonly pinned = new Set<string>();
+  /** Every original node's box at the current level, without any focus. */
+  private levelRep = new Map<string, string>();
+  /**
+   * The centre x of every level box in the GLOBAL level layout — the one with
+   * everything unfolded. The near set is a window over that layout, so it
+   * depends on the reader's position and nothing else: a folded layout's own
+   * positions never feed back into what folds, which is what keeps a refold
+   * from undoing itself.
+   */
+  private globalX = new Map<string, number>();
+  private globalMeanW: number = LAYOUT.minNodeW;
+  private globalKey = "";
+  /** Centre of the current near window in global-layout x; null before the first refold at a level. */
+  private windowCentre: number | null = null;
+  private refoldTimer = 0;
+  private lastRefoldAt = Number.NEGATIVE_INFINITY;
+  private lastNodePx: number = LEVEL_TRIGGER.settlePx;
+  /** Half-width of the near window, in mean node widths of the global layout: about three viewports at readable zoom. */
+  private static readonly WINDOW_RADIUS_NODES = 10;
   /** When the level last changed; the trigger holds off briefly afterwards. Starts in the past so the first zoom counts. */
   private levelChangedAt = Number.NEGATIVE_INFINITY;
   private entry: string | null = null;
@@ -1064,13 +1154,150 @@ class Session {
     this.player = this.makePlayer();
     this.wireControls();
     this.reflect("idle");
+    // The opening level folds around the reader too, once the first frame is up.
+    this.scheduleRefold();
   }
 
-  /** The graph as viewed: the filter first, then aggregation to the level, then layout inside renderGraph. */
+  /** The graph as viewed: the filter first, then aggregation to the level under the regional focus, then layout inside renderGraph. */
   private aggregate(level: number): AggregatedGraph {
     const filtered = hideUnresolved(this.graph, this.hideUnresolvedNodes);
     this.reflectFilter(filtered.hiddenNodes, filtered.hiddenEdges);
-    return aggregateGraph(filtered, level);
+    this.levelRep = representativesFor(filtered, level);
+    const near =
+      this.near === null
+        ? null
+        : new Set(
+            [...this.near, ...this.pinned].map(
+              (id) => this.levelRep.get(id) ?? id,
+            ),
+          );
+    return aggregateGraph(
+      filtered,
+      level,
+      near === null ? undefined : { near },
+    );
+  }
+
+  /** The global level layout's positions, built once per level and filter state. */
+  private ensureGlobal(): void {
+    const key = `${String(this.level)}:${String(this.hideUnresolvedNodes)}`;
+    if (key === this.globalKey) return;
+    this.globalKey = key;
+    const filtered = hideUnresolved(this.graph, this.hideUnresolvedNodes);
+    const layout = layoutGraph(aggregateGraph(filtered, this.level));
+    this.globalX = new Map();
+    let sum = 0;
+    let count = 0;
+    for (const ln of layout.nodes) {
+      if (ln.external) continue;
+      this.globalX.set(ln.node.id, ln.x + ln.w / 2);
+      sum += ln.w;
+      count += 1;
+    }
+    this.globalMeanW = count === 0 ? LAYOUT.minNodeW : sum / count;
+  }
+
+  private windowRadius(): number {
+    return Session.WINDOW_RADIUS_NODES * this.globalMeanW;
+  }
+
+  /** Where the reader is, in global-layout x: the drawn node nearest the centre of the stage, or the mean of a folded box's members. */
+  private anchorGlobalX(): number | null {
+    const view = this.handle.viewport();
+    const cx = (view.x0 + view.x1) / 2;
+    let anchor: string | null = null;
+    let best = Number.POSITIVE_INFINITY;
+    for (const ln of this.handle.layout.nodes) {
+      if (ln.external) continue;
+      const d = Math.abs(ln.x + ln.w / 2 - cx);
+      if (d < best) {
+        best = d;
+        anchor = ln.node.id;
+      }
+    }
+    return anchor === null ? null : this.globalXOf(anchor);
+  }
+
+  private globalXOf(id: string): number | null {
+    const own = this.globalX.get(id);
+    if (own !== undefined) return own;
+    const xs = (this.view.members.get(id) ?? [])
+      .map((m) => this.globalX.get(this.levelRep.get(m) ?? m))
+      .filter((x): x is number => x !== undefined);
+    return xs.length === 0 ? null : xs.reduce((a, b) => a + b, 0) / xs.length;
+  }
+
+  /** The near set for a window centre: every level box within the radius in the global layout, plus the pinned. */
+  private nearFor(centre: number): Set<string> {
+    const r = this.windowRadius();
+    const next = new Set<string>();
+    for (const [id, x] of this.globalX)
+      if (Math.abs(x - centre) <= r) next.add(id);
+    for (const id of this.pinned) next.add(this.levelRep.get(id) ?? id);
+    return next;
+  }
+
+  private sameNear(a: Set<string> | null, b: Set<string>): boolean {
+    if (a === null || a.size !== b.size) return false;
+    for (const id of a) if (!b.has(id)) return false;
+    return true;
+  }
+
+  /** Schedules a refold once the zoom or pan has settled. */
+  private scheduleRefold(): void {
+    if (this.refoldTimer !== 0) window.clearTimeout(this.refoldTimer);
+    this.refoldTimer = window.setTimeout(() => {
+      this.refoldTimer = 0;
+      this.refold();
+    }, 250);
+  }
+
+  /**
+   * Re-draws around where the reader is, once they have moved more than half
+   * a window from the last centre, holding the node nearest the centre of the
+   * stage where it is, at the size it is, so the eye keeps its place.
+   */
+  private refold(): void {
+    if (performance.now() - this.lastRefoldAt < 400) {
+      this.scheduleRefold();
+      return;
+    }
+    this.ensureGlobal();
+    const ax = this.anchorGlobalX();
+    if (ax === null) return;
+    if (
+      this.windowCentre !== null &&
+      Math.abs(ax - this.windowCentre) < this.windowRadius() / 2
+    )
+      return;
+    const next = this.nearFor(ax);
+    if (this.sameNear(this.near, next)) {
+      this.windowCentre = ax;
+      return;
+    }
+    this.lastRefoldAt = performance.now();
+    this.windowCentre = ax;
+    // Anchor: the drawn node nearest the centre that survives the refold.
+    const view = this.handle.viewport();
+    const cx = (view.x0 + view.x1) / 2;
+    let anchor: string | null = null;
+    let best = Number.POSITIVE_INFINITY;
+    for (const ln of this.handle.layout.nodes) {
+      if (ln.external) continue;
+      const rep = this.levelRep.get(ln.node.id) ?? ln.node.id;
+      if (!next.has(rep) && !next.has(ln.node.id)) continue;
+      const d = Math.abs(ln.x + ln.w / 2 - cx);
+      if (d < best) {
+        best = d;
+        anchor = ln.node.id;
+      }
+    }
+    const at = anchor === null ? null : this.handle.nodeScreenCentre(anchor);
+    const nodePx = this.handle.nodePx();
+    this.near = next;
+    this.redraw(false);
+    if (anchor !== null && at !== null)
+      this.handle.placeNodeAt(anchor, at, nodePx);
   }
 
   /** The toggle always says what is left out, so a map never quietly drops a quarter of itself. */
@@ -1106,14 +1333,20 @@ class Session {
     const transform = this.handle.transform();
     const centre = this.handle.centre();
     this.player.stop();
+    // A new level starts with everything near; the refold scheduled below narrows it to a window around the reader.
+    if (settle) {
+      this.near = null;
+      this.windowCentre = null;
+    }
     this.view = this.aggregate(this.level);
     this.handle = this.draw(settle ? undefined : transform);
     if (settle) this.handle.focus(centre.fx, centre.fy, LEVEL_TRIGGER.settlePx);
     this.player = this.makePlayer();
     this.player.setLoop(this.controls.loop?.checked ?? false);
     this.player.setSpeed(Number(this.controls.speed?.value) || 1);
-    if (this.entry !== null) this.selectEntry(this.entry);
+    if (this.entry !== null) this.playFlow(this.entry);
     else this.reflect("idle");
+    if (settle) this.scheduleRefold();
   }
 
   private draw(initialTransform: D3.ZoomTransform | undefined): ViewerHandle {
@@ -1138,7 +1371,11 @@ class Session {
             );
         },
         onFork: (edges) => this.flipFork(edges),
-        onZoom: (avgNodePx) => this.considerLevel(avgNodePx),
+        onZoom: (avgNodePx) => {
+          this.lastNodePx = avgNodePx;
+          this.considerLevel(avgNodePx);
+          this.scheduleRefold();
+        },
         hasCoarserLevel: this.level > 0,
       },
     );
@@ -1286,6 +1523,32 @@ class Session {
     document.body.classList.toggle("playing", state === "playing");
   }
 
+  /** A snapshot for harnesses: what is folded and why. */
+  debug(): {
+    level: number;
+    near: number | null;
+    windowCentre: number | null;
+    drawn: number;
+    foldedBoxes: number;
+    byRole: Record<string, number>;
+  } {
+    const byRole: Record<string, number> = {};
+    for (const n of this.view.nodes) {
+      const isFolded = (this.view.folded.get(n.id) ?? 0) > 0;
+      const isLevelBox = (this.levelRep.get(n.id) ?? n.id) === n.id;
+      const key = isFolded ? "folded box" : isLevelBox ? "level box" : "other";
+      byRole[key] = (byRole[key] ?? 0) + 1;
+    }
+    return {
+      level: this.level,
+      near: this.near === null ? null : this.near.size,
+      windowCentre: this.windowCentre,
+      drawn: this.view.nodes.length,
+      foldedBoxes: [...this.view.folded.values()].filter((v) => v > 0).length,
+      byRole,
+    };
+  }
+
   /** §6: the sidebar is the list of things a user or system can do. */
   mountSidebar(el: HTMLElement): void {
     el.replaceChildren();
@@ -1331,12 +1594,43 @@ class Session {
     }
   }
 
-  /** §6 + §5.2 + §7.1: selecting an entry point enters flow mode and plays it. */
+  /** §6 + §5.2 + §7.1: selecting an entry point enters flow mode and plays it. Its box is pinned near and, if it was folded away, brought to the centre. */
   selectEntry(id: string): void {
     const node = this.graph.nodes.find((n) => n.id === id);
     if (node === undefined) return;
     this.entry = id;
-    // At a coarser level the entry point is drawn as the aggregate holding it.
+    this.pinned.clear();
+    this.pinned.add(id);
+    const box = this.levelRep.get(id) ?? id;
+    const drawn = this.view.representative.get(id) ?? id;
+    if (drawn !== box) {
+      // The story's box was folded away: move the window onto it and bring it to the centre.
+      this.ensureGlobal();
+      const x = this.globalX.get(box);
+      if (x !== undefined) {
+        this.windowCentre = x;
+        this.near = this.nearFor(x);
+      } else {
+        this.near = new Set([...(this.near ?? []), box]);
+      }
+      this.lastRefoldAt = performance.now();
+      this.redraw(false); // plays the flow on the new view
+      const rect = this.stage.getBoundingClientRect();
+      this.handle.placeNodeAt(
+        box,
+        { x: rect.width / 2, y: rect.height / 2 },
+        Math.max(this.lastNodePx, LEVEL_TRIGGER.settlePx),
+      );
+      return;
+    }
+    this.playFlow(id);
+  }
+
+  /** Flow mode and playback for the entry, on the view as drawn. */
+  private playFlow(id: string): void {
+    const node = this.graph.nodes.find((n) => n.id === id);
+    if (node === undefined) return;
+    // At a coarser level, or folded away, the entry point is drawn as the box holding it.
     const start = this.view.representative.get(id) ?? id;
     const radius = blastRadius(this.view, start);
     this.handle.setFlow(radius);
@@ -1355,6 +1649,7 @@ class Session {
   leaveFlow(): void {
     this.entry = null;
     this.playStart = null;
+    this.pinned.clear();
     this.player.stop();
     this.handle.setFlow(null);
     this.handle.clearTravel();
