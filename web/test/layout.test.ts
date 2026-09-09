@@ -71,15 +71,52 @@ describe("layered layout (UI §1)", () => {
     expect(b).toBe(a);
   });
 
-  it("orders a band by barycenter: a node's children sit under it", () => {
-    const g = load("derived-ids.json");
+  it("orders a band alphabetically by label along the parent chain, so the picture only moves when the code does", () => {
+    const g = load("band-skip.json");
     const layout = layoutGraph(g);
-    const x = (id: string): number =>
-      layout.nodes.find((n) => n.node.id === id)?.x ?? Number.NaN;
-    // The endpoint calls NoteService.update, which calls NoteRepository.save: a vertical chain.
-    const route = x("tapistree:api/routers/notes.py#update_note");
-    const svc = x("tapistree:api/services/note_service.py#NoteService.update");
-    expect(Math.abs(route - svc)).toBeLessThan(400);
+    for (const band of BAND_ORDER) {
+      const row = layout.nodes
+        .filter((n) => !n.external && n.node.tier === band)
+        .sort((a, b) => a.x - b.x);
+      const labelOf = new Map(g.nodes.map((n) => [n.id, n.label] as const));
+      const chain = (id: string): string[] => {
+        const out: string[] = [];
+        let cur: string | null = id;
+        while (cur !== null) {
+          out.unshift(labelOf.get(cur) ?? cur);
+          cur = g.nodes.find((n) => n.id === cur)?.parent ?? null;
+        }
+        return out;
+      };
+      for (let i = 1; i < row.length; i++) {
+        const a = chain((row[i - 1] as { node: { id: string } }).node.id);
+        const b = chain((row[i] as { node: { id: string } }).node.id);
+        const key = (c: string[]): string => c.join("\u0000");
+        expect(key(a) <= key(b) || a.length < b.length).toBe(true);
+      }
+    }
+    // A new cross-band edge moves nothing: the order does not look at edges.
+    const extra = {
+      nodes: g.nodes,
+      edges: [
+        ...g.edges,
+        {
+          ...(g.edges[0] as CanonicalGraph["edges"][number]),
+          id: "e_added",
+          from: "tapistree:api/routers/notes.py#update_note",
+          to: "mongo:tapistree.notes",
+          kind: "write" as const,
+          condition: null,
+          exclusive_group: null,
+          branch_ordinal: null,
+        },
+      ],
+    };
+    const moved = layoutGraph(extra);
+    for (const ln of layout.nodes) {
+      const after = moved.nodes.find((n) => n.node.id === ln.node.id);
+      expect(after?.x).toBe(ln.x);
+    }
   });
 });
 
