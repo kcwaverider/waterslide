@@ -122,6 +122,10 @@ function placeText(
     x += offset;
     y += 4;
     anchor = "start";
+  } else if (tan.x < 0) {
+    // Travelling left: a same-band edge arcs under its nodes, so the text
+    // goes below the curve, on the side away from the node row.
+    y += offset + 4;
   } else {
     y -= offset;
   }

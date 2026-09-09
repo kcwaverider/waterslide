@@ -260,7 +260,36 @@ export function layoutGraph(graph: {
     for (const band of inBand) sweep(band);
     for (const band of [...inBand].reverse()) sweep(band);
   }
-  sweep(external);
+
+  // The column runs top to bottom beside the bands, so an edge into it
+  // crosses another when its band-side end is deeper but its column-side end
+  // is higher. Ordering the column by the depth of what each node connects
+  // to — then by horizontal position within that depth — removes those
+  // crossings; a horizontal barycenter (the old rule) ignored them.
+  const tierOf = new Map(nodes.map((n) => [n.id, n.tier] as const));
+  const depthKey = new Map<string, number>();
+  for (const n of external) {
+    const keys = (neighbours.get(n.id) ?? [])
+      .filter(
+        (id) => tierOf.get(id) !== undefined && tierOf.get(id) !== "external",
+      )
+      .map(
+        (id) =>
+          bandIndex(tierOf.get(id) as Tier) * 1000 + (rank.get(id) as number),
+      );
+    depthKey.set(
+      n.id,
+      keys.length === 0
+        ? Number.POSITIVE_INFINITY
+        : keys.reduce((a, b) => a + b, 0) / keys.length,
+    );
+  }
+  external.sort(
+    (a, b) =>
+      (depthKey.get(a.id) as number) - (depthKey.get(b.id) as number) ||
+      byteCompare(a.id, b.id),
+  );
+  rerank();
 
   const size = new Map(nodes.map((n) => [n.id, nodeSize(n.label)] as const));
   const sizeOf = (n: Node): ReturnType<typeof nodeSize> =>
@@ -370,16 +399,26 @@ function edgePath(edge: Edge, a: LayoutNode, b: LayoutNode): LayoutEdge {
       { x: tx, y: ty },
     );
   }
-  if (a.y === b.y) {
-    // Same band: arc over the top.
-    const y = a.y;
-    const lift = 26 + Math.min(40, Math.abs(bx - ax) / 8);
+  if (bandOf(a) === bandOf(b)) {
+    // Same band: a left-to-right edge arcs over the top, a right-to-left edge
+    // under the bottom, so a mutual pair does not overlap and direction reads
+    // at a glance. The arc's peak (0.75 × lift) stays inside the band's own
+    // headroom, so it never crosses into the band above or below.
+    const forward = bx >= ax;
+    const headroom = (LAYOUT.bandH - Math.max(a.h, b.h)) / 2 - 8;
+    const lift = Math.min(
+      headroom / 0.75,
+      18 + Math.min(22, Math.abs(bx - ax) / 10),
+    );
+    const sy = forward ? a.y : a.y + a.h;
+    const ty = forward ? b.y : b.y + b.h;
+    const dir = forward ? -1 : 1;
     return cubic(
       edge,
-      { x: ax, y },
-      { x: ax, y: y - lift },
-      { x: bx, y: y - lift },
-      { x: bx, y },
+      { x: ax, y: sy },
+      { x: ax, y: sy + dir * lift },
+      { x: bx, y: ty + dir * lift },
+      { x: bx, y: ty },
     );
   }
   const down = b.y > a.y;
@@ -393,6 +432,11 @@ function edgePath(edge: Edge, a: LayoutNode, b: LayoutNode): LayoutEdge {
     { x: bx, y: ty - (down ? c : -c) },
     { x: bx, y: ty },
   );
+}
+
+/** The band a placed node sits in, by its row; nodes of one band share a row. */
+function bandOf(n: LayoutNode): number {
+  return n.external ? -1 : Math.floor((n.y + n.h / 2) / LAYOUT.bandH);
 }
 
 function cubic(

@@ -132,6 +132,90 @@ describe('labels (scope §"Who reads the map")', () => {
   });
 });
 
+describe("the two rough edges the core track named", () => {
+  it("orders the external column by the depth of what it connects to", () => {
+    // Three externals called from ui, store and api respectively: the column
+    // must run ui-caller, api-caller, store-caller, whatever the ids say.
+    const g = load("derived-ids.json");
+    const mk = (
+      id: string,
+      tier: "ui" | "api" | "store",
+      kind: "ui_view" | "endpoint" | "collection",
+    ): CanonicalGraph["nodes"][number] => ({
+      ...(g.nodes[0] as CanonicalGraph["nodes"][number]),
+      id,
+      kind,
+      label: id,
+      tier,
+      parent: null,
+      sources: [],
+    });
+    const ext = (id: string): CanonicalGraph["nodes"][number] => ({
+      ...mk(id, "api", "endpoint"),
+      kind: "external_service",
+      tier: "external",
+    });
+    const edge = (
+      from: string,
+      to: string,
+    ): CanonicalGraph["edges"][number] => ({
+      ...(g.edges[0] as CanonicalGraph["edges"][number]),
+      id: `e_${from}_${to}`,
+      from,
+      to,
+      kind: "external_call",
+      condition: null,
+      exclusive_group: null,
+      branch_ordinal: null,
+    });
+    const nodes = [
+      mk("n:view", "ui", "ui_view"),
+      mk("n:route", "api", "endpoint"),
+      mk("n:coll", "store", "collection"),
+      ext("ext:a-from-store"),
+      ext("ext:b-from-ui"),
+      ext("ext:c-from-api"),
+    ];
+    const edges = [
+      edge("n:coll", "ext:a-from-store"),
+      edge("n:view", "ext:b-from-ui"),
+      edge("n:route", "ext:c-from-api"),
+    ];
+    const layout = layoutGraph({ nodes, edges });
+    const column = layout.nodes
+      .filter((n) => n.external)
+      .sort((p, q) => p.y - q.y)
+      .map((n) => n.node.id);
+    expect(column).toEqual([
+      "ext:b-from-ui",
+      "ext:c-from-api",
+      "ext:a-from-store",
+    ]);
+  });
+
+  it("keeps same-band edges inside their band: forward over the top, backward under the bottom", () => {
+    for (const f of fixtures) {
+      const layout = layoutGraph(load(f));
+      const at = new Map(layout.nodes.map((n) => [n.node.id, n] as const));
+      for (const le of layout.edges) {
+        const a = at.get(le.edge.from);
+        const b = at.get(le.edge.to);
+        if (a === undefined || b === undefined || a === b) continue;
+        if (a.external || b.external || a.y !== b.y) continue;
+        const band = layout.bands[BAND_ORDER.indexOf(a.node.tier)];
+        expect(band).toBeDefined();
+        if (band === undefined) continue;
+        const peak = bezierPoint(le, 0.5);
+        expect(peak.y).toBeGreaterThan(band.y);
+        expect(peak.y).toBeLessThan(band.y + band.h);
+        const forward = b.x >= a.x;
+        expect(peak.y < a.y).toBe(forward);
+        expect(peak.y > a.y + a.h).toBe(!forward);
+      }
+    }
+  });
+});
+
 describe("edge geometry and fork points (UI §3.3)", () => {
   it("every edge's control points match its path and its midpoint is t = 0.5", () => {
     for (const f of fixtures)
