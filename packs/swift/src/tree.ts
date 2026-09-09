@@ -109,12 +109,14 @@ export interface TypeRef {
   base: string;
   optional: boolean;
   array: boolean;
+  dictionary: boolean;
   text: string;
 }
 
 export function typeRef(n: Node): TypeRef {
   let optional = false;
   let array = false;
+  let dictionary = false;
   let cur: Node = n;
   const text = n.text;
   for (let guard = 0; guard < 8; guard++) {
@@ -140,6 +142,10 @@ export function typeRef(n: Node): TypeRef {
       cur = inner;
       continue;
     }
+    if (cur.type === "dictionary_type") {
+      dictionary = true;
+      break;
+    }
     if (cur.type === "opaque_type" || cur.type === "existential_type") {
       const inner = cur.namedChildren[0] ?? null;
       if (inner === null) break;
@@ -157,7 +163,7 @@ export function typeRef(n: Node): TypeRef {
       .join(".");
     if (base === "") base = cur.text;
   }
-  return { base, optional, array, text };
+  return { base, optional, array, dictionary, text };
 }
 
 export function isCapitalized(s: string): boolean {

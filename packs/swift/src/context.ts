@@ -63,6 +63,8 @@ export interface TypeDecl {
   /** The declared type this same-file extension was merged into, if any. */
   merged_into: TypeDecl | null;
   properties: PropertyDecl[];
+  /** Enum case names, for enums. */
+  cases: string[];
   members: Map<string, Owner[]>;
   has_explicit_init: boolean;
   is_view: boolean;

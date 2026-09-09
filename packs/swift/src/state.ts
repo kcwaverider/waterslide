@@ -82,6 +82,8 @@ export const TypeFactSchema = z.strictObject({
   node_id: z.string(),
   declaration_kind: z.enum(["class", "struct", "enum", "actor", "protocol"]),
   conformances: z.array(z.string()),
+  /** Enum cases: `Type.case(x)` is a value construction, not a call. */
+  cases: z.array(z.string()),
   properties: z.array(PropertyFactSchema),
   has_explicit_init: z.boolean(),
   is_codable: z.boolean(),

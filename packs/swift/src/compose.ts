@@ -24,6 +24,12 @@ import {
   type SymbolHints,
 } from "@waterslide/core";
 import { codeId, moduleId } from "./ids.js";
+import {
+  isStdlibSequenceMember,
+  isViewLike,
+  isViewModifier,
+  synthesizedStaticType,
+} from "./noise.js";
 import { httpEdgeFrom } from "./recognizers/calls.js";
 import {
   HOP_CAP,
@@ -205,7 +211,12 @@ function resolveChain(c: Candidate, idx: RepoIndex): Resolved | null {
       continue;
     }
     if (form === "type") {
-      reason = `receiver reaches static member \`${step.name}\` of ${cur} whose type is not written in source; taken as an instance of ${cur} (singleton convention)`;
+      // An undeclared static member is knowable only when the compiler
+      // synthesizes it (`allCases`); otherwise the receiver is unknown and the
+      // call is not drawn. Never assumed to be a singleton instance.
+      const synthesized = synthesizedStaticType(step.name);
+      if (synthesized === null) return null;
+      cur = synthesized;
       form = "instance";
       continue;
     }
@@ -421,6 +432,13 @@ export function composeWithReport(results: readonly PerFileResult[]): {
         externals.set(typeName, (externals.get(typeName) ?? 0) + 1);
         continue;
       }
+      if (
+        declaredType !== undefined &&
+        memberFacts.length === 0 &&
+        isNoise(declaredType.fact, idx, member)
+      ) {
+        continue; // data/noise.json: drawn as nothing, by design
+      }
       const http =
         memberFacts.length === 0
           ? null
@@ -534,6 +552,26 @@ function numberPendingForks(
     if (e.edge.exclusive_group !== null && e.edge.branch_ordinal === null)
       e.edge.exclusive_group = null;
   }
+}
+
+/**
+ * A member declared nowhere in the pack on a type that IS declared here is
+ * either a framework-provided member or a real gap. The noise table names the
+ * framework-provided ones (data/noise.json); everything else keeps emitting so
+ * a genuine gap stays visible as an unknown node. The receiver must be a
+ * concrete type: a protocol requirement may legitimately be named `append`.
+ */
+function isNoise(fact: TypeFact, idx: RepoIndex, member: string): boolean {
+  const props = [
+    ...fact.properties,
+    ...(idx.extProps.get(fact.qualified) ?? []),
+  ];
+  if (props.some((p) => p.name === member)) return false;
+  if (fact.declaration_kind === "enum" && fact.cases.includes(member))
+    return true;
+  if (fact.declaration_kind === "protocol") return false;
+  if (isViewLike(fact.conformances) && isViewModifier(member)) return true;
+  return isStdlibSequenceMember(member);
 }
 
 function symbolEdge(

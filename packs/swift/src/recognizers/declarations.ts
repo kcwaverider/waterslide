@@ -24,6 +24,7 @@ import {
   type TypeDecl,
 } from "../context.js";
 import { basename, codeId, schemaId, spanHash, visibilityOf } from "../ids.js";
+import { receiverTypeName } from "../noise.js";
 import type { FunctionFact, PropertyFact } from "../state.js";
 import {
   TYPE_NODE_KINDS,
@@ -163,6 +164,7 @@ function newType(
     extension_target: extensionTarget,
     merged_into: null,
     properties: [],
+    cases: [],
     members: new Map(),
     has_explicit_init: false,
     is_view: conformances.some((c) => VIEW_LIKE.has(c)),
@@ -336,6 +338,13 @@ export function collectDeclarations(ctx: FileContext): void {
     if (body === null) return;
     for (const m of body.namedChildren) {
       if (m === null) continue;
+      if (m.type === "enum_entry") {
+        for (const c of m.namedChildren) {
+          if (c !== null && c.type === "simple_identifier")
+            t.cases.push(c.text);
+        }
+        continue;
+      }
       if (m.type === "property_declaration") {
         if (skipWithSyntaxError(ctx, m, qualified)) continue;
         const props = propertyDecls(m);
@@ -582,7 +591,7 @@ function schemaFor(ctx: FileContext, t: TypeDecl): PayloadSchema {
 function propertyFacts(props: PropertyDecl[]): PropertyFact[] {
   return props.map((p) => ({
     name: p.name,
-    type: p.type?.base ?? inferredInitType(p.init),
+    type: p.type === null ? inferredInitType(p.init) : receiverTypeName(p.type),
     is_static: p.is_static,
     is_stored: p.is_stored,
   }));
@@ -604,9 +613,10 @@ export function ownerFact(o: Owner): FunctionFact {
     params: o.params.map((p) => ({
       label: p.label,
       name: p.name,
-      type: p.type?.base ?? null,
+      type: p.type === null ? null : receiverTypeName(p.type),
     })),
-    return_type: o.return_type?.base ?? null,
+    return_type:
+      o.return_type === null ? null : receiverTypeName(o.return_type),
     url_constructions: [],
     forwards: [],
     sends_request: false,
@@ -687,6 +697,7 @@ export function emitDeclarations(ctx: FileContext): void {
       declaration_kind:
         t.declaration_kind === "extension" ? "struct" : t.declaration_kind,
       conformances: t.conformances,
+      cases: [...t.cases],
       properties: propertyFacts(t.properties),
       has_explicit_init: t.has_explicit_init,
       is_codable: isCodable,

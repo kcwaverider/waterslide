@@ -343,6 +343,10 @@ export function collectCalls(
       ctx.implicit_member_calls++;
       continue;
     }
+    // `layout.branches[index]` parses as a call whose suffix is the subscript:
+    // a subscript is a value access, not a call.
+    const suffixNode = childrenOfType(call, "call_suffix")[0] ?? null;
+    if (suffixNode !== null && suffixNode.text.startsWith("[")) continue;
     const urlParts = (n: Node): ArgValue => ({
       kind: "template",
       text: n.text,
@@ -497,6 +501,13 @@ export function collectCalls(
         continue;
       }
       if (r.in_file !== null) {
+        // `APIError.networkError(error)`: an enum case with a payload is a value
+        // construction, not a call. Dropped silently.
+        if (
+          r.in_file.declaration_kind === "enum" &&
+          r.in_file.cases.includes(member)
+        )
+          continue;
         const members = r.in_file.members.get(member);
         if (members !== undefined && members.length > 0) {
           const wanted = members.filter(

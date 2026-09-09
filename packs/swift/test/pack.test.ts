@@ -574,6 +574,83 @@ class MemoryService { private let apiClient = APIClient.shared
   });
 });
 
+describe("noise: calls that tell a reader nothing are not drawn (data/noise.json)", () => {
+  const models = `struct Note: Codable { let id: String }\nenum Kind: CaseIterable { case a, b }\nenum Failure: Error { case network(Error?), decoding }\n`;
+
+  it("treats a call on a collection of a user type as a Standard Library call, not a member of the type", async () => {
+    const svc = `class Svc {\n  var notes: [Note] = []\n  func f(items: [Note]) -> [String] {\n    let ids = items.map { $0.id }\n    notes.append(Note(id: "x"))\n    let extra = Note(id: "y")\n    return ids + notes.filter { $0.id != "" }.map(\\.id)\n  }\n}\n`;
+    const results = [
+      await fileResult("r", "Models.swift", models),
+      await fileResult("r", "Svc.swift", svc),
+    ];
+    const merged = applyPatch(results, compose(results));
+    const values = merged.edges.map((e) =>
+      typeof e.to === "string" ? e.to : e.to.value,
+    );
+    expect(values.some((v) => /^Note\.(map|append|filter)$/.test(v))).toBe(
+      false,
+    );
+    // A construction that is not consumed as an argument is still drawn.
+    expect(values.some((v) => v.endsWith("#Note") || v === "Note")).toBe(true);
+  });
+
+  it("keeps a user type's own filter method: membership is checked before any name", async () => {
+    const svc = `class Svc {\n  func g(n: Note) { n.filter() }\n}\nextension Note { func filter() {} }\n`;
+    const results = [
+      await fileResult("r", "Models.swift", models),
+      await fileResult("r", "Svc.swift", svc),
+    ];
+    const merged = applyPatch(results, compose(results));
+    expect(
+      merged.edges.some(
+        (e) => typeof e.to !== "string" && e.to.value === "Note.filter",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not draw an enum case construction, a SwiftUI modifier on a user view, a subscript, or a synthesized static", async () => {
+    const src = `struct Row: View { var body: some View { Text("x") } }\nclass Svc {\n  var rows: [Row] = []\n  func h() throws {\n    let r = rows[0]\n    Row().padding()\n    let k = Kind.allCases.enumerated()\n    throw Failure.network(nil)\n  }\n}\n`;
+    const results = [
+      await fileResult("r", "Models.swift", models),
+      await fileResult("r", "Svc.swift", src),
+    ];
+    const merged = applyPatch(results, compose(results));
+    const values = merged.edges
+      .filter((e) => e.from.endsWith("#Svc.h"))
+      .map((e) => (typeof e.to === "string" ? e.to : e.to.value));
+    expect(values.filter((v) => !v.endsWith("#Row") && v !== "Row")).toEqual(
+      [],
+    );
+    expect(
+      merged.diagnostics.filter(
+        (d) => d.severity === "warning" && d.path === "Svc.swift",
+      ),
+    ).toEqual([]);
+  });
+
+  it("never applies the stdlib-name guard to a protocol requirement", async () => {
+    const src = `protocol Session { func append(_ b: Int) }\nclass Rec {\n  let s: Session\n  init(s: Session) { self.s = s }\n  func push() { s.append(1) }\n}\n`;
+    const results = [await fileResult("r", "Rec.swift", src)];
+    const merged = applyPatch(results, compose(results));
+    expect(
+      merged.edges.some(
+        (e) => typeof e.to !== "string" && e.to.value === "Session.append",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not guess that an undeclared static member is a singleton instance", async () => {
+    const src = `enum Theme: CaseIterable { case warm, cold }\nclass Svc {\n  func t() { Theme.registry.render(); Theme.allCases.enumerated() }\n}\n`;
+    const results = [await fileResult("r", "Svc.swift", src)];
+    const merged = applyPatch(results, compose(results));
+    expect(
+      merged.edges.some(
+        (e) => typeof e.to !== "string" && /^Theme\./.test(e.to.value),
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("rePath (amendment B3)", () => {
   it("recomputes every path-derived field and nothing else", async () => {
     const before = await fileResult("k", "Old/Kitchen.swift", kitchen);
