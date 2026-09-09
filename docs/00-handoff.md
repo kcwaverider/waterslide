@@ -181,7 +181,10 @@ Requirements:
   with the expected diagnostic. A validator that doesn't run on every commit
   isn't an arbiter (§5.2).
 - The pre-commit hook is a plain script under version control, installed by
-  `npm install` via `core.hooksPath`. No hook-manager dependency.
+  `npm install` via `core.hooksPath`. No hook-manager dependency. It runs
+  typecheck, lint and test, **not** `format:check`: formatting is deliberately not
+  gated, since Prettier is run on write and a formatting slip is not a
+  correctness failure. Recorded so the omission reads as a choice, not a gap.
 - Keep tree-sitter queries in `.scm` files and the `is_error_path` construct
   tables in data files, per §2.
 

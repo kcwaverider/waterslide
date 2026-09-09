@@ -798,7 +798,7 @@ Two runs over identical inputs must produce byte-identical canonical graphs.
 | `repos` | Array, sorted ascending by `name` |
 | Object key order | The order keys appear in this document's field tables |
 | Arrays of scalars (`skips_tiers`, `classification`, `tags`) | Sorted ascending, no duplicates (invariant 23) |
-| `nodes[].sources` | Sorted ascending by `repo`, then `path` (byte-wise), then `line_start` |
+| `nodes[].sources` | Sorted ascending by `repo`, then `path` (byte-wise), then `line_start`, then `line_end` (null first), then `hash` (byte-wise). The key must be total: two spans equal on the first three would otherwise keep input order and the same graph would serialize to different bytes |
 | `schemas[].fields` | **Declaration order from source.** Not sorted — field order is meaningful and reordering would hide a real change |
 | Indentation | Two spaces |
 | Line endings | `\n` |
@@ -992,3 +992,13 @@ prevent.
   persisted?~~ **Resolved: derived, and deliberately not per-call-site.** Two
   call sites of the same kind collapse to one edge. Fork edges are keyed
   additionally by `exclusive_group` and `branch_ordinal`. See §3.3.
+- Duplicate identical spans on one node are accepted. Invariant 23 covers the
+  scalar arrays only; whether `sources` should also be a set is undecided.
+- Fixed-scope nodes (`mongo:`, `sql:`, `svc:`, `topic:`, `ext:`) may carry
+  non-empty `sources` with no id-agreement check. Invariant 18's span rules apply
+  to repo-scoped ids only.
+- §1's path rules — relative, forward slashes, no leading slash — are checked on
+  the id only, never on span paths, so a malformed secondary span path is never
+  caught.
+- The empty string is accepted for a span's `hash`, and `repo` and `path` have no
+  minimum length.
