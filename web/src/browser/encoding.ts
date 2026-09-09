@@ -24,6 +24,7 @@ export type ChangeState = "unchanged" | "modified" | "new" | "removed";
  */
 export type ChangeStateMap = Readonly<Record<string, ChangeState>>;
 
+/** A node's change state from the map; absent means unchanged (persisted-files §1.5). */
 export function changeStateOf(map: ChangeStateMap, id: string): ChangeState {
   return map[id] ?? "unchanged";
 }
@@ -36,6 +37,7 @@ export const CHANGE_STATE_RANK: Readonly<Record<ChangeState, number>> = {
   new: 3,
 };
 
+/** The more significant of two change states, for inheritance up the parent chain. */
 export function moreSignificant(a: ChangeState, b: ChangeState): ChangeState {
   return CHANGE_STATE_RANK[b] > CHANGE_STATE_RANK[a] ? b : a;
 }
@@ -109,6 +111,7 @@ export interface NodeStyle {
   readonly state: ChangeState;
 }
 
+/** An `hsl()` colour string from hue, saturation and lightness. */
 function hsl(h: number, s: number, l: number): string {
   return `hsl(${String(h)} ${String(s)}% ${String(l)}%)`;
 }

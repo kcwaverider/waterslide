@@ -159,6 +159,14 @@ describe('labels (scope §"Who reads the map")', () => {
     ]);
   });
 
+  it("falls back to a hard cut before ellipsising a label that fits two lines", () => {
+    const label = "src/AVeryLongCamelCaseIdentifierNameGoesHere";
+    const lines = wrapLabel(label, 41);
+    expect(lines).toHaveLength(2);
+    expect(lines.join("")).toBe(label);
+    expect(lines.some((l) => l.endsWith("…"))).toBe(false);
+  });
+
   it("sizes a node to its label within the min and max widths", () => {
     expect(nodeSize("x").w).toBe(LAYOUT.minNodeW);
     const long = nodeSize("unresolved symbol memory_service.forget");
@@ -297,6 +305,40 @@ describe("sibling adjacency (UI §1.4)", () => {
     expect(between).toEqual([]);
   });
 
+  it("keeps families apart when two parents share a label", () => {
+    const g = load("derived-ids.json");
+    const base = g.nodes[0] as CanonicalGraph["nodes"][number];
+    const mk = (
+      id: string,
+      label: string,
+      parent: string | null,
+    ): CanonicalGraph["nodes"][number] => ({
+      ...base,
+      id,
+      kind: "function",
+      tier: "domain",
+      label,
+      parent,
+      sources: [],
+    });
+    const nodes = [
+      mk("r:a/svc", "svc", null),
+      mk("r:b/svc", "svc", null),
+      mk("r:a/svc#a", "a", "r:a/svc"),
+      mk("r:a/svc#c", "c", "r:a/svc"),
+      mk("r:b/svc#b", "b", "r:b/svc"),
+      mk("r:b/svc#d", "d", "r:b/svc"),
+    ];
+    const layout = layoutGraph({ nodes, edges: [] });
+    const row = layout.nodes
+      .filter((n) => !n.external)
+      .sort((a, b) => a.x - b.x)
+      .map((n) => n.node.parent ?? `root:${n.node.id}`);
+    const runs: string[] = [];
+    for (const p of row) if (runs[runs.length - 1] !== p) runs.push(p);
+    expect(new Set(runs).size).toBe(runs.length);
+  });
+
   it("marks same-band edges and only those", () => {
     for (const f of fixtures) {
       const layout = layoutGraph(load(f));
@@ -433,6 +475,18 @@ describe("viewer page", () => {
         'import type { A } from "x";\nimport {\n  a,\n  type B,\n} from "./y.js";\nexport function f() {}\nexport const k = 1;\nconst z = "import x";\nexport { k };\n',
       ),
     ).toBe('function f() {}\nconst k = 1;\nconst z = "import x";\n');
+  });
+
+  it("serialises the change-state map in byte order, so insertion order never changes the page bytes", () => {
+    const graph = readFileSync(new URL("derived-ids.json", validDir), "utf8");
+    const a = buildViewerHtml(graph, {
+      changeState: { "z:last": "new", "a:first": "modified", "m:mid": "new" },
+    });
+    const b = buildViewerHtml(graph, {
+      changeState: { "m:mid": "new", "a:first": "modified", "z:last": "new" },
+    });
+    expect(a).toBe(b);
+    expect(a.indexOf('"a:first"')).toBeLessThan(a.indexOf('"m:mid"'));
   });
 
   it("embeds the change-state map beside the graph, empty by default (the M3 seam)", () => {

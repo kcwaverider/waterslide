@@ -65,6 +65,7 @@ interface GraphLike {
   readonly parsed_at?: string;
 }
 
+/** Hover text for a node: label first, never the id. */
 function tooltip(n: Node, state: string): string {
   const lines = [n.label, `${n.kind} · ${n.tier} · ${n.confidence} · ${state}`];
   if (n.confidence_reason !== null) lines.push(n.confidence_reason);
@@ -72,6 +73,7 @@ function tooltip(n: Node, state: string): string {
   return lines.join("\n");
 }
 
+/** Hover text for an edge. */
 function edgeTooltip(e: Edge): string {
   const lines = [
     `${e.kind}: ${e.from} → ${e.to}`,
@@ -234,6 +236,7 @@ function drawEdgeBadges(
   }
 }
 
+/** Hover text for a fork marker: the branches rooted there and their conditions. */
 function forkTooltip(edges: readonly LayoutEdge[]): string {
   const group = edges[0]?.edge.exclusive_group ?? "";
   const lines = [
@@ -304,8 +307,11 @@ export interface ViewerHandle {
   nodePx(): number;
   /** §2.1: change the base size without touching zoom. */
   setMagnification(magnification: number): void;
+  /** Detach everything this draw registered outside its own DOM: the resize listener. */
+  destroy(): void;
 }
 
+/** Draws the graph once (§0) into `root` and returns the handle for what may change on it afterwards. */
 export function renderGraph(
   root: HTMLElement,
   graph: GraphLike,
@@ -611,10 +617,11 @@ export function renderGraph(
   if (options.initialTransform !== undefined)
     setTransform(options.initialTransform);
   svg.on("click", () => onSelect({ type: "none" }));
-  window.addEventListener("resize", () => {
+  const onResize = (): void => {
     applyExtent();
     updateOffscreen();
-  });
+  };
+  window.addEventListener("resize", onResize);
   applyTransform();
   updateOffscreen();
 
@@ -722,6 +729,9 @@ export function renderGraph(
       setTransform(t);
     },
     nodePx: () => fitNodePx() * lastTransform.k,
+    destroy() {
+      window.removeEventListener("resize", onResize);
+    },
     setMagnification(next) {
       // §2.2: magnification re-renders the same level at a different size. It
       // shifts where in the zoom range the next level change falls — the
@@ -897,6 +907,7 @@ type Add = <K extends keyof HTMLElementTagNameMap>(
   text?: string,
 ) => HTMLElementTagNameMap[K];
 
+/** One schema section of the panel, nested for `ref_schema_id` fields. */
 function renderSchema(el: HTMLElement, schema: PanelSchema, add: Add): void {
   const head = add(el, "div", "schema-head");
   add(head, "span", "schema-role", schema.role);
@@ -952,6 +963,7 @@ function select(
     el.classList.add("selected");
 }
 
+/** The panel model for a node id, or null when it is not drawn. */
 function describeNodeById(
   graph: GraphLike,
   changeState: ChangeStateMap,
@@ -961,11 +973,13 @@ function describeNodeById(
   return node === undefined ? null : describeNode(node, graph, changeState);
 }
 
+/** The panel model for an edge id, or null when it is not drawn. */
 function describeEdgeById(graph: GraphLike, id: string): PanelModel | null {
   const edge = graph.edges.find((e) => e.id === id);
   return edge === undefined ? null : describeEdge(edge, graph);
 }
 
+/** Escapes a value for use inside a double-quoted CSS attribute selector. */
 function cssEscape(value: string): string {
   return value.replace(/["\\]/g, "\\$&");
 }
@@ -1017,11 +1031,15 @@ export function mountViewer(): void {
     hideUnresolvedCount: document.getElementById("hide-unresolved-count"),
   };
 
+  let current: Session | null = null;
   const draw = (text: string, source: string): void => {
     try {
       const graph = JSON.parse(text) as GraphLike;
       if (panel !== null) renderPanel(panel, null);
+      // A dropped graph replaces the session; the old one must stop touching the shared stage and controls.
+      current?.dispose();
       const session = new Session(stage, graph, changeState, panel, controls);
+      current = session;
       // For harnesses and debugging: the live session, never used by the page itself.
       (window as unknown as { waterslide?: unknown }).waterslide = session;
       const layout = session.handle.layout;
@@ -1197,6 +1215,7 @@ class Session {
     this.globalMeanW = count === 0 ? LAYOUT.minNodeW : sum / count;
   }
 
+  /** Half-width of the near window in global-layout units. */
   private windowRadius(): number {
     return Session.WINDOW_RADIUS_NODES * this.globalMeanW;
   }
@@ -1218,6 +1237,7 @@ class Session {
     return anchor === null ? null : this.globalXOf(anchor);
   }
 
+  /** A drawn node's position in the global layout: its own, or the mean of a folded box's members. */
   private globalXOf(id: string): number | null {
     const own = this.globalX.get(id);
     if (own !== undefined) return own;
@@ -1237,6 +1257,7 @@ class Session {
     return next;
   }
 
+  /** Whether two near sets are the same set. */
   private sameNear(a: Set<string> | null, b: Set<string>): boolean {
     if (a === null || a.size !== b.size) return false;
     for (const id of a) if (!b.has(id)) return false;
@@ -1258,6 +1279,7 @@ class Session {
    * stage where it is, at the size it is, so the eye keeps its place.
    */
   private refold(): void {
+    if (this.disposed) return;
     if (performance.now() - this.lastRefoldAt < 400) {
       this.scheduleRefold();
       return;
@@ -1333,6 +1355,7 @@ class Session {
     const transform = this.handle.transform();
     const centre = this.handle.centre();
     this.player.stop();
+    this.handle.destroy();
     // A new level starts with everything near; the refold scheduled below narrows it to a window around the reader.
     if (settle) {
       this.near = null;
@@ -1349,6 +1372,7 @@ class Session {
     if (settle) this.scheduleRefold();
   }
 
+  /** Draws the current view into the stage and wires selection, forks and the zoom trigger back to this session. */
   private draw(initialTransform: D3.ZoomTransform | undefined): ViewerHandle {
     const { stage, panel, changeState } = this;
     const view = this.view;
@@ -1381,6 +1405,7 @@ class Session {
     );
   }
 
+  /** A player bound to the current handle's objects layer and edges. */
   private makePlayer(): Player {
     const { stage, panel, changeState } = this;
     return createPlayer(this.handle.objects, this.handle.edgeById, {
@@ -1439,6 +1464,7 @@ class Session {
     }, 1600);
   }
 
+  /** The persisted magnification preference, or 1. */
   private readMagnification(): number {
     try {
       const saved = Number(localStorage.getItem(MAGNIFICATION_KEY));
@@ -1458,12 +1484,48 @@ class Session {
     }
   }
 
+  /** Listeners this session put on the shared controls, so dispose() can take them off again. */
+  private readonly listeners: {
+    el: HTMLElement;
+    type: string;
+    fn: EventListener;
+  }[] = [];
+
+  /** Adds a control listener and remembers it for dispose(). */
+  private listen(
+    el: HTMLElement | null,
+    type: string,
+    fn: EventListener,
+  ): void {
+    if (el === null) return;
+    el.addEventListener(type, fn);
+    this.listeners.push({ el, type, fn });
+  }
+
+  /**
+   * Stops everything this session owns outside its own DOM: playback, the
+   * refold timer, its control listeners and the handle's resize listener. A
+   * replaced session must not keep redrawing the shared stage.
+   */
+  dispose(): void {
+    this.player.stop();
+    if (this.refoldTimer !== 0) window.clearTimeout(this.refoldTimer);
+    this.refoldTimer = 0;
+    for (const { el, type, fn } of this.listeners)
+      el.removeEventListener(type, fn);
+    this.listeners.length = 0;
+    this.handle.destroy();
+    this.disposed = true;
+  }
+  private disposed = false;
+
+  /** Binds the playback, level, magnification and filter controls to this session. */
   private wireControls(): void {
     const c = this.controls;
-    c.play?.addEventListener("click", () => this.player.toggle());
-    c.step?.addEventListener("click", () => this.player.step());
-    c.replay?.addEventListener("click", () => this.player.replay());
-    c.loop?.addEventListener("change", () =>
+    this.listen(c.play, "click", () => this.player.toggle());
+    this.listen(c.step, "click", () => this.player.step());
+    this.listen(c.replay, "click", () => this.player.replay());
+    this.listen(c.loop, "change", () =>
       this.player.setLoop(c.loop?.checked ?? false),
     );
     if (c.level !== null) {
@@ -1475,18 +1537,18 @@ class Session {
         c.level.appendChild(o);
       }
       c.level.value = String(this.level);
-      c.level.addEventListener("change", () => {
+      this.listen(c.level, "change", () => {
         if (c.level !== null) this.setLevel(Number(c.level.value));
       });
     }
-    c.hideUnresolved?.addEventListener("change", () =>
+    this.listen(c.hideUnresolved, "change", () =>
       this.setHideUnresolved(c.hideUnresolved?.checked ?? false),
     );
     if (c.magnification !== null) {
       c.magnification.value = String(this.magnification);
       if (c.magnification.value !== String(this.magnification))
         c.magnification.value = "1";
-      c.magnification.addEventListener("change", () => {
+      this.listen(c.magnification, "change", () => {
         if (c.magnification !== null)
           this.setMagnification(Number(c.magnification.value) || 1);
       });
@@ -1501,7 +1563,7 @@ class Session {
       }
       if (saved !== null) c.speed.value = saved;
       this.player.setSpeed(Number(c.speed.value) || 1);
-      c.speed.addEventListener("change", () => {
+      this.listen(c.speed, "change", () => {
         if (c.speed === null) return;
         this.player.setSpeed(Number(c.speed.value) || 1);
         try {
@@ -1513,6 +1575,7 @@ class Session {
     }
   }
 
+  /** Mirrors player state onto the controls: enabled states and the play/pause label. */
   private reflect(state: PlayerState): void {
     const c = this.controls;
     const active = this.entry !== null;
@@ -1582,6 +1645,7 @@ class Session {
     }
   }
 
+  /** Highlights the selected story in the sidebar, or "Whole system" when none. */
   private markSidebar(): void {
     const sidebar = document.getElementById("sidebar");
     if (sidebar === null) return;
@@ -1646,6 +1710,7 @@ class Session {
     this.reflect(this.player.state);
   }
 
+  /** Back to whole-system mode: stops playback, clears dimming, forgets the story. */
   leaveFlow(): void {
     this.entry = null;
     this.playStart = null;

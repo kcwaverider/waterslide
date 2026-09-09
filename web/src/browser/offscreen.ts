@@ -90,6 +90,7 @@ export function sideOf(box: Box, view: Viewport): Side | null {
 
 export const SIDES: readonly Side[] = ["top", "right", "bottom", "left"];
 
+/** One indicator per viewport side with nodes beyond it: the count, and the most significant inherited change state among them. */
 export function offscreenIndicators(
   boxes: readonly Box[],
   view: Viewport,

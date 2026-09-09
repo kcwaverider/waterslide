@@ -55,6 +55,7 @@ export interface AggregatedGraph extends GraphView {
   readonly folded: ReadonlyMap<string, number>;
 }
 
+/** Byte-order comparison, the tie-break everywhere ordering must be deterministic. */
 function byteCompare(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
@@ -127,6 +128,7 @@ export type LevelRole =
   | "methods"
   | "inner functions";
 
+/** A node's role in the hierarchy — what it is, from where it sits in the parent chain. */
 export function roleOf(
   node: Node,
   kindOf: (id: string) => Node["kind"] | undefined,
@@ -204,6 +206,7 @@ export function levelsOf(nodes: readonly Node[]): Level[] {
   return levels;
 }
 
+/** The more uncertain of two confidences; `annotated` is an origin, not a level, and never wins over `inferred`. */
 function worse(a: Confidence, b: Confidence): Confidence {
   if (a === "certain") return b;
   if (b === "certain") return a;
@@ -338,6 +341,7 @@ export function representativesFor(
   return representative;
 }
 
+/** The graph as drawn at `level`, optionally around a regional focus: folded nodes, merged weighted edges, and the maps that say what stands for what. */
 export function aggregateGraph(
   graph: GraphView,
   level: number,
@@ -366,17 +370,19 @@ export function aggregateGraph(
     if (box === id && box !== rep && atLevel)
       folded.set(rep, (folded.get(rep) ?? 0) + 1);
   }
+  const byId = new Map(graph.nodes.map((n) => [n.id, n] as const));
   const nodes = graph.nodes
     .filter((n) => members.has(n.id))
     .map((n) => {
       const inside = (members.get(n.id) ?? []).filter((m) => m !== n.id);
       const foldedHere = folded.get(n.id) ?? 0;
       if (inside.length === 0) return n;
-      const inner = graph.nodes.filter((x) => inside.includes(x.id));
       // An aggregate is an entry point if anything inside it is. A box folded
       // below the level says how many level boxes it stands for, so a reader
       // can tell one file from forty.
-      const entry = inner.find((x) => x.is_entry_point);
+      const entry = inside
+        .map((m) => byId.get(m))
+        .find((x) => x?.is_entry_point === true);
       return {
         ...n,
         label: foldedHere > 0 ? `${n.label} +${String(foldedHere)}` : n.label,

@@ -43,6 +43,7 @@ export interface EntryPointGroup {
   readonly nodes: readonly Node[];
 }
 
+/** Byte-order comparison, the tie-break everywhere ordering must be deterministic. */
 function byteCompare(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
@@ -90,6 +91,7 @@ export function blastRadius(graph: GraphView, entryId: string): BlastRadius {
   return { nodes, edges };
 }
 
+/** Outgoing edges per node, in edge-id order, so every traversal here is deterministic. */
 function outgoing(edges: readonly Edge[]): Map<string, Edge[]> {
   const out = new Map<string, Edge[]>();
   for (const e of [...edges].sort((a, b) => byteCompare(a.id, b.id))) {

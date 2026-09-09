@@ -158,7 +158,14 @@ export function buildViewerHtml(
   // The HTML parser ends a script element at `</script` and honours `<!--`
   // inside script data; `\u003c` is a valid JSON escape, so neutralise every `<`.
   const safeJson = graphJson.replace(/</g, "\\u003c");
-  const safeChangeState = JSON.stringify(options.changeState ?? {}).replace(
+  // Graph model §7.2: unordered map data is serialized in byte order, so the
+  // same change state always produces the same page bytes.
+  const orderedChangeState = Object.fromEntries(
+    Object.entries(options.changeState ?? {}).sort(([a], [b]) =>
+      a < b ? -1 : a > b ? 1 : 0,
+    ),
+  );
+  const safeChangeState = JSON.stringify(orderedChangeState).replace(
     /</g,
     "\\u003c",
   );
@@ -290,6 +297,7 @@ ${modules.join("\n")}
 `;
 }
 
+/** Escapes text for an HTML text or attribute context. */
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")

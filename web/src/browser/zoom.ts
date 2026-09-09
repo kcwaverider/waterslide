@@ -25,6 +25,7 @@ export const ZOOM = {
   coarsenMargin: 0.9,
 } as const;
 
+/** The [min, max] scroll-zoom range for a map whose mean node is `fitNodePx` wide at fit. */
 export function zoomExtent(
   fitNodePx: number,
   hasCoarserLevel = false,

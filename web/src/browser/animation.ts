@@ -52,10 +52,12 @@ interface Flight {
   arrived: boolean;
 }
 
+/** Ease-in-out for a hop: objects leave and arrive gently rather than at constant speed. */
 function smooth(t: number): number {
   return t * t * (3 - 2 * t);
 }
 
+/** The player: runs a plan's generations in order along the laid-out edges, drawing objects into `layer`. */
 export function createPlayer(
   layer: D3.Selection<SVGGElement, unknown, null, undefined>,
   edgeById: ReadonlyMap<string, LayoutEdge>,

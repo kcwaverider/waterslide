@@ -61,6 +61,11 @@ export function wrapLabel(
   const first = breakAt(label, maxChars);
   const rest = label.slice(first.length).trimStart();
   if (rest.length <= maxChars) return [first.trimEnd(), rest];
+  // An early separator can leave a remainder that does not fit; a hard cut
+  // keeps the whole label on two lines, which the scope prefers to an ellipsis.
+  const hard = label.slice(0, maxChars);
+  const tail = label.slice(maxChars).trimStart();
+  if (tail.length <= maxChars) return [hard.trimEnd(), tail];
   return [first.trimEnd(), `${rest.slice(0, maxChars - 1)}…`];
 }
 
@@ -81,6 +86,7 @@ function breakAt(text: string, maxChars: number): string {
   return text.slice(0, cut);
 }
 
+/** A node's wrapped lines, width and height from its label alone; no DOM, so deterministic. */
 export function nodeSize(label: string): {
   lines: string[];
   w: number;
@@ -199,6 +205,7 @@ export interface Layout {
   readonly edges: readonly LayoutEdge[];
 }
 
+/** Byte-order comparison, the tie-break everywhere ordering must be deterministic. */
 function byteCompare(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
@@ -209,6 +216,7 @@ function bandIndex(tier: Tier): number {
   return i === -1 ? BAND_ORDER.indexOf("domain") : i;
 }
 
+/** The layered layout of a graph: bands in §6 order, the external column, every node placed and every edge routed. */
 export function layoutGraph(graph: {
   nodes: readonly Node[];
   edges: readonly Edge[];
@@ -272,7 +280,12 @@ export function layoutGraph(graph: {
     const keys = new Map(
       band.map(
         (n) =>
-          [n.id, chainOf(n.id).map((id) => labelOf.get(id) ?? id)] as const,
+          [
+            n.id,
+            // Label first, id second at every level: alphabetical by label,
+            // and two ancestors that share a label keep separate families.
+            chainOf(n.id).map((id) => `${labelOf.get(id) ?? id}\u0000${id}`),
+          ] as const,
       ),
     );
     band.sort((a, b) => {
@@ -397,6 +410,7 @@ export function layoutGraph(graph: {
   return { width, height, bands, externalX, nodes: placed, edges };
 }
 
+/** The cubic curve for an edge between two placed nodes: down or up between bands, an arc within a band, a hop to the column, or a self-loop. */
 function edgePath(edge: Edge, a: LayoutNode, b: LayoutNode): LayoutEdge {
   const ax = a.x + a.w / 2;
   const bx = b.x + b.w / 2;
@@ -468,6 +482,7 @@ function bandOf(n: LayoutNode): number {
   return n.external ? -1 : Math.floor((n.y + n.h / 2) / LAYOUT.bandH);
 }
 
+/** A LayoutEdge from four control points, with its path string and midpoint. */
 function cubic(
   edge: Edge,
   p0: Point,

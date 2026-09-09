@@ -68,10 +68,12 @@ export function formatLocation(loc: SourceLocation): string {
   return `${loc.repo} ${loc.path}:${String(loc.line_start)}${end}`;
 }
 
+/** A node's label by id, falling back to the id when the node is not in the graph. */
 function labelOf(graph: PanelGraph, id: string): string {
   return graph.nodes.find((n) => n.id === id)?.label ?? id;
 }
 
+/** The confidence row, plus the reason verbatim when not certain — the highest-value field on the panel. */
 function confidenceFields(
   confidence: Confidence,
   reason: string | null,
@@ -85,6 +87,7 @@ function confidenceFields(
   return fields;
 }
 
+/** What the panel says about a node (§8). */
 export function describeNode(
   node: Node,
   graph: PanelGraph,
@@ -136,6 +139,7 @@ export function describeNode(
   };
 }
 
+/** What the panel says about an edge (§8): endpoints by label, condition, call site, badges and the attached schemas expanded. */
 export function describeEdge(edge: Edge, graph: PanelGraph): PanelModel {
   const fields: PanelField[] = [
     { label: "From", value: labelOf(graph, edge.from) },
