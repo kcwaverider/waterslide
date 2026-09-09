@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { PerFileResult } from "../src/index.js";
+import type { PerFileResult } from "@waterslide/core";
 import { parseTree } from "./support/harness.js";
 import { fixture, getPack } from "./support/pack.js";
 import { assemble } from "./support/resolver.js";
@@ -140,8 +140,9 @@ describe("FastAPI per-file recognizers (parser §8)", () => {
       depends.every((e) => e.confidence === "certain" && e.kind === "call"),
     ).toBe(true);
     const hints = depends.find((e) => typeof e.to !== "string")?.to;
-    expect(typeof hints === "string" ? null : hints?.hints).toMatchObject({
-      fastapi: "Depends",
+    expect(typeof hints === "string" ? null : hints?.hints).toEqual({
+      arity: null,
+      receiver_type: "auth.get_current_user",
     });
   });
 
@@ -156,7 +157,7 @@ describe("FastAPI per-file recognizers (parser §8)", () => {
     expect(mount?.to).toEqual({
       ref_kind: "symbol",
       value: "api.api_router",
-      hints: { fastapi: "include_router", prefix: "/api" },
+      hints: { arity: null, receiver_type: null },
       source_line: 21,
     });
 
@@ -331,6 +332,6 @@ describe("compose: cross-file prefix composition (decision items 1 and 2)", () =
     ]);
     expect(patch.provides).toEqual([]);
     expect(patch.nodes).toEqual([]);
-    expect(patch.annotations).toEqual([]);
+    expect(patch.node_updates).toEqual([]);
   });
 });

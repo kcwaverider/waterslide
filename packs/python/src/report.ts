@@ -1,5 +1,5 @@
 import type { UnresolvedRef } from "@waterslide/core";
-import type { PerFileResult } from "./contract-pending.js";
+import type { PerFileResult } from "@waterslide/core";
 
 /**
  * Handoff §6 item 6: every `UnresolvedRef` that left the pack, grouped by

@@ -1,10 +1,10 @@
 import type { Diagnostic, Node as GraphNode } from "@waterslide/core";
 import type {
-  NodeAnnotation,
+  NodeUpdate,
   PackPatch,
   PerFileResult,
   Provide,
-} from "../../contract-pending.js";
+} from "@waterslide/core";
 import { PACK_ID } from "../../diagnostics.js";
 import {
   LABEL_ROUTE,
@@ -243,7 +243,7 @@ export function composeFastApi(results: readonly PerFileResult[]): PackPatch {
     return result;
   };
 
-  const nodePatches: NodeAnnotation[] = [];
+  const nodePatches: NodeUpdate[] = [];
   const httpProvides: Provide[] = [];
   const unmountedReported = new Set<string>();
 
@@ -281,6 +281,7 @@ export function composeFastApi(results: readonly PerFileResult[]): PackPatch {
     const composed = prefixes.map((p) => p + parsed.path);
     nodePatches.push({
       node_id: r.routeId,
+      add_sources: [],
       label: routeLabel(parsed.methods, composed[0] as string),
     });
     if (composed.length > 1) {
@@ -310,10 +311,10 @@ export function composeFastApi(results: readonly PerFileResult[]): PackPatch {
 
   return {
     nodes: [],
-    annotations: nodePatches,
     edges: [],
     schemas: [],
     provides: httpProvides,
+    node_updates: nodePatches,
     diagnostics,
   };
 }

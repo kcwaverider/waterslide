@@ -389,11 +389,7 @@ function emitDependsCall(
     const ref: UnresolvedRef = {
       ref_kind: "symbol",
       value: resolved.value,
-      hints: {
-        arity: null,
-        receiver_type: resolved.root.qualified,
-        fastapi: "Depends",
-      },
+      hints: { arity: null, receiver_type: resolved.root.qualified },
       source_line: lineStart(value),
     };
     em.edgePlain(value, from, {
@@ -508,7 +504,7 @@ function emitMount(
     to = {
       ref_kind: "symbol",
       value: resolved.value,
-      hints: { fastapi: "include_router", prefix },
+      hints: { arity: null, receiver_type: null },
       source_line: site.line,
     };
   }

@@ -1,6 +1,9 @@
-import type { Node as GraphNode, UnresolvedRef } from "@waterslide/core";
+import {
+  spanHash,
+  type Node as GraphNode,
+  type UnresolvedRef,
+} from "@waterslide/core";
 import type { Emitter } from "../emitter.js";
-import { spanHash } from "../hash.js";
 import { lineStart, stringLiteral } from "../tree-sitter/runtime.js";
 import { annotationChain, qualify, resolveTypeChain } from "./analyze.js";
 import type { CallSite, Definition, FileModel } from "./model.js";
@@ -232,18 +235,7 @@ function emitCall(model: FileModel, em: Emitter, site: CallSite): void {
       const ref: UnresolvedRef = {
         ref_kind: "symbol",
         value: callee.value,
-        hints: {
-          arity: site.arity,
-          receiver_type: callee.root.qualified,
-          ...(callee.value.includes("()")
-            ? {
-                receiver_call: callee.value.slice(
-                  0,
-                  callee.value.indexOf("()"),
-                ),
-              }
-            : {}),
-        },
+        hints: { arity: site.arity, receiver_type: callee.root.qualified },
         source_line: site.line,
       };
       em.edgeFromSite(site, {
@@ -260,7 +252,7 @@ function emitCall(model: FileModel, em: Emitter, site: CallSite): void {
       const ref: UnresolvedRef = {
         ref_kind: "symbol",
         value: callee.value,
-        hints: { arity: site.arity, receiver_type: null, bare: true },
+        hints: { arity: site.arity, receiver_type: null },
         source_line: site.line,
       };
       em.edgeFromSite(site, {

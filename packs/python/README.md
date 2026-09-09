@@ -16,7 +16,6 @@ parser pipeline §3, §6, §8). Called once per file with
 | `src/frameworks/fastapi/`              | Routes, routers, `include_router` mounts, `Depends`, startup and middleware; `compose.ts` does cross-file prefix composition.      |
 | `src/frameworks/{pydantic,mongo,external}.ts` | Pydantic schemas, Motor collection access, vendor SDK calls (Anthropic, Cohere, Voyage, boto3).                              |
 | `data/*.json`                          | The `is_error_path` construct table, vendor table, Mongo read/write table, builtins and stdlib lists. Validated on load.           |
-| `src/contract-pending.ts`              | Shapes agreed on 2026-09-08 that core is adding (`Provide.ref_kind`, `alias_of`, `compose`, `PackPatch`). Delete when core lands. |
 | `test/support/resolver.ts`             | **Test-only** stage-4 stand-in, fenced per decision item 8. Never ships.                                                          |
 | `scripts/run-tree.ts`                  | Run the pack over a directory and print the M1 gate report.                                                                       |
 
@@ -39,8 +38,8 @@ Everything else leaves as an `UnresolvedRef`:
 
 | `ref_kind`  | `value`                                       | notes                                                                                              |
 | ----------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `symbol`    | alias-resolved qualified name                 | `get_svc().run` when the receiver is a call whose return type is not visible here (`hints.receiver_call`) |
-| `datastore` | collection attribute (`db.notes` → `notes`)   | `hints: { operation, store: "mongo", namespace: null }`; always `inferred`; the pack never mints `mongo:` |
+| `symbol`    | alias-resolved qualified name                 | `get_svc().run` when the receiver is a call whose return type is not visible here ; the reason names the call |
+| `datastore` | collection attribute (`db.notes` → `notes`)   | `hints: { operation, store: "mongo", namespace: null }`; always `inferred`; the pack never mints `mongo:`; a method outside the read/write table goes out without hints plus a diagnostic |
 | `external`  | `vendor/surface`, e.g. `anthropic/messages`   | `certain` when the receiver traces to an SDK constructor in the same file                          |
 | `topic`     | SQS `QueueUrl` literal, or its expression     | `publish` edge; non-literal names stay unresolved, never guessed                                   |
 

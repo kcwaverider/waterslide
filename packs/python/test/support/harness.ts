@@ -1,10 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import type {
-  PerFileResult,
-  PythonPack,
-  PythonPackOptionsInput,
-} from "../../src/index.js";
+import type { PerFileResult } from "@waterslide/core";
+import type { PythonPack, PythonPackOptionsInput } from "../../src/index.js";
 
 /**
  * Test-only file discovery. Stage 1 (discover) is core's; this walker exists so

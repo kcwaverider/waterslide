@@ -13,6 +13,9 @@ const ref = (e: PartialEdge | undefined): UnresolvedRef => {
   return e.to;
 };
 const owner = (e: PartialEdge): string => e.from.split("#")[1] ?? e.from;
+/** Hints are a per-kind union; read a key by name for table-shaped assertions. */
+const hintOf = (r: UnresolvedRef, key: string): unknown =>
+  (r.hints as Record<string, unknown> | undefined)?.[key] ?? null;
 
 describe("external vendors (decision items 4 and 7)", () => {
   it("traces receivers to SDK constructors in the same file: certain", async () => {
@@ -65,7 +68,7 @@ describe("external vendors (decision items 4 and 7)", () => {
     expect(ref(literal)).toEqual({
       ref_kind: "topic",
       value: "https://sqs.example/embed",
-      hints: { direction: "publish", sdk_symbol: "boto3.sqs.send_message" },
+      hints: { direction: "publish" },
       source_line: 28,
     });
 
@@ -118,9 +121,9 @@ describe("Mongo access (parser §8, decision item 6)", () => {
       e.kind,
       e.label,
       ref(e).value,
-      ref(e).hints?.["operation"] ?? null,
-      ref(e).hints?.["store"],
-      ref(e).hints?.["namespace"],
+      hintOf(ref(e), "operation"),
+      hintOf(ref(e), "store"),
+      hintOf(ref(e), "namespace"),
       e.confidence,
     ]);
     expect(summary).toEqual([
@@ -160,7 +163,7 @@ describe("Mongo access (parser §8, decision item 6)", () => {
         "rename",
         "notes",
         null,
-        "mongo",
+        null,
         null,
         "inferred",
       ],
@@ -219,7 +222,7 @@ describe("Mongo access (parser §8, decision item 6)", () => {
         e.kind === "write",
     );
     expect(save).toMatchObject({
-      to: "mongo:db.notes",
+      to: "mongo:unknown.notes",
       label: "insert_one",
       confidence: "inferred",
       skips_tiers: [],

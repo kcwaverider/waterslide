@@ -366,30 +366,16 @@ describe("factory calls: receiver types from return annotations", () => {
     const r = pack.parse("repo", "m.py", src);
     const f = r.edges
       .filter((e) => e.from.endsWith("#f"))
-      .map((e) => [
-        typeof e.to === "string" ? e.to : e.to.value,
-        e.confidence,
-        typeof e.to === "string"
-          ? null
-          : (e.to.hints?.["receiver_call"] ?? null),
-      ]);
+      .map((e) => [typeof e.to === "string" ? e.to : e.to.value, e.confidence]);
     expect(f).toEqual([
-      ["services.get_s3_service", "certain", null],
-      [
-        "services.get_s3_service().upload",
-        "inferred",
-        "services.get_s3_service",
-      ],
-      ["services.get_s3_service", "certain", null],
-      [
-        "services.get_s3_service().delete",
-        "inferred",
-        "services.get_s3_service",
-      ],
-      ["repo:m.py#make", "certain", null],
-      ["repositories.note_repo.NoteRepo.save", "certain", null],
-      ["repo:m.py#opaque", "certain", null],
-      ["m.opaque().get", "inferred", "m.opaque"],
+      ["services.get_s3_service", "certain"],
+      ["services.get_s3_service().upload", "inferred"],
+      ["services.get_s3_service", "certain"],
+      ["services.get_s3_service().delete", "inferred"],
+      ["repo:m.py#make", "certain"],
+      ["repositories.note_repo.NoteRepo.save", "certain"],
+      ["repo:m.py#opaque", "certain"],
+      ["m.opaque().get", "inferred"],
     ]);
     const reason = r.edges.find(
       (e) => typeof e.to !== "string" && e.to.value.includes("().upload"),

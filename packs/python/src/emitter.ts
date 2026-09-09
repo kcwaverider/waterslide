@@ -9,15 +9,16 @@ import {
   type Node as GraphNode,
   type NodeKind,
   type PartialEdge,
+  type PackResult,
   type PayloadSchema,
+  type Provide,
+  spanHash,
   type Tier,
   type UnresolvedRef,
 } from "@waterslide/core";
 import type { Node } from "web-tree-sitter";
-import type { PackResult, Provide } from "./contract-pending.js";
 import type { PackData } from "./data.js";
 import { diagnostic } from "./diagnostics.js";
-import { spanHash } from "./hash.js";
 import {
   groupIdFor,
   innermostLimb,

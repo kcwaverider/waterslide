@@ -1,9 +1,12 @@
-import { GRAPH_SCHEMA_VERSION, type PackManifest } from "@waterslide/core";
-import type {
-  PackPatch,
-  PackResult,
-  PerFileResult,
-} from "./contract-pending.js";
+import {
+  GRAPH_SCHEMA_VERSION,
+  type LanguagePack,
+  type PackManifest,
+  type PackOptions,
+  type PackPatch,
+  type PackResult,
+  type PerFileResult,
+} from "@waterslide/core";
 import { loadPackData, type PackData } from "./data.js";
 import { diagnostic, PACK_ID } from "./diagnostics.js";
 import { Emitter } from "./emitter.js";
@@ -30,18 +33,6 @@ import {
   type Runtime,
 } from "./tree-sitter/runtime.js";
 
-export type {
-  PackPatch,
-  PackResult,
-  PerFileResult,
-  Provide,
-  NodeAnnotation,
-} from "./contract-pending.js";
-export {
-  PackPatchSchema,
-  PackResultSchema,
-  ProvideSchema,
-} from "./contract-pending.js";
 export {
   PythonPackOptionsSchema,
   type PythonPackOptions,
@@ -73,26 +64,19 @@ const RECOGNIZERS: readonly FrameworkRecognizer[] = [
 ];
 
 /**
- * Structurally `LanguagePack` (parser §3.3) plus `compose`, except that `parse`
- * returns the pending `PackResult` whose `Provide` carries `ref_kind` and
- * `alias_of`. Options arrive per call (addendum 2026-09-08): one instance may
- * serve repos with different `packs.python` blocks, so nothing is held as state.
- * Once core exports the agreed shapes, replace this with `extends LanguagePack`
- * and delete `contract-pending.ts`.
+ * The pack as tests drive it: `LanguagePack` with a synchronous `parse`
+ * (the tree-sitter runtime is already loaded) and the optional members
+ * present. Options arrive per call and are validated against
+ * `PythonPackOptionsSchema`; nothing is held as instance state.
  */
-export interface PythonPack {
-  readonly manifest: PackManifest;
+export interface PythonPack extends LanguagePack {
   parse(
     repo_name: string,
     path: string,
     content: string,
-    options?: PythonPackOptionsInput,
+    options?: PackOptions,
   ): PackResult;
-  /** Decision item 1: cross-file composition over the pack's own results. Synchronous, never cached. */
-  compose(
-    results: readonly PerFileResult[],
-    options?: PythonPackOptionsInput,
-  ): PackPatch;
+  compose(results: readonly PerFileResult[], options?: PackOptions): PackPatch;
 }
 
 /** Load the tree-sitter runtime and build a pack. Tests use this directly; core uses `pack`. */
@@ -108,32 +92,21 @@ export async function createPythonPack(): Promise<PythonPack> {
   };
 }
 
-/** Defaults applied here only so tests can omit the block; core always passes a resolved one. */
-function resolveOptions(options: PythonPackOptionsInput): PythonPackOptions {
+/** Core applies defaults before every call; the parse here only narrows the record to our shape. */
+function resolveOptions(options: PackOptions): PythonPackOptions {
   return PythonPackOptionsSchema.parse(options);
 }
 
 /**
- * Amendment A4: the module's named `pack` export. `parse` is asynchronous only
+ * The module's named `pack` export (parser §3.3). `parse` is asynchronous only
  * because the tree-sitter runtime loads on first use; `compose` is synchronous.
- * `rePath` is deliberately absent: core's re-parse fallback applies (see the
- * report of 2026-09-08 for why a moved file cannot be re-pathed post hoc).
+ * `rePath` is deliberately absent: core's re-parse fallback applies, because a
+ * moved file's payload embeds its old module name in relative-import targets and
+ * PEP 562 aliases that cannot be told apart from absolute names after the fact.
  */
 let defaultPack: Promise<PythonPack> | null = null;
 const lazy = (): Promise<PythonPack> => (defaultPack ??= createPythonPack());
-export const pack: {
-  readonly manifest: PackManifest;
-  parse(
-    repo_name: string,
-    path: string,
-    content: string,
-    options: PythonPackOptionsInput,
-  ): Promise<PackResult>;
-  compose(
-    results: readonly PerFileResult[],
-    options: PythonPackOptionsInput,
-  ): PackPatch;
-} = {
+export const pack: LanguagePack = {
   manifest,
   parse: async (repo, path, content, options) =>
     (await lazy()).parse(repo, path, content, options),
@@ -239,10 +212,10 @@ function compose(
   } catch (error) {
     return {
       nodes: [],
-      annotations: [],
       edges: [],
       schemas: [],
       provides: [],
+      node_updates: [],
       diagnostics: [
         {
           severity: "error",

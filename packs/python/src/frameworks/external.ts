@@ -269,7 +269,7 @@ function emitOrigin(em: Emitter, site: CallSite, origin: Origin): void {
     value:
       literal ??
       (queueNode ? queueNode.text : `<${config.queue_kwarg} missing>`),
-    hints: { direction, sdk_symbol: origin.sdkSymbol },
+    hints: { direction },
     source_line: site.line,
   };
   const reason = literal

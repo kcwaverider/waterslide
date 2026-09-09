@@ -1,5 +1,5 @@
+import { PackResultSchema } from "@waterslide/core";
 import { describe, expect, it } from "vitest";
-import { PackResultSchema } from "../src/index.js";
 import { parseTree, shuffle, walkPython } from "./support/harness.js";
 import { fixture, getPack } from "./support/pack.js";
 import { assemble } from "./support/resolver.js";

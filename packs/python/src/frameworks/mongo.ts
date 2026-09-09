@@ -53,16 +53,16 @@ export const mongoRecognizer: FrameworkRecognizer = {
         : write.has(method)
           ? "write"
           : null;
+      // Typed hints (parser §3.6): `namespace` is the Mongo db, null when it
+      // lives outside this file. A method outside the read/write table has no
+      // legal `operation`, so the ref goes out without hints and with the
+      // diagnostic below; the collection name still travels in `value`.
       const ref: UnresolvedRef = {
         ref_kind: "datastore",
         value: collection,
-        // Amendment A5: exact shape. `namespace` is the Mongo db, null when
-        // it lives outside this file (tapistree: an env default elsewhere).
-        hints: {
-          ...(operation ? { operation } : {}),
-          store: "mongo",
-          namespace: null,
-        },
+        ...(operation
+          ? { hints: { operation, store: "mongo" as const, namespace: null } }
+          : {}),
         source_line: site.line,
       };
       const why =
