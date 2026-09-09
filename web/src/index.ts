@@ -71,8 +71,17 @@ export type {
   Generation,
   Hop,
 } from "./browser/flow.js";
-export { aggregateGraph, depthOf, levelsOf } from "./browser/aggregate.js";
-export type { AggregatedGraph, Level } from "./browser/aggregate.js";
+export {
+  aggregateGraph,
+  depthOf,
+  hideUnresolved,
+  levelsOf,
+} from "./browser/aggregate.js";
+export type {
+  AggregatedGraph,
+  FilteredGraph,
+  Level,
+} from "./browser/aggregate.js";
 
 const require = createRequire(import.meta.url);
 
@@ -173,6 +182,7 @@ export function buildViewerHtml(
   #controls button, #controls select { font: inherit; font-size: 12px; padding: 3px 8px; border: 1px solid #ccc; border-radius: 6px; background: #fff; cursor: pointer; }
   #controls button:disabled { color: #aaa; cursor: default; }
   #controls label { font-size: 12px; color: #555; display: flex; align-items: center; gap: 3px; }
+  #hide-unresolved-label { font-weight: 600; color: #333; }
   #stage { position: absolute; top: 72px; bottom: 0; left: 232px; right: 0; }
   /* Flow mode (§5.2): outside the blast radius dims; nothing is hidden. */
   svg.flow .node.dim, svg.flow .edge.dim, svg.flow .badge-holder.dim { opacity: .18; }
@@ -243,6 +253,8 @@ export function buildViewerHtml(
     <span class="sep">|</span>
     <label title="Semantic level. Scrolling changes it too; this is the same control by hand.">detail <select id="zoom-level"></select></label>
     <label title="Magnification: base text and node size. A preference, remembered; it does not change the level on its own.">size <select id="magnification"><option value="1">100%</option><option value="1.25">125%</option><option value="1.5">150%</option><option value="2">200%</option></select></label>
+    <span class="sep">|</span>
+    <label id="hide-unresolved-label" title="Unresolved references stay in the graph; this only leaves them off the map."><input id="hide-unresolved" type="checkbox" checked> <span id="hide-unresolved-count">unresolved hidden</span></label>
   </div>
   <div class="legend" title="Hue is the node's kind. Saturation is change state since your last baseline. Line style is confidence. Red with a warning icon is a broken edge.">
     <span class="line">certain</span><span class="line inferred">inferred</span><span class="line annotated">annotated</span>

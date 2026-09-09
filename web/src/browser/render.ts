@@ -39,6 +39,7 @@ import {
 import { createPlayer, type Player, type PlayerState } from "./animation.js";
 import {
   aggregateGraph,
+  hideUnresolved,
   levelsOf,
   type AggregatedGraph,
   type Level,
@@ -903,6 +904,10 @@ export function mountViewer(): void {
       "magnification",
     ) as HTMLSelectElement | null,
     zoomLabel: document.getElementById("zoom-label"),
+    hideUnresolved: document.getElementById(
+      "hide-unresolved",
+    ) as HTMLInputElement | null,
+    hideUnresolvedCount: document.getElementById("hide-unresolved-count"),
   };
 
   const draw = (text: string, source: string): void => {
@@ -962,7 +967,12 @@ interface Controls {
   readonly level: HTMLSelectElement | null;
   readonly magnification: HTMLSelectElement | null;
   readonly zoomLabel: HTMLElement | null;
+  readonly hideUnresolved: HTMLInputElement | null;
+  readonly hideUnresolvedCount: HTMLElement | null;
 }
+
+/** Whether unresolved-reference nodes start hidden. A view default; flip it here. */
+export const HIDE_UNRESOLVED_DEFAULT = true;
 
 const SPEED_KEY = "waterslide.speed";
 const MAGNIFICATION_KEY = "waterslide.magnification";
@@ -988,6 +998,8 @@ class Session {
   private level: number;
   /** §2.1: a persistent preference. Never the same variable as zoom. */
   private magnification = 1;
+  /** View filter: unknown nodes and their edges left out before aggregation and layout. */
+  private hideUnresolvedNodes = HIDE_UNRESOLVED_DEFAULT;
   /** When the level last changed; the trigger holds off briefly afterwards. Starts in the past so the first zoom counts. */
   private levelChangedAt = Number.NEGATIVE_INFINITY;
   private entry: string | null = null;
@@ -1006,11 +1018,54 @@ class Session {
     this.levels = levelsOf(graph.nodes);
     this.level = this.levels.length - 1;
     this.magnification = this.readMagnification();
-    this.view = aggregateGraph(graph, this.level);
+    this.view = this.aggregate(this.level);
     this.handle = this.draw(undefined);
     this.player = this.makePlayer();
     this.wireControls();
     this.reflect("idle");
+  }
+
+  /** The graph as viewed: the filter first, then aggregation to the level, then layout inside renderGraph. */
+  private aggregate(level: number): AggregatedGraph {
+    const filtered = hideUnresolved(this.graph, this.hideUnresolvedNodes);
+    this.reflectFilter(filtered.hiddenNodes, filtered.hiddenEdges);
+    return aggregateGraph(filtered, level);
+  }
+
+  /** The toggle always says what is left out, so a map never quietly drops a quarter of itself. */
+  private reflectFilter(hiddenNodes: number, hiddenEdges: number): void {
+    const c = this.controls;
+    const total = this.graph.nodes.filter((n) => n.kind === "unknown").length;
+    if (c.hideUnresolved !== null) {
+      c.hideUnresolved.checked = this.hideUnresolvedNodes;
+      c.hideUnresolved.disabled = total === 0;
+    }
+    if (c.hideUnresolvedCount !== null)
+      c.hideUnresolvedCount.textContent =
+        total === 0
+          ? "no unresolved references"
+          : this.hideUnresolvedNodes
+            ? `${String(hiddenNodes)} unresolved hidden (${String(hiddenEdges)} edges)`
+            : `${String(total)} unresolved shown`;
+  }
+
+  /** Re-draws with the filter flipped; the same path as a level change. */
+  setHideUnresolved(hide: boolean): void {
+    if (hide === this.hideUnresolvedNodes) return;
+    this.hideUnresolvedNodes = hide;
+    this.redraw();
+  }
+
+  private redraw(): void {
+    const transform = this.handle.transform();
+    this.player.stop();
+    this.view = this.aggregate(this.level);
+    this.handle = this.draw(transform);
+    this.player = this.makePlayer();
+    this.player.setLoop(this.controls.loop?.checked ?? false);
+    this.player.setSpeed(Number(this.controls.speed?.value) || 1);
+    if (this.entry !== null) this.selectEntry(this.entry);
+    else this.reflect("idle");
   }
 
   private draw(initialTransform: D3.ZoomTransform | undefined): ViewerHandle {
@@ -1078,18 +1133,10 @@ class Session {
     if (target === this.level) return;
     this.level = target;
     this.levelChangedAt = performance.now();
-    const transform = this.handle.transform();
-    this.player.stop();
-    this.view = aggregateGraph(this.graph, target);
-    this.handle = this.draw(transform);
-    this.player = this.makePlayer();
-    this.player.setLoop(this.controls.loop?.checked ?? false);
-    this.player.setSpeed(Number(this.controls.speed?.value) || 1);
     if (this.controls.level !== null)
       this.controls.level.value = String(target);
     this.announce(`now showing ${this.levels[target]?.name ?? "nodes"}`);
-    if (this.entry !== null) this.selectEntry(this.entry);
-    else this.reflect("idle");
+    this.redraw();
   }
 
   /** §2.2: a brief transition label, so a level change is never surprising. */
@@ -1146,6 +1193,9 @@ class Session {
         if (c.level !== null) this.setLevel(Number(c.level.value));
       });
     }
+    c.hideUnresolved?.addEventListener("change", () =>
+      this.setHideUnresolved(c.hideUnresolved?.checked ?? false),
+    );
     if (c.magnification !== null) {
       c.magnification.value = String(this.magnification);
       if (c.magnification.value !== String(this.magnification))

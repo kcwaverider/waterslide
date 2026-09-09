@@ -1,7 +1,12 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { CanonicalGraph } from "@waterslide/core";
-import { aggregateGraph, depthOf, levelsOf } from "../src/browser/aggregate.js";
+import {
+  aggregateGraph,
+  depthOf,
+  hideUnresolved,
+  levelsOf,
+} from "../src/browser/aggregate.js";
 import { layoutGraph } from "../src/layout.js";
 import { blastRadius, planPlayback } from "../src/browser/flow.js";
 
@@ -151,6 +156,45 @@ describe("semantic zoom aggregation (UI §2.2, graph model §2.3)", () => {
         for (const gen of planPlayback(a, rep, new Map()))
           for (const h of gen) expect(radius.edges.has(h.edge.id)).toBe(true);
       }
+    }
+  });
+});
+
+describe("hide unresolved: a view filter, not a graph change", () => {
+  it("removes unknown nodes and the edges touching them, and nothing else", () => {
+    const g = load("unknown-dangling-refs.json");
+    const f = hideUnresolved(g, true);
+    expect(f.hiddenNodes).toBe(2);
+    expect(f.hiddenEdges).toBe(2);
+    expect(f.nodes.some((n) => n.kind === "unknown")).toBe(false);
+    expect(f.nodes).toHaveLength(g.nodes.length - 2);
+    expect(f.edges).toHaveLength(0);
+    // The callers that only pointed at unknowns still render: no cascade.
+    expect(
+      f.nodes.some(
+        (n) =>
+          n.id === "tapistree:api/services/note_service.py#NoteService.archive",
+      ),
+    ).toBe(true);
+    // The input is untouched.
+    expect(g.nodes.filter((n) => n.kind === "unknown")).toHaveLength(2);
+  });
+
+  it("off is the identity, and a graph without unknowns hides nothing", () => {
+    const g = load("unknown-dangling-refs.json");
+    const off = hideUnresolved(g, false);
+    expect(off.nodes).toBe(g.nodes);
+    expect(off.hiddenNodes).toBe(0);
+    const clean = hideUnresolved(load("derived-ids.json"), true);
+    expect(clean.hiddenNodes).toBe(0);
+    expect(clean.hiddenEdges).toBe(0);
+  });
+
+  it("feeds aggregation: hidden nodes never reach a level", () => {
+    const g = load("unknown-dangling-refs.json");
+    for (const l of levelsOf(g.nodes)) {
+      const a = aggregateGraph(hideUnresolved(g, true), l.depth);
+      expect(a.nodes.some((n) => n.kind === "unknown")).toBe(false);
     }
   });
 });
