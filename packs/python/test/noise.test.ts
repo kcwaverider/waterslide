@@ -35,7 +35,6 @@ describe("noise (A10 item 1): calls that tell a reader nothing are dropped silen
       [
         "from bson import ObjectId",
         "from models.memory import MemoryDB",
-        "from models.invitation import TEMPLATE",
         "import bcrypt",
         "def f(memory: MemoryDB, name):",
         "    oid = ObjectId(name)",
@@ -43,7 +42,6 @@ describe("noise (A10 item 1): calls that tell a reader nothing are dropped silen
         "    bcrypt.hashpw(name, bcrypt.gensalt())",
         "    data = memory.dict(exclude={'id'})",
         "    memory.name.strip()",
-        "    TEMPLATE.format(token=name)",
         "    return data",
         "",
       ].join("\n"),
@@ -60,6 +58,8 @@ describe("noise (A10 item 1): calls that tell a reader nothing are dropped silen
       [
         "from repositories.cache import cache",
         "from services import mailer",
+        "from services.reports import formatter",
+        "from models.invitation import TEMPLATE",
         "class Report:",
         "    def format(self):",
         "        return 1",
@@ -67,15 +67,51 @@ describe("noise (A10 item 1): calls that tell a reader nothing are dropped silen
         "    cache.get(x)",
         "    mailer.send_receipt(x)",
         "    Report().format()",
+        "    formatter.format(x)",
+        "    TEMPLATE.format(token=x)",
         "",
       ].join("\n"),
     );
     expect(targets(r.edges).sort()).toEqual([
+      "models.invitation.TEMPLATE.format", // an imported name: could be a str constant, could be a domain object; kept
       "r:m.py#Report",
       "r:m.py#Report.format",
       "repositories.cache.cache.get",
       "services.mailer.send_receipt",
+      "services.reports.formatter.format", // a method on an imported name: no receiver evidence, kept
     ]);
+  });
+
+  it("a classmethod on a builtin type name is a builtin value operation: bytes.fromhex, dict.fromkeys", async () => {
+    const pack = await getPack();
+    const r = pack.parse(
+      "r",
+      "m.py",
+      "def f(digest, roles):\n    a = bytes.fromhex(digest)\n    b = dict.fromkeys(roles)\n    return a, b\n",
+    );
+    expect(r.edges).toEqual([]);
+    expect(r.diagnostics).toEqual([]);
+  });
+
+  it("`-> Any` is not evidence of a builtin value: a domain call on the result stays an edge", async () => {
+    const pack = await getPack();
+    const r = pack.parse(
+      "r",
+      "m.py",
+      [
+        "from typing import Any",
+        "def opaque() -> Any:",
+        "    return load()",
+        "def f(x):",
+        "    opaque().save(x)",
+        "",
+      ].join("\n"),
+    );
+    const viaAny = r.edges.filter(
+      (e) => e.from.endsWith("#f") && typeof e.to !== "string",
+    );
+    expect(targets(viaAny)).toEqual(["m.opaque().save"]);
+    expect(viaAny[0]?.confidence).toBe("inferred");
   });
 
   it("a builtin return annotation on the producer makes the call result a value, by evidence not by name", async () => {

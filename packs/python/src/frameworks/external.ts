@@ -105,7 +105,7 @@ function httpOrigin(
   const client = clientByModule.get(segments[0] as string);
   if (!client) return null;
   const call = segments[segments.length - 1] as string;
-  if (!(call in methods)) return null;
+  if (!Object.hasOwn(methods, call)) return null; // own keys only: `toString` is not a verb
   // Exactly module.Constructor.method: a call on the client itself. Anything
   // deeper (`response.json().get(...)`) is a value operation on a response.
   const viaConstructor =
@@ -331,23 +331,27 @@ function emitHttp(
   let urlNode: Node | null;
   if (method === null) {
     // request(method, url, ...) / stream(method, url, ...)
-    const m = positional[0]
+    const positionalMethod = positional[0]
       ? stringLiteral(unwrapExpression(positional[0]))
       : null;
-    method = m
-      ? m.toUpperCase()
-      : kwargs.get("method")
-        ? stringLiteral(kwargs.get("method") ?? null)
-        : null;
+    const keywordMethod = kwargs.get("method");
+    const literal =
+      positionalMethod ?? (keywordMethod ? stringLiteral(keywordMethod) : null);
+    method = literal ? literal.toUpperCase() : null;
     urlNode = positional[1] ?? kwargs.get("url") ?? null;
   } else {
     urlNode = positional[0] ?? kwargs.get("url") ?? null;
   }
   const url = recoverUrl(model, site, urlNode);
-  const notes = [url.reason, origin.receiverNote].filter(
-    (n): n is string => n !== null,
-  );
-  const certain = url.certain && origin.certainReceiver;
+  const notes = [
+    url.reason,
+    origin.receiverNote,
+    method === null
+      ? "the HTTP method is not a literal at this call site"
+      : null,
+  ].filter((n): n is string => n !== null);
+  // Certain only when the verb, the URL and the receiver were all read from source.
+  const certain = url.certain && origin.certainReceiver && method !== null;
   const ref: UnresolvedRef = {
     ref_kind: "http",
     value: url.value,

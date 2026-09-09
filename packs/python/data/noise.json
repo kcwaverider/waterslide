@@ -1,7 +1,7 @@
 {
   "$comment": "Calls that exist but tell a reader nothing (A10 item 1). Every rule here drops SILENTLY: no diagnostic, because a count of 'you called a string method' trains people to ignore the channel real gaps need. Applied only to a call the resolver could NOT already resolve to an in-file node; an in-file method named `format` still draws. Each list states what it could wrongly drop. Logging is deliberately absent: `utils.logger.logger` is emitted as an alias of `logging.getLogger()`, and dropping stdlib-rooted results after prefix-alias resolution is core's job (A11).",
   "library_modules": {
-    "$comment": "Third-party helper libraries: constructors, validators, hashers, codecs, drivers. Same mechanism as data/stdlib-modules.json, one level out. Vendors in data/vendors.json are recognised first and are not affected. Could wrongly drop: an in-repo package that shares a name with a listed library — checked against tapistree's source roots (none collide) and asserted by the tapistree gate.",
+    "$comment": "Third-party helper libraries: constructors, validators, hashers, codecs, drivers. Same mechanism as data/stdlib-modules.json, one level out. Vendors in data/vendors.json are recognised first and are not affected. Could wrongly drop: an in-repo package that shares a name with a listed library \u2014 checked against tapistree's source roots (none collide) and asserted by the tapistree gate.",
     "names": [
       "aiohttp",
       "bcrypt",
@@ -20,7 +20,7 @@
     ]
   },
   "value_methods": {
-    "$comment": "Methods of builtin values (str, bytes, list, dict, set, datetime) that no domain class plausibly defines. Dropped when they are the last segment of an unresolved reference. Deliberately EXCLUDED because a repository or service class plausibly defines them: get, update, add, remove, pop, clear, copy, find, read, write, close, send, run. Could wrongly drop: an in-repo method named e.g. `format`, `items` or `split` reached through a receiver the pack could not type.",
+    "$comment": "Methods of builtin values (str, bytes, list, dict, set, datetime) that no domain class plausibly defines. Dropped when they are the last segment of an unresolved reference AND the receiver shows builtin-value evidence: the call sits on an attribute of a typed value (`request.name.strip()`) or on a call result (`_docs().append()`). A method called directly on an imported name (`formatter.format(report)`) keeps its edge. Deliberately EXCLUDED because a repository or service class plausibly defines them: get, update, add, remove, pop, clear, copy, find, read, write, close, send, run. Could still wrongly drop: an in-repo method named e.g. `format` or `items` on an attribute of a typed value or on a call result.",
     "names": [
       "append",
       "capitalize",

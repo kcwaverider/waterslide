@@ -359,6 +359,7 @@ describe("generic HTTP clients (A10 item 2): the vendor is in the URL, never in 
       hints: { method: null, base_url_expr: "self.base_url", query: null },
       confidence: "inferred",
     });
+    expect(edges[0]?.reason).toMatch(/HTTP method is not a literal/);
     expect(edges[0]?.reason).toMatch(
       /base self\.base_url is not a literal or constant this file can see; self\.base_url is assigned from base_url\.rstrip/,
     );
@@ -394,5 +395,31 @@ describe("generic HTTP clients (A10 item 2): the vendor is in the URL, never in 
     ]);
     expect(r.edges.filter((e) => e.kind === "call")).toEqual([]);
     expect(r.diagnostics).toEqual([]);
+  });
+});
+
+describe("generic HTTP clients: method handling", () => {
+  it("a keyword method is uppercased like a positional one, and a non-literal method is never certain", async () => {
+    const pack = await getPack();
+    const r = pack.parse(
+      "r",
+      "m.py",
+      [
+        "import requests",
+        "def a():",
+        '    return requests.request(method="get", url="https://example.com/a")',
+        "def b(verb):",
+        '    return requests.request(verb, "https://example.com/b")',
+        "def c(session):",
+        "    return session.toString()",
+        "",
+      ].join("\n"),
+    );
+    const edges = r.edges.filter((e) => e.kind === "http_request");
+    expect(edges.map((e) => [hintOf(ref(e), "method"), e.confidence])).toEqual([
+      ["GET", "certain"],
+      [null, "inferred"],
+    ]);
+    expect(edges[1]?.confidence_reason).toMatch(/HTTP method is not a literal/);
   });
 });

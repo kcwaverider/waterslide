@@ -999,8 +999,9 @@ function resolveChainImpl(
   }
 
   if (binding === null) {
-    if (rest.length === 0 && data.builtins.has(rootName))
-      return { kind: "builtin", name: rootName };
+    // `len(x)`, and `bytes.fromhex(...)` / `dict.fromkeys(...)`: a call on a
+    // builtin, or on a builtin type's classmethod, is a value operation.
+    if (data.builtins.has(rootName)) return { kind: "builtin", name: rootName };
     const root: RootInfo = {
       name: rootName,
       binding: null,
@@ -1227,6 +1228,8 @@ function returnsBuiltinValue(
   if (t === "None") return true;
   const chain = annotationChain(def.returnType);
   const resolved = chain ? resolveTypeChain(chain, scope, file) : null;
+  // `typing.Any` says nothing about the value; a domain call on it must stay an edge.
+  if (resolved !== null && /\.Any$/.test(resolved)) return false;
   return (
     resolved !== null &&
     data.stdlibModules.has(resolved.split(".")[0] as string)

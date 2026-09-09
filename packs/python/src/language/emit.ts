@@ -272,7 +272,7 @@ function emitCall(model: FileModel, em: Emitter, site: CallSite): void {
       const segments = callee.value.split(".");
       const rootModule = segments[0] as string;
       if (em.data.stdlibModules.has(rootModule)) return; // the standard library is not on the map
-      if (isNoise(segments, em)) return; // data/noise.json; silent by design
+      if (isNoise(segments, callee.rest.length, em)) return; // data/noise.json; silent by design
       const ref: UnresolvedRef = {
         ref_kind: "symbol",
         value: callee.value,
@@ -335,12 +335,22 @@ function emitCall(model: FileModel, em: Emitter, site: CallSite): void {
  * A10 item 1: calls that exist but tell a reader nothing, from data/noise.json.
  * Reached only for references the resolver could not bind to an in-file node.
  */
-function isNoise(segments: readonly string[], em: Emitter): boolean {
+function isNoise(
+  segments: readonly string[],
+  restLength: number,
+  em: Emitter,
+): boolean {
   const { libraryModules, valueMethods, modelMethods } = em.data.noise;
   const root = (segments[0] as string).replace(/\(\)$/, "");
   if (libraryModules.has(root)) return true;
   const last = (segments[segments.length - 1] as string).replace(/\(\)$/, "");
-  if (valueMethods.has(last)) return true;
+  // A builtin-value method needs receiver evidence beyond its name: the call
+  // sits on an attribute of a typed value (`request.name.strip()`) or on a
+  // call result (`docs().append()`). A method called directly on an imported
+  // name (`formatter.format(report)`) may be a domain method and keeps its edge.
+  const throughAttribute =
+    restLength >= 2 || segments.some((x) => x.endsWith("()"));
+  if (valueMethods.has(last) && throughAttribute) return true;
   const receiver =
     segments.length >= 2 ? (segments[segments.length - 2] as string) : "";
   return modelMethods.has(last) && /^[A-Z]/.test(receiver);
