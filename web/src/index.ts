@@ -55,6 +55,22 @@ export type {
   Side,
   Viewport,
 } from "./browser/offscreen.js";
+export {
+  ENTRY_POINT_KIND_ORDER,
+  HOP_DURATION,
+  blastRadius,
+  chosenAlternatives,
+  defaultAlternative,
+  entryPointGroups,
+  isActiveBranch,
+  planPlayback,
+} from "./browser/flow.js";
+export type {
+  BlastRadius,
+  EntryPointGroup,
+  Generation,
+  Hop,
+} from "./browser/flow.js";
 
 const require = createRequire(import.meta.url);
 
@@ -118,6 +134,8 @@ export function buildViewerHtml(
     "./browser/encoding.js",
     "./browser/panel.js",
     "./browser/offscreen.js",
+    "./browser/flow.js",
+    "./browser/animation.js",
     "./browser/render.js",
   ].map(readBrowserModule);
   const title = options.title ?? "waterslide";
@@ -135,10 +153,34 @@ export function buildViewerHtml(
 <title>${escapeHtml(title)}</title>
 <style>
   html, body { margin: 0; height: 100%; font: 13px system-ui, sans-serif; background: #fff; color: #222; }
-  #bar { display: flex; gap: 12px; align-items: center; padding: 8px 12px; border-bottom: 1px solid #ddd; }
+  #bar { display: flex; gap: 12px; align-items: center; padding: 8px 12px; border-bottom: 1px solid #eee; }
+  #bar2 { display: flex; gap: 16px; align-items: center; padding: 5px 12px; border-bottom: 1px solid #ddd; background: #fafafa; flex-wrap: wrap; }
   #bar h1 { font-size: 14px; margin: 0; }
   #status { color: #555; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #stage { position: absolute; top: 37px; bottom: 0; left: 0; right: 0; }
+  #sidebar { position: absolute; top: 72px; bottom: 0; left: 0; width: 232px; overflow: auto; border-right: 1px solid #ddd; background: #fafafa; padding: 8px; box-sizing: border-box; }
+  #sidebar h3 { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: #777; margin: 12px 4px 4px; }
+  #sidebar .entry { display: block; width: 100%; text-align: left; border: none; background: none; padding: 6px 8px; border-radius: 6px; font: inherit; cursor: pointer; color: #222; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #sidebar .entry::before { content: "▶ "; color: #999; }
+  #sidebar .entry.whole::before { content: "▦ "; }
+  #sidebar .entry:hover { background: #eee; }
+  #sidebar .entry.active { background: #1d1d1f; color: #fff; }
+  #sidebar .entry.active::before { color: #ccc; }
+  #sidebar .sidebar-empty { padding: 8px; }
+  #controls { display: flex; gap: 6px; align-items: center; }
+  #controls button, #controls select { font: inherit; font-size: 12px; padding: 3px 8px; border: 1px solid #ccc; border-radius: 6px; background: #fff; cursor: pointer; }
+  #controls button:disabled { color: #aaa; cursor: default; }
+  #controls label { font-size: 12px; color: #555; display: flex; align-items: center; gap: 3px; }
+  #stage { position: absolute; top: 72px; bottom: 0; left: 232px; right: 0; }
+  /* Flow mode (§5.2): outside the blast radius dims; nothing is hidden. */
+  svg.flow .node.dim, svg.flow .edge.dim, svg.flow .badge-holder.dim { opacity: .18; }
+  /* §7.5: the untravelled side of a fork is drawn, dimmed. */
+  .edge.inactive-branch, .badge-holder.inactive-branch { opacity: .3; }
+  .edge.dim.inactive-branch { opacity: .12; }
+  /* §0: while objects travel, the edges they travel stand out. */
+  .edge.travelled > path:first-of-type { stroke-width: 2.6; stroke: #1d1d1f; }
+  .edge.travelled.broken > path:first-of-type { stroke: hsl(0 72% 42%); }
+  .node.visited > rect:first-of-type { stroke-width: 2.4; stroke: #1d1d1f; }
+  .object { transition: opacity .2s; }
   #stage svg { display: block; width: 100%; height: 100%; }
   .legend { display: flex; gap: 10px; font-size: 11px; color: #555; align-items: center; flex-wrap: wrap; }
   .legend .line::before { content: ""; display: inline-block; width: 22px; border-top: 2px solid #666; margin-right: 4px; vertical-align: middle; }
@@ -154,7 +196,7 @@ export function buildViewerHtml(
   .legend .skips-mark { background: #f2c14e; color: #3a2a00; border-radius: 8px; padding: 0 6px; font-size: 10px; font-weight: 600; }
   .node.selected > rect:first-of-type { stroke: #111; stroke-width: 3; }
   .edge.selected > path:first-of-type { stroke-width: 3.5; }
-  #panel { position: absolute; top: 49px; right: 12px; bottom: 12px; width: 360px; overflow: auto; background: #fff; border: 1px solid #ccc; border-radius: 8px; box-shadow: 0 4px 18px rgba(0,0,0,.12); padding: 12px 14px; box-sizing: border-box; }
+  #panel { position: absolute; top: 84px; right: 12px; bottom: 12px; width: 360px; overflow: auto; background: #fff; border: 1px solid #ccc; border-radius: 8px; box-shadow: 0 4px 18px rgba(0,0,0,.12); padding: 12px 14px; box-sizing: border-box; }
   .panel-head { display: flex; align-items: flex-start; gap: 8px; }
   .panel-title { font-size: 15px; margin: 0; flex: 1; overflow-wrap: anywhere; }
   .panel-close { border: none; background: none; font-size: 18px; line-height: 1; cursor: pointer; color: #666; padding: 0 2px; }
@@ -183,6 +225,16 @@ export function buildViewerHtml(
 <div id="bar">
   <h1>waterslide</h1>
   <div id="status"></div>
+  <label>open <input id="file" type="file" accept=".json,application/json"></label>
+</div>
+<div id="bar2">
+  <div id="controls">
+    <button id="play" type="button" disabled>▶ play</button>
+    <button id="step" type="button" disabled title="advance one hop">step ⏵</button>
+    <button id="replay" type="button" disabled title="play again from the entry point">↺</button>
+    <label><input id="loop" type="checkbox"> loop</label>
+    <label>speed <select id="speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
+  </div>
   <div class="legend" title="Hue is the node's kind. Saturation is change state since your last baseline. Line style is confidence. Red with a warning icon is a broken edge.">
     <span class="line">certain</span><span class="line inferred">inferred</span><span class="line annotated">annotated</span>
     <span class="sep">|</span>
@@ -190,8 +242,8 @@ export function buildViewerHtml(
     <span class="sep">|</span>
     <span><span class="broken-mark">▲!</span> broken</span><span><span class="skips-mark">skips N</span> bands bypassed</span>
   </div>
-  <label>open <input id="file" type="file" accept=".json,application/json"></label>
 </div>
+<nav id="sidebar"></nav>
 <div id="stage"></div>
 <aside id="panel" hidden></aside>
 <script id="graph" type="application/json">${safeJson}</script>

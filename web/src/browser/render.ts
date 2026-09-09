@@ -28,6 +28,15 @@ import {
   type OffscreenIndicator,
   type Viewport,
 } from "./offscreen.js";
+import {
+  blastRadius,
+  chosenAlternatives,
+  entryPointGroups,
+  isActiveBranch,
+  planPlayback,
+  type BlastRadius,
+} from "./flow.js";
+import { createPlayer, type Player, type PlayerState } from "./animation.js";
 
 /**
  * The renderer — UI spec §1, §3, §4 and §8. Runs in the browser as an inline
@@ -236,12 +245,40 @@ export type Selection =
   | { readonly type: "edge"; readonly id: string }
   | { readonly type: "none" };
 
+export interface RenderOptions {
+  readonly changeState?: ChangeStateMap;
+  readonly onSelect?: (selection: Selection) => void;
+  /** A fork marker was clicked: the edges rooted at that marker (§7.5). */
+  readonly onFork?: (edges: readonly LayoutEdge[]) => void;
+}
+
+/**
+ * The drawn map plus the few things that change on it after drawing. None of
+ * these add or remove anything: flow mode dims, branch choice dims, travel
+ * emphasises. The graph itself stays put (§0).
+ */
+export interface ViewerHandle {
+  readonly layout: Layout;
+  readonly edgeById: ReadonlyMap<string, LayoutEdge>;
+  /** §5.2: dim everything outside the blast radius; null leaves flow mode. */
+  setFlow(radius: BlastRadius | null): void;
+  /** §7.5: the untravelled side of every fork is drawn, dimmed. */
+  setBranches(chosen: ReadonlyMap<string, number>): void;
+  markTravelled(edgeId: string): void;
+  markVisited(nodeId: string): void;
+  clearTravel(): void;
+  /** Where travelling objects are drawn, above everything else. */
+  readonly objects: D3.Selection<SVGGElement, unknown, null, undefined>;
+}
+
 export function renderGraph(
   root: HTMLElement,
   graph: GraphLike,
-  changeState: ChangeStateMap = {},
-  onSelect: (selection: Selection) => void = () => undefined,
-): Layout {
+  options: RenderOptions = {},
+): ViewerHandle {
+  const changeState = options.changeState ?? {};
+  const onSelect = options.onSelect ?? ((): void => undefined);
+  const onFork = options.onFork ?? ((): void => undefined);
   const layout = layoutGraph(graph);
   root.replaceChildren();
 
@@ -356,7 +393,13 @@ export function renderGraph(
     const marker = forks
       .append("g")
       .attr("class", "fork")
-      .attr("transform", `translate(${String(cx)},${String(cy)}) rotate(45)`);
+      .attr("data-group", first.edge.exclusive_group ?? "")
+      .attr("transform", `translate(${String(cx)},${String(cy)}) rotate(45)`)
+      .style("cursor", "pointer")
+      .on("click", (ev: MouseEvent) => {
+        ev.stopPropagation();
+        onFork(fp.edges);
+      });
     marker
       .append("rect")
       .attr("x", -4.5)
@@ -433,6 +476,8 @@ export function renderGraph(
     if (!e.is_broken && e.skips_tiers.length === 0) continue;
     const holder = badges
       .append("g")
+      .attr("class", "badge-holder")
+      .attr("data-id", e.id)
       .style("cursor", "pointer")
       .on("click", (ev: MouseEvent) => {
         ev.stopPropagation();
@@ -440,6 +485,9 @@ export function renderGraph(
       });
     drawEdgeBadges(holder, le);
   }
+
+  // Travelling objects (§7) go above nodes and badges, inside the zoom transform.
+  const objects = g.append("g").attr("class", "objects");
 
   // Offscreen indicators (§4) live outside the zoom transform, at the edges
   // of what is visible, and are recomputed on every pan or zoom.
@@ -477,7 +525,53 @@ export function renderGraph(
   window.addEventListener("resize", updateOffscreen);
   updateOffscreen();
 
-  return layout;
+  const edgeById = new Map(layout.edges.map((le) => [le.edge.id, le] as const));
+  const byId = (id: string): NodeListOf<Element> =>
+    root.querySelectorAll(`[data-id="${cssEscape(id)}"]`);
+  const setClass = (
+    selector: string,
+    className: string,
+    on: (id: string) => boolean,
+  ): void => {
+    for (const el of root.querySelectorAll(selector)) {
+      const id = el.getAttribute("data-id");
+      if (id !== null) el.classList.toggle(className, on(id));
+    }
+  };
+  return {
+    layout,
+    edgeById,
+    objects,
+    setFlow(radius) {
+      svg.classed("flow", radius !== null);
+      setClass(
+        ".node",
+        "dim",
+        (id) => radius !== null && !radius.nodes.has(id),
+      );
+      setClass(
+        ".edge, .badge-holder",
+        "dim",
+        (id) => radius !== null && !radius.edges.has(id),
+      );
+    },
+    setBranches(chosen) {
+      setClass(".edge, .badge-holder", "inactive-branch", (id) => {
+        const le = edgeById.get(id);
+        return le !== undefined && !isActiveBranch(le.edge, chosen);
+      });
+    },
+    markTravelled(edgeId) {
+      for (const el of byId(edgeId)) el.classList.add("travelled");
+    },
+    markVisited(nodeId) {
+      for (const el of byId(nodeId)) el.classList.add("visited");
+    },
+    clearTravel() {
+      for (const el of root.querySelectorAll(".travelled, .visited"))
+        el.classList.remove("travelled", "visited");
+    },
+  };
 }
 
 /**
@@ -734,7 +828,7 @@ function readChangeState(): ChangeStateMap {
   }
 }
 
-/** Wires the page: draws the embedded graph and accepts a dropped or picked graph.json. */
+/** Wires the page: draws the embedded graph, the sidebar and the player, and accepts a dropped or picked graph.json. */
 export function mountViewer(): void {
   const stage = document.getElementById("stage");
   const status = document.getElementById("status");
@@ -743,15 +837,27 @@ export function mountViewer(): void {
 
   const changeState = readChangeState();
   const panel = document.getElementById("panel");
+  const sidebar = document.getElementById("sidebar");
+  const controls = {
+    play: document.getElementById("play") as HTMLButtonElement | null,
+    step: document.getElementById("step") as HTMLButtonElement | null,
+    replay: document.getElementById("replay") as HTMLButtonElement | null,
+    loop: document.getElementById("loop") as HTMLInputElement | null,
+    speed: document.getElementById("speed") as HTMLSelectElement | null,
+  };
+
   const draw = (text: string, source: string): void => {
     try {
       const graph = JSON.parse(text) as GraphLike;
       if (panel !== null) renderPanel(panel, null);
-      const layout = renderGraph(stage, graph, changeState, (selection) => {
-        if (panel !== null) select(stage, panel, graph, changeState, selection);
-      });
+      const session = new Session(stage, graph, changeState, panel, controls);
+      const layout = session.handle.layout;
+      if (sidebar !== null) session.mountSidebar(sidebar);
       const legend = `${String(graph.nodes.length)} nodes · ${String(graph.edges.length)} edges · ${String(layout.bands.filter((b) => b.count > 0).length)} bands used · ${String(layout.nodes.filter((n) => n.external).length)} external`;
       status.textContent = `${source} — ${legend}${graph.parsed_at === undefined ? "" : ` — parsed ${graph.parsed_at}`}`;
+      session.onStatus = (line) => {
+        status.textContent = line === null ? `${source} — ${legend}` : line;
+      };
     } catch (e) {
       status.textContent = `could not render ${source}: ${e instanceof Error ? e.message : String(e)}`;
     }
@@ -786,6 +892,208 @@ export function mountViewer(): void {
     const f = input.files?.[0];
     if (f !== undefined) load(f);
   });
+}
+
+interface Controls {
+  readonly play: HTMLButtonElement | null;
+  readonly step: HTMLButtonElement | null;
+  readonly replay: HTMLButtonElement | null;
+  readonly loop: HTMLInputElement | null;
+  readonly speed: HTMLSelectElement | null;
+}
+
+const SPEED_KEY = "waterslide.speed";
+
+/**
+ * One drawn graph and everything that happens on it: selection, flow mode,
+ * branch choice and playback. Zoom and magnification live in the renderer;
+ * nothing here re-draws the map.
+ */
+class Session {
+  readonly handle: ViewerHandle;
+  private readonly player: Player;
+  private entry: string | null = null;
+  /** Where the current play starts: the entry point, or the fork just flipped (§7.5). */
+  private playStart: string | null = null;
+  private readonly overrides = new Map<string, number>();
+  onStatus: (line: string | null) => void = () => undefined;
+
+  constructor(
+    private readonly stage: HTMLElement,
+    private readonly graph: GraphLike,
+    private readonly changeState: ChangeStateMap,
+    private readonly panel: HTMLElement | null,
+    private readonly controls: Controls,
+  ) {
+    this.handle = renderGraph(stage, graph, {
+      changeState,
+      onSelect: (selection) => {
+        if (panel !== null) select(stage, panel, graph, changeState, selection);
+      },
+      onFork: (edges) => this.flipFork(edges),
+    });
+    this.player = createPlayer(this.handle.objects, this.handle.edgeById, {
+      onTravel: (id) => this.handle.markTravelled(id),
+      onArrive: (id) => this.handle.markVisited(id),
+      onRestart: () => {
+        this.handle.clearTravel();
+        if (this.playStart !== null) this.handle.markVisited(this.playStart);
+      },
+      onObjectClick: (id) => {
+        if (panel !== null)
+          select(stage, panel, graph, changeState, { type: "edge", id });
+      },
+      onState: (state) => this.reflect(state),
+    });
+    this.wireControls();
+    this.reflect("idle");
+  }
+
+  private wireControls(): void {
+    const c = this.controls;
+    c.play?.addEventListener("click", () => this.player.toggle());
+    c.step?.addEventListener("click", () => this.player.step());
+    c.replay?.addEventListener("click", () => this.player.replay());
+    c.loop?.addEventListener("change", () =>
+      this.player.setLoop(c.loop?.checked ?? false),
+    );
+    if (c.speed !== null) {
+      // §7.1: speed is adjustable and persisted.
+      let saved: string | null = null;
+      try {
+        saved = localStorage.getItem(SPEED_KEY);
+      } catch {
+        saved = null;
+      }
+      if (saved !== null) c.speed.value = saved;
+      this.player.setSpeed(Number(c.speed.value) || 1);
+      c.speed.addEventListener("change", () => {
+        if (c.speed === null) return;
+        this.player.setSpeed(Number(c.speed.value) || 1);
+        try {
+          localStorage.setItem(SPEED_KEY, c.speed.value);
+        } catch {
+          // Persistence is a convenience; the page works without it.
+        }
+      });
+    }
+  }
+
+  private reflect(state: PlayerState): void {
+    const c = this.controls;
+    const active = this.entry !== null;
+    for (const b of [c.play, c.step, c.replay])
+      if (b !== null) b.disabled = !active;
+    if (c.play !== null)
+      c.play.textContent = state === "playing" ? "❚❚ pause" : "▶ play";
+    document.body.classList.toggle("playing", state === "playing");
+  }
+
+  /** §6: the sidebar is the list of things a user or system can do. */
+  mountSidebar(el: HTMLElement): void {
+    el.replaceChildren();
+    const whole = document.createElement("button");
+    whole.type = "button";
+    whole.className = "entry whole active";
+    whole.textContent = "Whole system";
+    whole.addEventListener("click", () => this.leaveFlow());
+    el.appendChild(whole);
+    const groups = entryPointGroups(this.graph.nodes);
+    if (groups.length === 0) {
+      const none = document.createElement("div");
+      none.className = "muted sidebar-empty";
+      none.textContent = "no entry points in this graph";
+      el.appendChild(none);
+    }
+    for (const group of groups) {
+      const h = document.createElement("h3");
+      h.textContent = group.label;
+      el.appendChild(h);
+      for (const n of group.nodes) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "entry";
+        b.dataset["id"] = n.id;
+        b.textContent = n.label;
+        b.title = n.label;
+        b.addEventListener("click", () => this.selectEntry(n.id));
+        el.appendChild(b);
+      }
+    }
+  }
+
+  private markSidebar(): void {
+    const sidebar = document.getElementById("sidebar");
+    if (sidebar === null) return;
+    for (const b of sidebar.querySelectorAll(".entry")) {
+      const id = (b as HTMLElement).dataset["id"];
+      b.classList.toggle(
+        "active",
+        id === undefined ? this.entry === null : id === this.entry,
+      );
+    }
+  }
+
+  /** §6 + §5.2 + §7.1: selecting an entry point enters flow mode and plays it. */
+  selectEntry(id: string): void {
+    const node = this.graph.nodes.find((n) => n.id === id);
+    if (node === undefined) return;
+    this.entry = id;
+    const radius = blastRadius(this.graph, id);
+    this.handle.setFlow(radius);
+    this.playStart = id;
+    const chosen = chosenAlternatives(this.graph, this.overrides);
+    this.handle.setBranches(chosen);
+    this.markSidebar();
+    this.onStatus(
+      `flow: ${node.label} — ${String(radius.nodes.size - 1)} reachable node${radius.nodes.size === 2 ? "" : "s"}, ${String(radius.edges.size)} edge${radius.edges.size === 1 ? "" : "s"}`,
+    );
+    this.player.play(planPlayback(this.graph, id, chosen));
+    this.reflect(this.player.state);
+  }
+
+  leaveFlow(): void {
+    this.entry = null;
+    this.playStart = null;
+    this.player.stop();
+    this.handle.setFlow(null);
+    this.handle.clearTravel();
+    this.handle.setBranches(chosenAlternatives(this.graph, this.overrides));
+    this.markSidebar();
+    this.onStatus(null);
+    this.reflect("idle");
+  }
+
+  /**
+   * §7.5: clicking a fork switches the active branch and replays from that
+   * point. A marker rooted on one alternative selects it; a marker shared by
+   * several cycles through them.
+   */
+  private flipFork(edges: readonly LayoutEdge[]): void {
+    const first = edges[0];
+    if (first === undefined || first.edge.exclusive_group === null) return;
+    const group = first.edge.exclusive_group;
+    const ordinals = [
+      ...new Set(
+        edges
+          .map((le) => le.edge.branch_ordinal)
+          .filter((o): o is number => o !== null),
+      ),
+    ].sort((a, b) => a - b);
+    const current = chosenAlternatives(this.graph, this.overrides).get(group);
+    const idx = current === undefined ? -1 : ordinals.indexOf(current);
+    const next =
+      ordinals.length === 1
+        ? (ordinals[0] as number)
+        : (ordinals[(idx + 1) % ordinals.length] as number);
+    this.overrides.set(group, next);
+    const chosen = chosenAlternatives(this.graph, this.overrides);
+    this.handle.setBranches(chosen);
+    if (this.entry === null) return;
+    // Replay from the fork: objects start at the branching node.
+    this.playStart = first.edge.from;
+    this.player.play(planPlayback(this.graph, first.edge.from, chosen));
+  }
 }
 
 mountViewer();
