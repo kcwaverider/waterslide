@@ -8,7 +8,7 @@ import {
 } from "../src/unknown-id.js";
 
 describe("unknown node ids (graph model §1, parser §4.2)", () => {
-  it("encodes only ':', '/', '%' and control characters, uppercase hex", () => {
+  it("encodes only ':', '/', '%', space and control characters, uppercase hex", () => {
     expect(encodeUnknownValue("/notes/{id}")).toBe("%2Fnotes%2F{id}");
     expect(encodeUnknownValue("a:b")).toBe("a%3Ab");
     expect(encodeUnknownValue("100%")).toBe("100%25");
@@ -17,8 +17,9 @@ describe("unknown node ids (graph model §1, parser §4.2)", () => {
       "memory_service.forget",
     );
     expect(encodeUnknownValue("PUT /notes/{id}?q=1&x=é")).toBe(
-      "PUT %2Fnotes%2F{id}?q=1&x=é",
+      "PUT%20%2Fnotes%2F{id}?q=1&x=é",
     );
+    expect(decodeUnknownValue("a b")).toBeNull();
   });
 
   it("NFC-normalizes before encoding", () => {

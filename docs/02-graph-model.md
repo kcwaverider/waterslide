@@ -66,9 +66,10 @@ Format: `{scope}:{locator}`
   non-empty; for `ext`, both sides of the `/`. For `unknown`, the locator is
   `{ref_kind}:{encoded_value}`: an `UnresolvedRef.ref_kind` (parser §3.6), a
   colon, then the ref's `value` NFC-normalized and then percent-encoded —
-  `:`, `/`, `%` and every code point below U+0020 become `%XX` with uppercase
-  hex, everything else stays literal. `/notes/{id}` becomes
-  `unknown:http:%2Fnotes%2F{id}`. The encoding is canonical, so one value has
+  `:`, `/`, `%`, the space and every code point below U+0020 become `%XX` with
+  uppercase hex, everything else stays literal. `GET /notes/{id}` becomes
+  `unknown:http:GET%20%2Fnotes%2F{id}`; a literal space in an id would be
+  unquotable in a shell and ambiguous in a log line. The encoding is canonical, so one value has
   one id and the id splits back into (scope, ref_kind, value) unambiguously;
   `core/` exports the encoder and decoder. Ugly on purpose: ids are addresses,
   and `label` carries the readable form. For repo-scoped ids the path is

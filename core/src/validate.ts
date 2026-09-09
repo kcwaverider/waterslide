@@ -635,7 +635,7 @@ function checkNodeId(
       err(
         "E_ID_FORMAT",
         `${path}.id`,
-        `node id "${node.id}" has scope "unknown" but its locator is not {ref_kind}:{encoded_value} with ref_kind one of ${RefKindSchema.options.join(", ")} and a non-empty value in which ":", "/", "%" and control characters are percent-encoded (graph model §1, parser §4.2)`,
+        `node id "${node.id}" has scope "unknown" but its locator is not {ref_kind}:{encoded_value} with ref_kind one of ${RefKindSchema.options.join(", ")} and a non-empty value in which ":", "/", "%", space and control characters are percent-encoded (graph model §1, parser §4.2)`,
       );
     }
     return;
