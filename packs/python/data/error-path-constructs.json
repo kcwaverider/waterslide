@@ -1,0 +1,38 @@
+{
+  "$comment": "Parser pipeline §6.2, Python table. Evaluated in order; the first rule whose construct matches a branch limb decides is_error_path. `construct` ids are recognised by src/language/branches.ts, which refuses to run if this file names one it does not know. Keep this a data file (handoff §2).",
+  "language": "python",
+  "rules": [
+    {
+      "construct": "raise",
+      "is_error_path": true,
+      "note": "`raise` anywhere in the limb body (not inside a nested def)."
+    },
+    {
+      "construct": "return_error_response",
+      "is_error_path": true,
+      "note": "`return HTTPException(...)` or `return JSONResponse(status_code=4xx|5xx)`."
+    },
+    {
+      "construct": "except_clause",
+      "is_error_path": true,
+      "uncertain": true,
+      "note": "An `except` limb defaults to true even when it continues with further calls. Open question (parser §10): a handler that retries is arguably the happy path. Edges in such a limb carry confidence_reason saying so."
+    },
+    {
+      "construct": "early_return",
+      "is_error_path": true,
+      "note": "The limb ends in `return` while the enclosing function has statements after the branch."
+    },
+    {
+      "construct": "continues",
+      "is_error_path": false,
+      "note": "Default: the limb continues downward."
+    }
+  ],
+  "error_response_callees": [
+    "HTTPException",
+    "JSONResponse",
+    "Response",
+    "PlainTextResponse"
+  ]
+}
