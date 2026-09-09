@@ -367,6 +367,76 @@ describe("stage 4: http references", () => {
     );
   });
 
+  it("matches positionally-equal templates whose parameter names differ, and says so in the reason", () => {
+    const r = resolve(
+      corpus({
+        nodes: [iosCaller, route],
+        edges: [
+          ref(
+            iosCaller.id,
+            {
+              ref_kind: "http",
+              value: "/notes/{noteId}",
+              hints: { method: "PUT", base_url_expr: null, query: null },
+              source_line: 1,
+            },
+            IOS,
+            { kind: "http_request" },
+          ),
+        ],
+        provides: [routeProvide],
+      }),
+    );
+    expect(r.edges[0]).toMatchObject({ to: route.id, confidence: "inferred" });
+    expect(r.edges[0]?.confidence_reason).toContain("PUT /notes/{noteId}");
+    expect(r.edges[0]?.confidence_reason).toContain("PUT /notes/{id}");
+    expect(r.edges[0]?.confidence_reason).toContain("spelled differently");
+  });
+
+  it("does not normalise parameter count or position, case, or trailing slashes", () => {
+    const posts = node("api:routers/posts.py#list_posts", "endpoint", "api");
+    const r = resolve(
+      corpus({
+        nodes: [iosCaller, route, posts],
+        edges: [
+          "/notes/{id}/extra",
+          "/Notes/{id}",
+          "/notes/{id}/",
+          "/users/{id}/posts/{postId}",
+        ].map((value, i) =>
+          ref(
+            iosCaller.id,
+            {
+              ref_kind: "http",
+              value,
+              hints: {
+                method: i === 3 ? "GET" : "PUT",
+                base_url_expr: null,
+                query: null,
+              },
+              source_line: i + 1,
+            },
+            IOS,
+            { kind: "http_request" },
+          ),
+        ),
+        provides: [
+          routeProvide,
+          provide(
+            "GET /users/{id}/posts",
+            posts.id,
+            { repo: "api", path: "routers/posts.py" },
+            {
+              ref_kind: "http",
+            },
+          ),
+        ],
+      }),
+    );
+    expect(r.edges.every((e) => e.to.startsWith("unknown:http:"))).toBe(true);
+    expect(r.stats.unresolved_by_kind.http).toBe(4);
+  });
+
   it("keeps GET and POST on one path as distinct unknown nodes", () => {
     const r = resolve(
       corpus({

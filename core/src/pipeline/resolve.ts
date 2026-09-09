@@ -78,8 +78,20 @@ interface IndexEntry {
   readonly terminal: string;
 }
 
+/**
+ * The canonical route key (C16): every `{...}` path parameter becomes a
+ * positional placeholder, so `{memoryId}` and `{memory_id}` are one route.
+ * Method, every literal segment, and parameter count and position must still
+ * agree; nothing else is normalised — no case folding, no trailing-slash
+ * tolerance, no query stripping. One function, applied to the provide side
+ * and the reference side alike, so the two cannot drift.
+ */
+export function routeKey(name: string): string {
+  return name.replace(/\{[^}]*\}/g, "{}");
+}
+
 const indexKey = (ref_kind: RefKind, name: string): string =>
-  `${ref_kind} ${name}`;
+  `${ref_kind} ${ref_kind === "http" ? routeKey(name) : name}`;
 
 const isBare = (name: string): boolean => !name.includes(".");
 
@@ -437,10 +449,16 @@ export function resolve(corpus: Corpus): ResolveOutput {
           ),
         );
       } else if (ref.ref_kind === "http") {
+        const hit = candidates[0] as IndexEntry;
+        const provided = hit.origin.provide.name;
+        const spelling =
+          provided === name
+            ? ""
+            : `; the path parameters are spelled differently ('${name}' at the call site, '${provided}' on the route) and were matched positionally`;
         out.push(
           downgrade(
             { ...base, to },
-            `matched URL path literal '${name}' to route provide in ${originOf(candidates[0] as IndexEntry)}`,
+            `matched URL path literal '${name}' to route provide in ${originOf(hit)}${spelling}`,
           ),
         );
       } else {
