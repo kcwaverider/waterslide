@@ -83,6 +83,9 @@ export interface ComposeReport {
   hop_cap_hits: number;
   extensions_merged: number;
   extensions_minted: number;
+  /** Protocol → number of conformers its requirements fanned out to (item 2). */
+  dispatch: Map<string, number>;
+  dispatch_edges: number;
 }
 
 const byteCmp = (a: string, b: string): number =>
@@ -99,6 +102,8 @@ interface RepoIndex {
   functions: Map<string, FunctionFact[]>;
   /** Properties contributed by extensions, by type name. */
   extProps: Map<string, PropertyFact[]>;
+  /** Conformances added by extensions, by type name. */
+  extConformances: Map<string, string[]>;
   /** Node kind by id, as emitted by the per-file pass. */
   kinds: Map<string, NodeKind>;
   schemaByType: Map<string, string>;
@@ -120,6 +125,7 @@ function buildIndex(
         types: new Map(),
         functions: new Map(),
         extProps: new Map(),
+        extConformances: new Map(),
         kinds: new Map(),
         schemaByType: new Map(),
       };
@@ -153,6 +159,10 @@ function buildIndex(
       const list = idx.extProps.get(e.type_name);
       if (list === undefined) idx.extProps.set(e.type_name, [...e.properties]);
       else list.push(...e.properties);
+      const conf = idx.extConformances.get(e.type_name);
+      if (conf === undefined)
+        idx.extConformances.set(e.type_name, [...e.conformances]);
+      else conf.push(...e.conformances);
     }
   }
   return repos;
@@ -273,6 +283,8 @@ export function composeWithReport(results: readonly PerFileResult[]): {
     hop_cap_hits: 0,
     extensions_merged: 0,
     extensions_minted: 0,
+    dispatch: new Map(),
+    dispatch_edges: 0,
   };
   const files: FileWithState[] = [];
   for (const r of results) {
@@ -494,6 +506,69 @@ export function composeWithReport(results: readonly PerFileResult[]): {
           is_entry_point: true,
           entry_point_kind: "ui_handler",
         });
+      }
+    }
+  }
+
+  // --- Protocol dispatch (item 2) ---------------------------------------------
+  // A call on a protocol-typed value resolves to the requirement, which is
+  // what the source names. Which implementation runs is decided where the
+  // value is injected, so each requirement fans out to every conformer's
+  // implementation: the scope doc's dynamic-dispatch blind spot, drawn as a
+  // labelled fan-out of possible destinations. Independent inferred edges, not
+  // an exclusive_group (no condition selects among them). Never capped; the
+  // conformer count is in the reason so a reader knows how wide the guess is.
+  for (const idx of repos.values()) {
+    const conformersOf = new Map<string, string[]>();
+    for (const [name, t] of idx.types) {
+      const all = [
+        ...t.fact.conformances,
+        ...(idx.extConformances.get(name) ?? []),
+      ];
+      for (const c of all) {
+        const p = idx.types.get(c);
+        if (p === undefined || p.fact.declaration_kind !== "protocol") continue;
+        const list = conformersOf.get(c) ?? [];
+        if (!list.includes(name)) list.push(name);
+        conformersOf.set(c, list);
+      }
+    }
+    for (const [protocol, conformers] of conformersOf) {
+      conformers.sort(byteCmp);
+      report.dispatch.set(protocol, conformers.length);
+      const requirements = [...idx.functions.values()]
+        .flat()
+        .filter((f) => f.owner_type === protocol && f.form === "requirement")
+        .sort((a, b) => byteCmp(a.node_id, b.node_id));
+      for (const req of requirements) {
+        for (const conformer of conformers) {
+          const impls = (
+            idx.functions.get(fkey(conformer, req.member)) ?? []
+          ).filter(
+            (f) =>
+              f.form !== "requirement" &&
+              f.form !== "slot" &&
+              f.params.length === req.params.length,
+          );
+          for (const impl of impls) {
+            patch.edges.push({
+              from: req.node_id,
+              to: impl.node_id,
+              kind: "call",
+              label: `implements ${req.member}`,
+              schema_id: null,
+              response_schema_id: null,
+              confidence: "inferred",
+              confidence_reason: `dynamic dispatch: ${conformer} conforms to ${protocol}, so a call to ${protocol}.${req.member} may run here; which implementation runs is chosen where the value is injected (${String(conformers.length)} conformer${conformers.length === 1 ? "" : "s"} of ${protocol} in the pack)`,
+              condition: null,
+              exclusive_group: null,
+              branch_ordinal: null,
+              is_error_path: false,
+              source: null,
+            });
+            report.dispatch_edges++;
+          }
+        }
       }
     }
   }

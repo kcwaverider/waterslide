@@ -11,6 +11,7 @@ cross-file `compose` pass for extensions and helper-routed URL reconstruction.
 | `grammar/tree-sitter-swift.wasm` | Pinned grammar (0.7.3, from the grammar's GitHub release). Sidecar `.wasm.json` records version, source URL and sha256; `npm run grammar:fetch -w @waterslide/pack-swift` refetches and verifies |
 | `queries/*.scm` | Every tree-sitter query. Never string literals in code (handoff §2) |
 | `data/error-paths.json` | The Swift `is_error_path` construct table (parser §6.2). Data, not code |
+| `data/noise.json` | What a call on a typed value must not be drawn as: collection wrappers, synthesized statics, SwiftUI modifiers, stdlib sequence operations, view-like conformances. Data, not code |
 | `src/analyze.ts` | Per-file pass: `(repo, path, content)` → `PackResult` + pack-private state |
 | `src/recognizers/declarations.ts` | Types, functions, extensions, imports, typealias, Codable schemas, provides |
 | `src/recognizers/scope.ts` | Local scope, `self` context, receiver typing; unresolved chains for compose |
@@ -61,5 +62,8 @@ for unresolved refs are minted by the driver only; core mints the real
   and `SharedWithMeView.swift`.
 - **Visibility.** Access modifiers only; no module boundary (parser §10 open
   question). `project.pbxproj` is not read.
-- **Protocol-typed receivers.** `provider.load()` with `provider: Providing`
-  emits a symbol ref to `Providing.load`; conformers are not fanned out.
+- **Protocol dispatch.** A call on a protocol-typed value resolves to the
+  requirement node; compose fans each requirement out to every conformer's
+  implementation as an `inferred` edge whose reason carries the conformer
+  count. A closure-typed stored property is a slot node; the closure injected
+  into it is not linked (its calls belong to the injecting body already).

@@ -31,7 +31,16 @@ export interface PropertyDecl {
 }
 
 export type OwnerForm =
-  "function" | "init" | "computed" | "handler" | "type" | "module";
+  | "function"
+  | "init"
+  | "computed"
+  /** A protocol requirement: declared, no body; conformers implement it. */
+  | "requirement"
+  /** A closure-typed stored property: a callable slot whose implementation is injected. */
+  | "slot"
+  | "handler"
+  | "type"
+  | "module";
 
 /** Something edges can originate from: a declaration with a body, or a handler closure. */
 export interface Owner {

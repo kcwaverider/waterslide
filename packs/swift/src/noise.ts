@@ -11,6 +11,7 @@ import type { TypeRef } from "./tree.js";
 interface NoiseTable {
   collection_wrappers: Record<string, string>;
   synthesized_static_members: Record<string, string>;
+  view_like_conformances: { names: string[] };
   view_modifiers: { names: string[] };
   stdlib_sequence_members: { names: string[] };
 }
@@ -47,10 +48,9 @@ export function synthesizedStaticType(member: string): string | null {
   return t === undefined || member.startsWith("$") ? null : t;
 }
 
-const VIEW_LIKE = new Set(["View", "ViewModifier", "Scene", "Widget"]);
-
 export function isViewLike(conformances: readonly string[]): boolean {
-  return conformances.some((c) => VIEW_LIKE.has(c));
+  const names = noise().view_like_conformances.names;
+  return conformances.some((c) => names.includes(c));
 }
 
 export function isViewModifier(member: string): boolean {

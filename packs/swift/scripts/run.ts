@@ -255,6 +255,10 @@ async function main(): Promise<void> {
   if (out !== null) writeFileSync(out, bytes);
 
   const result = validate(JSON.parse(bytes), { shape: "canonical" });
+  if (!args.includes("--quiet")) {
+    console.log(formatSummary(assembled.merged, assembled.report));
+    console.log("");
+  }
   const limbViolations = assembled.merged.diagnostics.filter(
     (d) => d.code === "branch_ordinal_limb_mismatch",
   );

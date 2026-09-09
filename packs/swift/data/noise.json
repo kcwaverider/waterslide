@@ -169,5 +169,16 @@
       "updateValue",
       "values"
     ]
+  },
+  "view_like_conformances": {
+    "$comment": "Conformances that make a user type a SwiftUI view. Used for the ui_view node kind and for the view-modifier guard. UIViewRepresentable and UIViewControllerRepresentable are Views too; keeping this list in code was why two ignoresSafeArea calls slipped through.",
+    "names": [
+      "View",
+      "ViewModifier",
+      "Scene",
+      "Widget",
+      "UIViewRepresentable",
+      "UIViewControllerRepresentable"
+    ]
   }
 }

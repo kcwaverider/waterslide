@@ -110,6 +110,8 @@ export interface TypeRef {
   optional: boolean;
   array: boolean;
   dictionary: boolean;
+  /** A closure type: `() -> Void`, `((T) -> Void)?`. A stored property of this type is a callable slot. */
+  is_function: boolean;
   text: string;
 }
 
@@ -117,6 +119,7 @@ export function typeRef(n: Node): TypeRef {
   let optional = false;
   let array = false;
   let dictionary = false;
+  let is_function = false;
   let cur: Node = n;
   const text = n.text;
   for (let guard = 0; guard < 8; guard++) {
@@ -146,6 +149,15 @@ export function typeRef(n: Node): TypeRef {
       dictionary = true;
       break;
     }
+    if (
+      cur.type === "function_type" ||
+      (cur.type === "tuple_type" &&
+        cur.namedChildCount === 1 &&
+        cur.text.includes("->"))
+    ) {
+      is_function = true;
+      break;
+    }
     if (cur.type === "opaque_type" || cur.type === "existential_type") {
       const inner = cur.namedChildren[0] ?? null;
       if (inner === null) break;
@@ -154,7 +166,7 @@ export function typeRef(n: Node): TypeRef {
     }
     break;
   }
-  let base = cur.text;
+  let base = is_function ? "Function" : cur.text;
   if (cur.type === "user_type") {
     // Drop generic arguments: `Result<Foo, Error>` → `Result`.
     base = cur.namedChildren
@@ -163,7 +175,7 @@ export function typeRef(n: Node): TypeRef {
       .join(".");
     if (base === "") base = cur.text;
   }
-  return { base, optional, array, dictionary, text };
+  return { base, optional, array, dictionary, is_function, text };
 }
 
 export function isCapitalized(s: string): boolean {

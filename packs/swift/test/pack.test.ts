@@ -15,6 +15,7 @@ import {
   SwiftPack,
   applyPatch,
   compose,
+  composeWithReport,
   pack,
   rePath,
   spanHash,
@@ -632,10 +633,9 @@ describe("noise: calls that tell a reader nothing are not drawn (data/noise.json
     const src = `protocol Session { func append(_ b: Int) }\nclass Rec {\n  let s: Session\n  init(s: Session) { self.s = s }\n  func push() { s.append(1) }\n}\n`;
     const results = [await fileResult("r", "Rec.swift", src)];
     const merged = applyPatch(results, compose(results));
+    // The requirement is declared in this file, so the call resolves to it directly.
     expect(
-      merged.edges.some(
-        (e) => typeof e.to !== "string" && e.to.value === "Session.append",
-      ),
+      merged.edges.some((e) => e.to === "r:Rec.swift#Session.append"),
     ).toBe(true);
   });
 
@@ -648,6 +648,102 @@ describe("noise: calls that tell a reader nothing are not drawn (data/noise.json
         (e) => typeof e.to !== "string" && /^Theme\./.test(e.to.value),
       ),
     ).toBe(false);
+  });
+});
+
+describe("protocol requirements, dispatch fan-out and closure slots (item 2)", () => {
+  const proto = `protocol Backend {\n  var isReady: Bool { get }\n  func send(_ x: Int) async throws\n  func stop()\n}\n`;
+  const live = `struct LiveBackend: Backend {\n  var isReady: Bool { true }\n  func send(_ x: Int) async throws {}\n  func stop() {}\n}\n`;
+  const stub = `final class StubBackend: Backend {\n  var isReady: Bool { false }\n  func send(_ x: Int) async throws {}\n  func stop() {}\n}\n`;
+  const user = `class VM {\n  let backend: Backend\n  init(backend: Backend = LiveBackend()) { self.backend = backend }\n  func go() async throws { try await backend.send(1); backend.stop() }\n}\n`;
+
+  it("emits a certain node and a provide for each protocol requirement, and a call on a protocol-typed value resolves to it", async () => {
+    const results = [
+      await fileResult("r", "Backend.swift", proto),
+      await fileResult("r", "Live.swift", live),
+      await fileResult("r", "Stub.swift", stub),
+      await fileResult("r", "VM.swift", user),
+    ];
+    const merged = applyPatch(results, compose(results));
+    const req = merged.nodes.find(
+      (n) => n.id === "r:Backend.swift#Backend.send",
+    );
+    expect(req?.kind).toBe("function");
+    expect(req?.confidence).toBe("certain");
+    expect(req?.label).toBe("Backend.send (requirement)");
+    expect(
+      merged.provides.some(
+        (p) => p.name === "Backend.send" && p.node_id === req?.id,
+      ),
+    ).toBe(true);
+    const call = merged.edges.find(
+      (e) =>
+        e.from === "r:VM.swift#VM.go" &&
+        typeof e.to !== "string" &&
+        e.to.value === "Backend.send",
+    );
+    expect(call).toBeDefined();
+  });
+
+  it("fans each requirement out to every conformer's implementation, inferred, with the conformer count in the reason", async () => {
+    const results = [
+      await fileResult("r", "Backend.swift", proto),
+      await fileResult("r", "Live.swift", live),
+      await fileResult("r", "Stub.swift", stub),
+    ];
+    const { patch, report } = composeWithReport(results);
+    const fan = patch.edges.filter(
+      (e) => e.from === "r:Backend.swift#Backend.send",
+    );
+    expect(fan.map((e) => e.to).sort()).toEqual([
+      "r:Live.swift#LiveBackend.send",
+      "r:Stub.swift#StubBackend.send",
+    ]);
+    expect(
+      fan.every(
+        (e) =>
+          e.confidence === "inferred" &&
+          e.exclusive_group === null &&
+          e.source === null,
+      ),
+    ).toBe(true);
+    expect(fan[0]?.confidence_reason).toContain("2 conformers of Backend");
+    expect(report.dispatch.get("Backend")).toBe(2);
+    expect(report.dispatch_edges).toBe(4);
+  });
+
+  it("gives a closure-typed stored property a slot node so calls on it resolve, instance and static", async () => {
+    const src = `struct Scene {\n  let onExit: () -> Void\n  var onUpdate: ((Int) -> Void)?\n  class Coordinator {\n    let parent: Scene\n    init(parent: Scene) { self.parent = parent }\n    func done() { parent.onExit(); parent.onUpdate?(1); Services.make() }\n  }\n}\nenum Services {\n  static var make: () -> Int = { 1 }\n}\n`;
+    const r = await pack.parse("r", "Scene.swift", src, {});
+    const slot = r.nodes.find((n) => n.id === "r:Scene.swift#Scene.onExit");
+    expect(slot?.kind).toBe("function");
+    expect(slot?.label).toBe("Scene.onExit (closure property)");
+    const targets = r.edges
+      .filter((e) => e.from === "r:Scene.swift#Scene.Coordinator.done")
+      .map((e) => e.to);
+    expect(targets).toEqual(
+      expect.arrayContaining([
+        "r:Scene.swift#Scene.onExit",
+        "r:Scene.swift#Scene.onUpdate",
+        "r:Scene.swift#Services.make",
+      ]),
+    );
+  });
+
+  it("drops a SwiftUI modifier on a UIViewRepresentable, which is a View too", async () => {
+    const src = `struct SceneView: UIViewRepresentable { func makeUIView(context: Context) -> UIView { UIView() } }\nstruct Host: View { var body: some View { SceneView().ignoresSafeArea() } }\n`;
+    const results = [await fileResult("r", "SceneView.swift", src)];
+    const merged = applyPatch(results, compose(results));
+    expect(
+      merged.edges.some(
+        (e) =>
+          typeof e.to !== "string" &&
+          e.to.value === "SceneView.ignoresSafeArea",
+      ),
+    ).toBe(false);
+    expect(
+      merged.nodes.find((n) => n.id === "r:SceneView.swift#SceneView")?.kind,
+    ).toBe("ui_view");
   });
 });
 

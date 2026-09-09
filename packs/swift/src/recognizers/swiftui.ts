@@ -109,7 +109,13 @@ function markMethodReference(ctx: FileContext, call: Node): void {
   if (ref.type === "simple_identifier") {
     const type = typeAt(ctx, call);
     const declared = type === null ? null : (type.merged_into ?? type);
-    const members = declared?.members.get(ref.text) ?? [];
+    // A closure-typed property (`Button(action: onTap)` in a reusable
+    // component) is a slot, not the handler: the real handler is whatever the
+    // parent injected, and its calls are already attributed to the parent's
+    // body. Only a method is marked.
+    const members = (declared?.members.get(ref.text) ?? []).filter(
+      (m) => m.form !== "slot",
+    );
     for (const m of members) m.is_entry_point = true;
     return;
   }
@@ -121,8 +127,9 @@ function markMethodReference(ctx: FileContext, call: Node): void {
     const r = typeOfExpr(ctx, target, owner);
     if (r === null || r.type_name === null) return;
     if (r.in_file !== null) {
-      for (const m of r.in_file.members.get(member) ?? [])
-        m.is_entry_point = true;
+      for (const m of r.in_file.members.get(member) ?? []) {
+        if (m.form !== "slot") m.is_entry_point = true;
+      }
       return;
     }
     ctx.entry_point_refs.push({ type_name: r.type_name, member });
