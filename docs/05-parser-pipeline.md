@@ -297,7 +297,7 @@ exactly what the pack boundary exists to prevent. So the pack states it.
 |---|---|---|---|
 | `name` | string | yes | The name others may use, e.g. `services.memory_service.display` |
 | `node_id` | string \| null | yes | The node it resolves to. Non-null exactly when `alias_of` is null |
-| `alias_of` | string \| null | yes | Another **name** this entry forwards to, for Python `__init__.py` re-exports and Swift `typealias`. Core follows alias chains in stage 4, capped at 8 hops; a cycle or an alias to nothing is dropped with an `unresolvable_provide_alias` diagnostic |
+| `alias_of` | string \| null | yes | Another **name** this entry forwards to, for Python `__init__.py` re-exports and Swift `typealias`. Core follows alias chains in stage 4, capped at 8 hops; a cycle or an over-deep chain is dropped with an `unresolvable_provide_alias` diagnostic. A chain that ends at a name nobody provides is kept: a reference through it dangles, and the reason names the terminal, which is more useful than losing the alias |
 | `ref_kind` | enum | yes | Same enum as `UnresolvedRef.ref_kind` (§3.6). Stage 4 keys one index by `(ref_kind, name, scope)` and matches all five kinds uniformly |
 | `visibility` | enum | yes | `public` \| `module` \| `private`. Narrows match scope |
 | `scope` | enum | yes | `global` \| `file`. See below |
@@ -307,8 +307,14 @@ exactly what the pack boundary exists to prevent. So the pack states it.
 global, public provide with `ref_kind: http` and the name
 `"{METHOD} {path_template}"` — method uppercase, one space, path verbatim from
 prefix composition, one entry per method for a multi-method decorator. Stage 4
-matches an `http` reference against that exact string, not against segment-shape
-heuristics.
+matches an `http` reference against that string under one normalisation: every
+`{...}` path parameter becomes a positional placeholder on both sides, so
+`{memoryId}` and `{memory_id}` are one route. Method, every literal segment, and
+parameter count and position must still agree; nothing else is folded — not
+case, not a trailing slash. Query strings never reach matching at all: §3.6
+carries them in `hints.query`, and the key is the method plus the path value.
+When the spellings differed the edge's reason says so and gives both verbatim. This is a canonical route key,
+not a segment-shape search.
 
 One node may have several `provides` entries — a Python function is referable as
 `module.func` and, after `from module import func`, as a bare name within the
@@ -448,6 +454,21 @@ matching — this is the most likely place for a subtle wrong-edge bug to enter.
 | `topic` | Publish and subscribe sets, by string equality | `inferred` — the broker holds the real mapping |
 | `datastore` | Collection nodes, minted on demand as `{store}:{namespace}.{value}`. A null `namespace` mints `{store}:unknown.{value}` and emits `undeclared_datastore_namespace` naming the collection and the referencing file — a collection whose db name we cannot see is still a real collection we know the name of, and it draws | `inferred` when derived from an entity class |
 | `external` | Known-vendor table, node minted if absent | `certain` on SDK symbol, `inferred` on bare URL |
+
+**Factory-returned receivers.** `svc = get_s3_service(); svc.upload_bytes(...)`
+reaches stage 4 as the symbol `services.get_s3_service().upload_bytes`, because
+the pack cannot see what the factory returns; the defining file separately
+provides `services.get_s3_service()` as an alias of the function's return
+annotation. When an exact symbol match fails, stage 4 tries the longest prefix
+of the value that ends in `()` and is provided, splitting only at `.`, follows
+that alias chain as normal, appends the remainder to the terminal name and
+matches once more. One re-resolution pass, never a loop: if the second match
+fails the reference dangles, naming the factory. The result is `inferred`, with
+a reason naming the factory, its return annotation and the file the annotation
+came from — the annotation may lie, and the pack could not verify it at the
+call site. Restricting the split to prefixes ending in `()` keeps this from
+becoming a general prefix search over every dotted name, which would
+manufacture ambiguity.
 
 Every non-`certain` result must carry a `confidence_reason` written for a human:
 "matched URL path literal to route decorator in `api/routers/notes.py`". The

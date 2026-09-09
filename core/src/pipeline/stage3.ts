@@ -518,10 +518,17 @@ function checkUpdate(
   return null;
 }
 
+/**
+ * Every optional field the schema accepts must land here. A field accepted by
+ * `NodeUpdateSchema` and dropped by this function is silent wrong output — the
+ * schema passing is what hides it — so the round-trip test in stage3.test.ts
+ * enumerates the schema's keys and fails on any it has no sample for.
+ */
 function applyUpdate(target: PackNode, update: NodeUpdate): void {
   if (update.add_sources.length > 0) {
     target.sources = dedupeSpans([...target.sources, ...update.add_sources]);
   }
+  if (update.kind !== undefined) target.kind = update.kind;
   if (update.parent !== undefined) target.parent = update.parent;
   if (update.label !== undefined) target.label = update.label;
   if (update.is_entry_point !== undefined)
