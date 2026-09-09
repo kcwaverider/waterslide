@@ -33,3 +33,4 @@ export {
   graphJsonSchemas,
   renderJsonSchema,
 } from "./json-schema.js";
+export * from "./pipeline/index.js";

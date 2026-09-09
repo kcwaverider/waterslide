@@ -13,6 +13,10 @@
     "dist"
   ],
   "dependencies": {
+    "picomatch": "^4.0.7",
     "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/picomatch": "^4.0.3"
   }
 }
