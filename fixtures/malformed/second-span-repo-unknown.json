@@ -38,6 +38,13 @@
       "parent": "tapistree-ios:Sources/Models/Note.swift",
       "sources": [
         {
+          "repo": "not-a-repo",
+          "path": "Sources/Models/Note.swift",
+          "line_start": 5,
+          "line_end": 40,
+          "hash": "sha256:2510e106e73760f8"
+        },
+        {
           "repo": "tapistree-ios",
           "path": "Sources/Extensions/Note+JSON.swift",
           "line_start": 3,
@@ -50,13 +57,6 @@
           "line_start": 5,
           "line_end": 6,
           "hash": "sha256:508b9213269c7d04"
-        },
-        {
-          "repo": "tapistree-ios",
-          "path": "Sources/Models/Note.swift",
-          "line_start": 5,
-          "line_end": 40,
-          "hash": "sha256:2510e106e73760f8"
         }
       ],
       "confidence": "certain",

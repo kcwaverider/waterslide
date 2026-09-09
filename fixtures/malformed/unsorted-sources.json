@@ -48,15 +48,15 @@
           "repo": "tapistree-ios",
           "path": "Sources/Models/Note.swift",
           "line_start": 5,
-          "line_end": 6,
-          "hash": "sha256:508b9213269c7d04"
+          "line_end": 40,
+          "hash": "sha256:2510e106e73760f8"
         },
         {
           "repo": "tapistree-ios",
           "path": "Sources/Models/Note.swift",
           "line_start": 5,
-          "line_end": 40,
-          "hash": "sha256:2510e106e73760f8"
+          "line_end": 6,
+          "hash": "sha256:508b9213269c7d04"
         }
       ],
       "confidence": "certain",

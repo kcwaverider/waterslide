@@ -11,4 +11,4 @@ compares `serializeCanonical(validate(file))` to the file bytes. Do not reformat
 | `tombstone-broken-edge.json` | A `tombstone` target with a broken edge into it, and a broken edge whose target still exists (graph model §5.1) |
 | `annotated-edge.json` | An `annotated` edge with `source: null` and `source_count: 0`; a `topic` node with a `subscribe` out and a `publish` in; a self-loop `call` (recursion is legal); non-ASCII labels and tags for the escaping and NFC rules |
 | `band-skip.json` | A `ui_view` writing straight to a collection: `skips_tiers` spanning four bands, the positive case for invariant 11 |
-| `split-definition.json` | A Swift `class` declared in `Models/Note.swift` and extended in `Extensions/Note+JSON.swift`: one node with two `sources` in canonical span order, the motivating case for `sources[]` |
+| `split-definition.json` | A Swift `class` declared in `Models/Note.swift` and extended in `Extensions/Note+JSON.swift`: one node with three `sources` in canonical span order, two of them equal on repo, path and line_start and ordered by `line_end` — the motivating case for `sources[]` and for the total span sort key |
