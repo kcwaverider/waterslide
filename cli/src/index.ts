@@ -309,6 +309,17 @@ export function applyRepoGlobs(
   field: "include" | "exclude",
   specs: readonly string[],
 ): RepoInput[] {
+  // A qualified glob must name exactly one repo. Core's assertRepoList would
+  // reject the duplicate later anyway, but as a pipeline error with a stack
+  // trace; here it is the usage error it is.
+  const names = new Set<string>();
+  for (const repo of repos) {
+    if (names.has(repo.name))
+      throw new UsageError(
+        `repo name "${repo.name}" appears twice in the repo list`,
+      );
+    names.add(repo.name);
+  }
   const byRepo = new Map<string, string[]>();
   for (const spec of specs) {
     const colon = spec.indexOf(":");

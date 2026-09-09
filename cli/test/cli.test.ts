@@ -421,6 +421,19 @@ describe("waterslide parse --exclude / --include", () => {
     const empty = await waterslide(...base(), "--include", "server:");
     expect(empty.code).toBe(1);
     expect(empty.stderr).toContain("expected <name>:<glob>");
+    // A qualified glob must name exactly one repo: a duplicate name is a
+    // usage error here, not a stack trace from the pipeline.
+    const dup = await waterslide(
+      "parse",
+      `server=${root}/server`,
+      `server=${root}/client`,
+      "--pack",
+      TOY,
+      "--exclude",
+      "server:api/**",
+    );
+    expect(dup.code).toBe(1);
+    expect(dup.stderr).toContain('repo name "server" appears twice');
   });
 });
 
