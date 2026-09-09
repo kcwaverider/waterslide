@@ -46,12 +46,24 @@ export type { PackPatch } from "@waterslide/core";
 /** The key under which the per-file pass stores its state in file-level pack_data. */
 export const PACK_DATA_KEY = "swift";
 
-/** Read the per-file state back out of `PerFileResult.pack_data`. */
-export function stateOf(r: PerFileResult): SwiftFileState | null {
+/**
+ * Read the per-file state back out of `PerFileResult.pack_data`. Absent means
+ * the file contributes nothing cross-file; present but invalid is a pack bug
+ * and is returned as an error so the caller can report it (§9: never silent).
+ */
+export function stateOf(
+  r: PerFileResult,
+): { state: SwiftFileState } | { error: string } | null {
   const raw = r.pack_data?.[PACK_DATA_KEY];
   if (raw === undefined || raw === null) return null;
   const parsed = SwiftFileStateSchema.safeParse(raw);
-  return parsed.success ? parsed.data : null;
+  if (parsed.success) return { state: parsed.data };
+  return {
+    error: parsed.error.issues
+      .slice(0, 3)
+      .map((i) => `${i.path.join(".")}: ${i.message}`)
+      .join("; "),
+  };
 }
 
 /** Coverage figures the run summary prints (handoff §6 item 6). */
@@ -253,8 +265,21 @@ export function composeWithReport(results: readonly PerFileResult[]): {
   };
   const files: FileWithState[] = [];
   for (const r of results) {
-    const state = stateOf(r);
-    if (state !== null) files.push({ r, state });
+    const read = stateOf(r);
+    if (read === null) continue;
+    if ("error" in read) {
+      patch.diagnostics.push({
+        severity: "error",
+        code: "recognizer_failure",
+        message: `per-file state for ${r.path} did not match the Swift pack's state schema (${read.error}); the file takes no part in cross-file resolution`,
+        repo: r.repo,
+        path: r.path,
+        line: null,
+        pack: "swift",
+      });
+      continue;
+    }
+    files.push({ r, state: read.state });
   }
   const repos = buildIndex(files, patch.diagnostics);
   const httpTypes = new Set<string>();

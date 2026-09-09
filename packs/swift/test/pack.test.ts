@@ -170,6 +170,7 @@ describe("SwiftUI entry points (items 8, 9)", () => {
       "NotesView.Button[2]",
       "NotesView.onAppear[0]",
       "NotesView.onChange[0]",
+      "NotesView.onDisappear[0]",
       "NotesView.onSubmit[0]",
       "NotesView.refreshable[0]",
       "NotesView.task[0]",
@@ -191,6 +192,44 @@ describe("SwiftUI entry points (items 8, 9)", () => {
       (n) => n.id === "k:Kitchen.swift#NotesViewModel.clear",
     );
     expect(clear?.is_entry_point).toBe(true);
+  });
+
+  it("emits a direct http edge from a handler closure that sends its own request", async () => {
+    const r = await pack.parse("k", "Kitchen.swift", kitchen, {});
+    const e = r.edges.find(
+      (x) =>
+        x.from.endsWith("#NotesView.onDisappear[0]") &&
+        x.kind === "http_request",
+    );
+    const to = e === undefined ? null : ref(e);
+    expect(to?.value).toBe("/api/ping");
+    expect(httpHints(to)?.base_url_expr).toBe('"https://x.example"');
+    expect(e?.confidence).toBe("certain");
+  });
+
+  it("shares one handler counter across two extension blocks of the same type in a file", async () => {
+    const src = `extension Detail { var a: some View { Text("a").task { await load() } } }\nextension Detail { var b: some View { Text("b").task { await load() } } }\n`;
+    const r = await pack.parse("k", "Detail+Views.swift", src, {});
+    const ids = r.nodes
+      .filter((n) => n.kind === "ui_handler")
+      .map((n) => n.id.split("#")[1])
+      .sort();
+    expect(ids).toEqual(["Detail.task[0]", "Detail.task[1]"]);
+  });
+
+  it("reports per-file state that fails the pack's own schema instead of dropping the file silently", async () => {
+    const good = await fileResult("r", "A.swift", "class A {}\n");
+    const bad = {
+      ...good,
+      path: "B.swift",
+      pack_data: { swift: { version: 99 } },
+    };
+    const patch = compose([good, bad]);
+    expect(
+      patch.diagnostics.some(
+        (d) => d.code === "recognizer_failure" && d.path === "B.swift",
+      ),
+    ).toBe(true);
   });
 
   it("attributes calls inside a handler closure to the handler, not the view", async () => {

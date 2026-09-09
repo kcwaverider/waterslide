@@ -19,7 +19,7 @@ import {
 import { typeOfExpr } from "./scope.js";
 import { codeId } from "../ids.js";
 import { childrenOfType, lineStart } from "../tree.js";
-import { span } from "./declarations.js";
+import { ownerFact, span } from "./declarations.js";
 
 /** Approved entry-point modifiers: the five in parser §7 plus item 9's additions. */
 export const HANDLER_MODIFIERS: Readonly<Record<string, string>> = {
@@ -198,7 +198,9 @@ export function collectHandlers(ctx: FileContext, q: Query): void {
         ? (declared.extension_target ?? declared.qualified)
         : declared.qualified;
     ctx.skipCalls.add(s.call.id);
-    const key = `${declared.decl.id} ${s.modifier}`;
+    // Keyed by type name, not declaration: two extension blocks of one type in
+    // a file must share one counter or their handler ids collide.
+    const key = `${typeName} ${s.modifier}`;
     const n = counters.get(key) ?? 0;
     counters.set(key, n + 1);
     const qualified = `${typeName}.${s.modifier}[${String(n)}]`;
@@ -215,6 +217,9 @@ export function collectHandlers(ctx: FileContext, q: Query): void {
       return_type: null,
       fact: null,
     };
+    // A handler body can itself build and send a request; without a fact the
+    // network recognizer would skip it.
+    owner.fact = ownerFact(owner);
     ctx.owners.push(owner);
     ctx.nodes.push({
       id: owner.node_id,

@@ -31,11 +31,10 @@ export function packRoot(): string {
   throw new Error("swift pack: could not locate package root");
 }
 
-export const GRAMMAR_WASM = join(
-  packRoot(),
-  "grammar",
-  "tree-sitter-swift.wasm",
-);
+/** Resolved lazily so a missing package root surfaces inside analyzeFile's try, never at import. */
+export function grammarWasmPath(): string {
+  return join(packRoot(), "grammar", "tree-sitter-swift.wasm");
+}
 
 let languagePromise: Promise<Language> | null = null;
 let parser: Parser | null = null;
@@ -45,7 +44,7 @@ export async function swiftLanguage(): Promise<Language> {
   if (languagePromise === null) {
     languagePromise = (async () => {
       await Parser.init();
-      return Language.load(GRAMMAR_WASM);
+      return Language.load(grammarWasmPath());
     })();
   }
   return languagePromise;

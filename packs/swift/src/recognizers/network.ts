@@ -566,8 +566,9 @@ function emitDirectSend(
       line,
     );
   } else {
-    const rendered = renderUrl(construction.parts, () => null);
-    const m = methodText(construction.method);
+    const built: Construction = construction;
+    const rendered = renderUrl(built.parts, () => null);
+    const m = methodText(built.method);
     method = m === null ? "GET" : m.startsWith("{") ? null : m.toUpperCase();
     const hints: HttpHints = {
       method,
@@ -576,14 +577,14 @@ function emitDirectSend(
     };
     if (rendered.no_literal) {
       confidence = "inferred";
-      const fromCallers = construction.parts.some((p) => p.kind === "param");
+      const fromCallers = built.parts.some((p) => p.kind === "param");
       const template =
         rendered.path === "{unresolved}"
           ? ""
           : ` (template \`${rendered.path}\`)`;
       reason = fromCallers
-        ? `the path is ${describeParts(construction.parts)} of ${owner.qualified}, not a literal here; each caller's path is drawn as its own edge from the caller${template}`
-        : `the URL is ${describeParts(construction.parts)}, a value computed at runtime, with no literal path text in local scope${template}`;
+        ? `the path is ${describeParts(built.parts)} of ${owner.qualified}, not a literal here; each caller's path is drawn as its own edge from the caller${template}`
+        : `the URL is ${describeParts(built.parts)}, a value computed at runtime, with no literal path text in local scope${template}`;
       diag(
         ctx,
         "warning",
@@ -594,23 +595,21 @@ function emitDirectSend(
     } else if (!rendered.complete || rendered.placeholders.length > 0) {
       if (
         rendered.placeholders.some((p) =>
-          construction.parts.some(
+          built.parts.some(
             (x) => x.kind !== "literal" && x.kind !== "expr" && x.name === p,
           ),
         )
       ) {
         // Parameter/property placeholders: the template is partial until a caller binds them.
         confidence = "inferred";
-        reason = `path segment(s) ${rendered.placeholders.map((p) => `{${p}}`).join(", ")} come from ${describeParts(construction.parts)}; the literal part was read at line ${String(lineStart(construction.call))}`;
+        reason = `path segment(s) ${rendered.placeholders.map((p) => `{${p}}`).join(", ")} come from ${describeParts(built.parts)}; the literal part was read at line ${String(lineStart(built.call))}`;
       } else if (!rendered.complete) {
         confidence = "inferred";
-        reason = `path segment(s) ${rendered.placeholders.map((p) => `{${p}}`).join(", ")} are computed expressions; the literal part was read at line ${String(lineStart(construction.call))}`;
+        reason = `path segment(s) ${rendered.placeholders.map((p) => `{${p}}`).join(", ")} are computed expressions; the literal part was read at line ${String(lineStart(built.call))}`;
       }
     }
     if (
-      construction.parts.some(
-        (p) => p.kind === "literal" && p.text.startsWith("?{"),
-      )
+      built.parts.some((p) => p.kind === "literal" && p.text.startsWith("?{"))
     ) {
       confidence = "inferred";
       reason = `${reason === null ? "" : `${reason}; `}query string \`${rendered.query ?? ""}\` inferred from a local built with a \`?\`-prefixed literal`;
