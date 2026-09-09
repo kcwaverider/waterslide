@@ -171,7 +171,8 @@ export type UnresolvedRef = z.infer<typeof UnresolvedRefSchema>;
 
 // ---------------------------------------------------------------------------
 // `pack_data` — a pack's private channel from its per-file `parse` to its own
-// `compose`. Core never interprets it and one pack never reads another's. It
+// `compose` (and its own `rePath`, which must recompute any path-derived part).
+// Core never interprets it and one pack never reads another's. It
 // is STRIPPED by core after compose runs, before derivation: it does not reach
 // stage 5, the validator, `graph.json` or the canonical graph, so it cannot
 // affect byte-identity. It is deleted, not nulled — a field that is "ignored

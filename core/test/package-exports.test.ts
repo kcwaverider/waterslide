@@ -31,9 +31,10 @@ describe("workspace package exports match the build layout", () => {
     });
   }
 
-  it("core's built entry point exists where the exports map says (after tsc -b)", () => {
+  it("core's built entry point exists where the exports map says", () => {
+    // `npm test` builds first (root package.json), so this is a real check,
+    // not one that passes vacuously on a source-only run.
     const built = new URL("../dist/src/index.js", import.meta.url);
-    if (!existsSync(built)) return; // not built in this run; the static check above still holds
     expect(existsSync(built)).toBe(true);
   });
 });

@@ -265,8 +265,9 @@ read and validated by stage 4. So `pack_data` has three homes: on `Node` and
 | `Node`, `PartialEdge` | `pack_data: object \| null` | no | Per-entity scratch data |
 | `PackResult` → `PerFileResult.pack_data` | `pack_data: object \| null` | on `PerFileResult`, yes (null when none) | Per-file scratch data: extension spans with hashes, helper bodies, cross-file call sites — anything the five returns cannot carry without re-reading source. Returned by `parse` as a sixth key; core lifts it beside `result` |
 
-All three are written by `parse` and read by the **same** pack's `compose`
-only. Core never interprets them and one pack never reads another's.
+All three are written by `parse` and consumed only by the **same** pack, through
+its `compose` or its `rePath`. Core never interprets them and one pack never
+reads another's.
 
 **Core strips it after compose runs, before derivation.** The key is deleted,
 not nulled: it does not reach stage 5, the validator, `graph.json` or the
