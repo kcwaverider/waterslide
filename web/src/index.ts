@@ -38,6 +38,7 @@ export {
   expandSchema,
   formatLocation,
 } from "./browser/panel.js";
+export { zoomExtent, ZOOM, LEVEL_TRIGGER } from "./browser/zoom.js";
 export type {
   PanelField,
   PanelModel,
@@ -148,6 +149,7 @@ export function buildViewerHtml(
     "./browser/flow.js",
     "./browser/animation.js",
     "./browser/aggregate.js",
+    "./browser/zoom.js",
     "./browser/render.js",
   ].map(readBrowserModule);
   const title = options.title ?? "waterslide";

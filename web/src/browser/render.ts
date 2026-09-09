@@ -37,6 +37,7 @@ import {
   type BlastRadius,
 } from "./flow.js";
 import { createPlayer, type Player, type PlayerState } from "./animation.js";
+import { LEVEL_TRIGGER, zoomExtent } from "./zoom.js";
 import {
   aggregateGraph,
   hideUnresolved,
@@ -286,6 +287,10 @@ export interface ViewerHandle {
   readonly objects: D3.Selection<SVGGElement, unknown, null, undefined>;
   /** The current pan/zoom, to carry across a re-render. */
   readonly transform: () => D3.ZoomTransform;
+  /** Zoom so the mean node is `nodePx` wide, centred on a point given as fractions of the layout. */
+  focus(fx: number, fy: number, nodePx: number): void;
+  /** The layout point under the centre of the stage, as fractions of the layout. */
+  centre(): { fx: number; fy: number };
   /** §2.1: change the base size without touching zoom. */
   setMagnification(magnification: number): void;
 }
@@ -549,26 +554,39 @@ export function renderGraph(
     layout.nodes.length === 0
       ? 0
       : layout.nodes.reduce((sum, n) => sum + n.w, 0) / layout.nodes.length;
-  const reportZoom = (): void => {
+  /** CSS pixels per layout unit at k = 1, i.e. with the whole map fitted to the stage. */
+  const fitScale = (): number => {
     const rect = root.getBoundingClientRect();
-    const px = Math.min(rect.width / layout.width, rect.height / layout.height);
-    onZoom(meanNodeW * magnification * lastTransform.k * px, lastTransform.k);
+    return Math.min(rect.width / layout.width, rect.height / layout.height);
+  };
+  /** The mean node's on-screen width at k = 1. */
+  const fitNodePx = (): number => meanNodeW * magnification * fitScale();
+  const reportZoom = (): void => {
+    onZoom(fitNodePx() * lastTransform.k, lastTransform.k);
   };
 
   const zoom = d3
     .zoom<SVGSVGElement, unknown>()
-    .scaleExtent([0.15, 8])
     .on("zoom", (event: D3.D3ZoomEvent<SVGSVGElement, unknown>) => {
       lastTransform = event.transform;
       applyTransform();
       updateOffscreen();
       reportZoom();
     });
+  // The extent depends on how big the map is relative to the stage, so it is
+  // recomputed whenever that changes: at draw, on resize, on magnification.
+  const applyExtent = (): void => {
+    zoom.scaleExtent(zoomExtent(fitNodePx()));
+  };
+  applyExtent();
   svg.call(zoom);
   if (options.initialTransform !== undefined)
     svg.call(zoom.transform, options.initialTransform);
   svg.on("click", () => onSelect({ type: "none" }));
-  window.addEventListener("resize", updateOffscreen);
+  window.addEventListener("resize", () => {
+    applyExtent();
+    updateOffscreen();
+  });
   applyTransform();
   updateOffscreen();
 
@@ -619,8 +637,29 @@ export function renderGraph(
         el.classList.remove("travelled", "visited");
     },
     transform: () => lastTransform,
+    focus(fx, fy, nodePx) {
+      const fit = fitNodePx();
+      const [kMin, kMax] = zoomExtent(fit);
+      const k = Math.max(kMin, Math.min(kMax, fit > 0 ? nodePx / fit : 1));
+      // Put the layout point at these fractions under the centre of the stage.
+      const t = d3.zoomIdentity
+        .translate(
+          layout.width / 2 - k * magnification * fx * layout.width,
+          layout.height / 2 - k * magnification * fy * layout.height,
+        )
+        .scale(k);
+      svg.call(zoom.transform, t);
+    },
+    centre() {
+      const view = visibleRegion(root, layout, lastTransform, magnification);
+      return {
+        fx: (view.layout.x0 + view.layout.x1) / 2 / layout.width,
+        fy: (view.layout.y0 + view.layout.y1) / 2 / layout.height,
+      };
+    },
     setMagnification(next) {
       magnification = next > 0 ? next : 1;
+      applyExtent();
       applyTransform();
       updateOffscreen();
       reportZoom();
@@ -978,13 +1017,6 @@ const SPEED_KEY = "waterslide.speed";
 const MAGNIFICATION_KEY = "waterslide.magnification";
 
 /**
- * §2.2 trigger: step to the next level when the average on-screen node is
- * wider than this many CSS pixels, back when narrower than the lower bound.
- * Two thresholds, well apart, are the hysteresis that stops flicker.
- */
-export const LEVEL_TRIGGER = { finerAbovePx: 270, coarserBelowPx: 95 } as const;
-
-/**
  * One graph and everything that happens on it: selection, flow mode, branch
  * choice, playback, and the semantic level it is drawn at. The map is drawn
  * once per level (§0) — only a level change, which is a different graph,
@@ -1053,14 +1085,21 @@ class Session {
   setHideUnresolved(hide: boolean): void {
     if (hide === this.hideUnresolvedNodes) return;
     this.hideUnresolvedNodes = hide;
-    this.redraw();
+    this.redraw(false);
   }
 
-  private redraw(): void {
+  /**
+   * Re-draws the current level. A level change also re-scales: the new layout
+   * has a different size, so the old transform would jump the picture; the
+   * map is refocused on the same point with the mean node at the settle width.
+   */
+  private redraw(settle: boolean): void {
     const transform = this.handle.transform();
+    const centre = this.handle.centre();
     this.player.stop();
     this.view = this.aggregate(this.level);
-    this.handle = this.draw(transform);
+    this.handle = this.draw(settle ? undefined : transform);
+    if (settle) this.handle.focus(centre.fx, centre.fy, LEVEL_TRIGGER.settlePx);
     this.player = this.makePlayer();
     this.player.setLoop(this.controls.loop?.checked ?? false);
     this.player.setSpeed(Number(this.controls.speed?.value) || 1);
@@ -1136,7 +1175,7 @@ class Session {
     if (this.controls.level !== null)
       this.controls.level.value = String(target);
     this.announce(`now showing ${this.levels[target]?.name ?? "nodes"}`);
-    this.redraw();
+    this.redraw(true);
   }
 
   /** §2.2: a brief transition label, so a level change is never surprising. */
