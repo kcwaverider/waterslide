@@ -161,7 +161,7 @@ real maps prove it necessary.
 | Logic | `function`, `class`, `service`, `module` |
 | Data | `repository`, `collection`, `table`, `topic` |
 | Boundary | `external_service` |
-| Absence | `tombstone` |
+| Absence | `tombstone`, `unknown` |
 
 `tombstone` renders desaturated grey with a dashed outline — a node that used to
 be here. It is always the target of a broken edge (graph model §5.1), so it

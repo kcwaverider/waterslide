@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   byteCompare,
+  callSiteCompare,
   canonicalize,
   serializeCanonical,
 } from "../src/canonical.js";
@@ -124,5 +125,52 @@ describe("canonical serialization (graph model §7.2)", () => {
         .schemas.find((x) => x.id === "sch_note_response")
         ?.fields.map((f) => f.name),
     ).toEqual(["note_id", "body", "updated_at"]);
+  });
+});
+
+describe("callSiteCompare (graph model §3.3 collapse rule)", () => {
+  const site = (
+    line_start: number,
+    path = "a.py",
+    repo = "r",
+    line_end: number | null = null,
+  ) => ({ repo, path, line_start, line_end });
+
+  it("orders by line_start first, then path, then repo, then line_end with null first", () => {
+    expect(callSiteCompare(site(1, "z.py"), site(2, "a.py"))).toBeLessThan(0);
+    expect(callSiteCompare(site(5, "a.py"), site(5, "b.py"))).toBeLessThan(0);
+    expect(
+      callSiteCompare(site(5, "a.py", "r1"), site(5, "a.py", "r2")),
+    ).toBeLessThan(0);
+    expect(
+      callSiteCompare(site(5, "a.py", "r", null), site(5, "a.py", "r", 9)),
+    ).toBeLessThan(0);
+    expect(
+      callSiteCompare(site(5, "a.py", "r", 9), site(5, "a.py", "r", 9)),
+    ).toBe(0);
+  });
+
+  it("is a total order: sorting a shuffled list yields one arrangement", () => {
+    const sites = [
+      site(3, "b.py", "r", 4),
+      site(3, "a.py", "r", null),
+      site(1, "z.py", "r", null),
+      site(3, "a.py", "q", null),
+      site(3, "a.py", "r", 7),
+    ];
+    const sorted = [...sites].sort(callSiteCompare);
+    expect([...sites].reverse().sort(callSiteCompare)).toEqual(sorted);
+    expect(
+      sorted.map(
+        (s) =>
+          `${s.repo}:${s.path}:${String(s.line_start)}:${String(s.line_end)}`,
+      ),
+    ).toEqual([
+      "r:z.py:1:null",
+      "q:a.py:3:null",
+      "r:a.py:3:null",
+      "r:a.py:3:7",
+      "r:b.py:3:4",
+    ]);
   });
 });

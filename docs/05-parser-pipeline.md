@@ -112,9 +112,20 @@ The cache entry holds one file's stage-3 output (§3.3). Path is *not* part of t
 key but *is* part of the payload, since node ids embed it — so a moved file needs
 its cached payload re-pathed rather than re-parsed. Cheap.
 
-Cache invalidation beyond content: bump on language pack version change, and on
-graph model `schema_version` change. Both go in the entry so a stale entry is
-detected rather than trusted.
+Cache invalidation beyond content: bump on language pack version change, on
+graph model `schema_version` change, and on a change to the pack's resolved
+options (the `packs.{id}` config block, hashed canonically) — `source_roots`
+changes every `provides` name, so without it in the key a stale entry is trusted
+silently. All three go in the entry so a stale entry is detected rather than
+trusted.
+
+**Re-pathing recomputes rather than rewrites.** Node ids embed the path and, in
+Python, `provides.name` is derived from it — exactly the language-specific
+mapping the pack boundary exists to hold, so core cannot do the rewrite. A pack
+may implement `rePath(result, repo, path)` (§3.3); core calls it on every cache
+hit whose repo or path differs from the payload's, and the pack recomputes every
+path-derived field. A pack without `rePath` gets a cache miss for a moved file
+instead. Safe, and it costs one parse.
 
 ### 2.2 The resolution pass always re-runs
 
@@ -201,6 +212,38 @@ and `entry_point_kind` fields on a node, per graph model §2.
 > lacked — see §3.4 for why it cannot be dropped. `diagnostics` is shaped by
 > graph model §10.
 
+#### Optional pack members: `compose` and `rePath`
+
+| Member | Signature | Called |
+|---|---|---|
+| `compose` | `compose?(results: PerFileResult[]): PackPatch` | Once per pack, after stage 3, over every file the pack claimed |
+| `rePath` | `rePath?(result: PerFileResult, repo, path): PerFileResult` | On a cache hit whose repo or path differs from the payload's (§2.1) |
+
+`PerFileResult` is `{ repo, path, result }` — one file's five returns plus where
+they came from.
+
+**`compose` is a pack-level cross-file pass and is never cached.** It runs in
+full on every parse, cached files included, for the same reason stage 4 does
+(§2.2). Core passes `results` sorted by `(repo, path)` byte-wise and packs must
+not re-sort; that order is what makes the output immune to shuffled discovery
+order. A `PackPatch` carries `nodes`, `edges`, `schemas`, `provides`,
+`node_updates` and `diagnostics`:
+
+| A patch | Allowed |
+|---|---|
+| Add nodes, edges, schemas, provides | Yes |
+| Add a source span to a node emitted by another file (`node_updates[].add_sources`) | Yes |
+| Set or overwrite `parent` | Yes |
+| Annotate `label`, `is_entry_point`, `entry_point_kind`, `tags` | Yes |
+| Change a node's id | **No** |
+| Remove a node | **No** |
+
+Core enforces the table rather than trusting the pack: a violating update is
+dropped with a `rejected_pack_patch` diagnostic. A renamed node breaks identity
+for every saved position and the baseline. In a `NodeUpdate` an absent key means
+"leave unchanged" — the one place graph model §2.5's always-present rule does
+not apply, because `parent: null` and `parent` absent mean different things.
+
 ### 3.4 `provides`: why the fifth return exists
 
 The core matches an outgoing reference like `memory_service.display` against
@@ -216,10 +259,19 @@ exactly what the pack boundary exists to prevent. So the pack states it.
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `name` | string | yes | The name others may use, e.g. `services.memory_service.display` |
-| `node_id` | string | yes | The node it resolves to |
+| `node_id` | string \| null | yes | The node it resolves to. Non-null exactly when `alias_of` is null |
+| `alias_of` | string \| null | yes | Another **name** this entry forwards to, for Python `__init__.py` re-exports and Swift `typealias`. Core follows alias chains in stage 4, capped at 8 hops; a cycle or an alias to nothing is dropped with an `unresolvable_provide_alias` diagnostic |
+| `ref_kind` | enum | yes | Same enum as `UnresolvedRef.ref_kind` (§3.6). Stage 4 keys one index by `(ref_kind, name, scope)` and matches all five kinds uniformly |
 | `visibility` | enum | yes | `public` \| `module` \| `private`. Narrows match scope |
 | `scope` | enum | yes | `global` \| `file`. See below |
 | `scope_path` | string \| null | if `scope: file` | The file within which the bare name is valid |
+
+**Routes are `http` provides.** A framework recognizer publishes each route as a
+global, public provide with `ref_kind: http` and the name
+`"{METHOD} {path_template}"` — method uppercase, one space, path verbatim from
+prefix composition, one entry per method for a multi-method decorator. Stage 4
+matches an `http` reference against that exact string, not against segment-shape
+heuristics.
 
 One node may have several `provides` entries — a Python function is referable as
 `module.func` and, after `from module import func`, as a bare name within the
@@ -312,9 +364,9 @@ What a pack emits in an edge's `to` when the target lives elsewhere.
 | `ref_kind` | `value` | `hints` |
 |---|---|---|
 | `symbol` | Qualified name after alias resolution | `{ arity, receiver_type }` |
-| `http` | Path literal or template | `{ method, base_url_expr }` |
+| `http` | Path literal or template | `{ method, base_url_expr, query }` — `query` is a query string parsed out of the literal, without the `?`, or null |
 | `topic` | Topic string | `{ direction: "publish" \| "subscribe" }` |
-| `datastore` | Collection or table name | `{ operation: "read" \| "write" }` |
+| `datastore` | Collection or table name | `{ operation: "read" \| "write", store: "mongo" \| "sql", namespace: string \| null }` — `namespace` is the db (Mongo) or schema (SQL); null when the pack cannot see it |
 | `external` | Vendor surface, e.g. `cohere/embed` | `{ sdk_symbol }` |
 
 ```jsonc
@@ -357,7 +409,7 @@ matching — this is the most likely place for a subtle wrong-edge bug to enter.
 | `symbol` | `provides` index, respecting `visibility` | `certain` on exact match |
 | `http` | Route table from framework recognizers | `inferred` — path template matching is convention |
 | `topic` | Publish and subscribe sets, by string equality | `inferred` — the broker holds the real mapping |
-| `datastore` | Collection nodes, minted on demand | `inferred` when derived from an entity class |
+| `datastore` | Collection nodes, minted on demand as `{store}:{namespace}.{value}`. A null `namespace` mints `{store}:unknown.{value}` and emits `undeclared_datastore_namespace` naming the collection and the referencing file — a collection whose db name we cannot see is still a real collection we know the name of, and it draws | `inferred` when derived from an entity class |
 | `external` | Known-vendor table, node minted if absent | `certain` on SDK symbol, `inferred` on bare URL |
 
 Every non-`certain` result must carry a `confidence_reason` written for a human:
@@ -375,7 +427,7 @@ client — *is* the unmatched reference. Compare against `baseline.json`:
 | Situation | Result |
 |---|---|
 | Ref unmatched, and the edge existed in baseline | `is_broken: true`, with `broken_reason` |
-| Ref unmatched, and no baseline entry | Dangling edge to a synthetic `unknown` node |
+| Ref unmatched, and no baseline entry | Dangling edge to a synthetic `unknown` node: id `unknown:{ref_kind}/{value}`, kind `unknown`, `inferred` with a reason naming the ref and its origin, tier inherited from the referencing edge's `from` node (graph model §1, §2.1) |
 | Ref matched, and was broken in baseline | Silently healed. No badge |
 
 ### 4.3 Ambiguous matches

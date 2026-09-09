@@ -67,3 +67,5 @@ coincidence of index is not worth breaking either fixture to avoid.
 | `wrong-type.json` | `E_TYPE` | is_entry_point is the string "yes" instead of a boolean |
 | `unknown-key.json` | `E_UNKNOWN_KEY` | node carries a key the model does not define |
 | `not-an-object.json` | `E_NOT_OBJECT` | a JSON array, not a graph object |
+| `repo-named-unknown.json` | `E_ID_FORMAT` | a repo named 'unknown' collides with the fixed scope minted for dangling references (invariant 18); built from `unknown-dangling-refs.json` |
+| `unknown-illegal-ref-kind.json` | `E_ID_FORMAT` | an `unknown:` id whose ref_kind 'grpc' is not an UnresolvedRef kind; the locator must be `{ref_kind}/{value}` (invariant 18); built from `unknown-dangling-refs.json` |

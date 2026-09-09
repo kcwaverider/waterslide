@@ -1,0 +1,189 @@
+{
+  "schema_version": 1,
+  "tier_config_hash": "sha256:e3b0c44298fc1c14",
+  "repos": [
+    {
+      "name": "tapistree",
+      "commit": "0123456789abcdef0123456789abcdef01234567"
+    },
+    {
+      "name": "tapistree-ios",
+      "commit": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "name": "unknown",
+      "commit": "ffffffffffffffffffffffffffffffffffffffff"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "tapistree-ios:Sources/Services/NoteService.swift",
+      "kind": "module",
+      "label": "NoteService.swift",
+      "tier": "ui_logic",
+      "parent": null,
+      "sources": [
+        {
+          "repo": "tapistree-ios",
+          "path": "Sources/Services/NoteService.swift",
+          "line_start": 1,
+          "line_end": 120,
+          "hash": "sha256:be7ea0d110454fbb"
+        }
+      ],
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "tapistree-ios:Sources/Services/NoteService.swift#NoteService.archive",
+      "kind": "client_service",
+      "label": "NoteService.archive",
+      "tier": "ui_logic",
+      "parent": "tapistree-ios:Sources/Services/NoteService.swift",
+      "sources": [
+        {
+          "repo": "tapistree-ios",
+          "path": "Sources/Services/NoteService.swift",
+          "line_start": 98,
+          "line_end": 112,
+          "hash": "sha256:1c0d7d5a9b3e2f41"
+        }
+      ],
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "tapistree:api/services/note_service.py",
+      "kind": "module",
+      "label": "note_service",
+      "tier": "domain",
+      "parent": null,
+      "sources": [
+        {
+          "repo": "tapistree",
+          "path": "api/services/note_service.py",
+          "line_start": 1,
+          "line_end": 140,
+          "hash": "sha256:7807b67547cec2a3"
+        }
+      ],
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "tapistree:api/services/note_service.py#NoteService.archive",
+      "kind": "function",
+      "label": "NoteService.archive",
+      "tier": "domain",
+      "parent": "tapistree:api/services/note_service.py",
+      "sources": [
+        {
+          "repo": "tapistree",
+          "path": "api/services/note_service.py",
+          "line_start": 63,
+          "line_end": 74,
+          "hash": "sha256:4f1e8a2c6d0b9e73"
+        }
+      ],
+      "confidence": "certain",
+      "confidence_reason": null,
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "unknown:http//notes/{id}/archive",
+      "kind": "unknown",
+      "label": "POST /notes/{id}/archive",
+      "tier": "ui_logic",
+      "parent": null,
+      "sources": [],
+      "confidence": "inferred",
+      "confidence_reason": "unresolved http reference 'POST /notes/{id}/archive' from Sources/Services/NoteService.swift:104 matched no route",
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    },
+    {
+      "id": "unknown:symbol/memory_service.forget",
+      "kind": "unknown",
+      "label": "memory_service.forget",
+      "tier": "domain",
+      "parent": null,
+      "sources": [],
+      "confidence": "inferred",
+      "confidence_reason": "unresolved symbol reference 'memory_service.forget' from api/services/note_service.py:70 matched no provide",
+      "is_entry_point": false,
+      "entry_point_kind": null,
+      "is_infrastructure": false,
+      "tags": []
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_e4724f0469ce36e9",
+      "from": "tapistree:api/services/note_service.py#NoteService.archive",
+      "to": "unknown:symbol/memory_service.forget",
+      "kind": "call",
+      "label": "forget",
+      "schema_id": null,
+      "response_schema_id": null,
+      "confidence": "inferred",
+      "confidence_reason": "unresolved symbol reference 'memory_service.forget' matched no provide; drawn to a synthetic unknown node",
+      "condition": null,
+      "exclusive_group": null,
+      "is_error_path": false,
+      "source": {
+        "repo": "tapistree",
+        "path": "api/services/note_service.py",
+        "line_start": 70,
+        "line_end": null
+      },
+      "source_count": 1,
+      "branch_ordinal": null,
+      "is_broken": false,
+      "broken_reason": null,
+      "skips_tiers": []
+    },
+    {
+      "id": "e_ebb68e62b8bf5dca",
+      "from": "tapistree-ios:Sources/Services/NoteService.swift#NoteService.archive",
+      "to": "unknown:http//notes/{id}/archive",
+      "kind": "http_request",
+      "label": "POST /notes/{id}/archive",
+      "schema_id": null,
+      "response_schema_id": null,
+      "confidence": "inferred",
+      "confidence_reason": "unresolved http reference 'POST /notes/{id}/archive' matched no route; drawn to a synthetic unknown node",
+      "condition": null,
+      "exclusive_group": null,
+      "is_error_path": false,
+      "source": {
+        "repo": "tapistree-ios",
+        "path": "Sources/Services/NoteService.swift",
+        "line_start": 104,
+        "line_end": null
+      },
+      "source_count": 1,
+      "branch_ordinal": null,
+      "is_broken": false,
+      "broken_reason": null,
+      "skips_tiers": []
+    }
+  ],
+  "schemas": []
+}

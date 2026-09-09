@@ -315,13 +315,13 @@ describe("invariant 17: canonical order is enforced in canonical shape only", ()
 });
 
 describe("invariant 18: node id format", () => {
-  it("accepts all six scope forms in the valid fixtures", () => {
+  it("accepts all seven scope forms in the valid fixtures", () => {
     const scopes = new Set<string>();
     for (const f of validFiles) {
       for (const n of load(f).nodes) {
         const scope = n.id.slice(0, n.id.indexOf(":"));
         scopes.add(
-          ["svc", "mongo", "sql", "topic", "ext"].includes(scope)
+          ["svc", "mongo", "sql", "topic", "ext", "unknown"].includes(scope)
             ? scope
             : "{repo}",
         );
@@ -333,8 +333,75 @@ describe("invariant 18: node id format", () => {
       "sql",
       "svc",
       "topic",
+      "unknown",
       "{repo}",
     ]);
+  });
+
+  it("accepts unknown:{ref_kind}/{value} for every ref_kind, with slashes in the value", () => {
+    for (const id of [
+      "unknown:symbol/memory_service.display",
+      "unknown:http//notes/{id}",
+      "unknown:topic/note.indexed",
+      "unknown:datastore/notes",
+      "unknown:external/cohere/embed",
+    ]) {
+      const g = load("single-repo-minimal.json");
+      g.nodes.push({
+        id,
+        kind: "unknown",
+        label: "x",
+        tier: "domain",
+        parent: null,
+        sources: [],
+        confidence: "inferred",
+        confidence_reason: "unresolved reference",
+        is_entry_point: false,
+        entry_point_kind: null,
+        is_infrastructure: false,
+        tags: [],
+      });
+      g.nodes.sort((a, b) => byteSort(a.id, b.id));
+      expect(validate(g, { shape: "canonical" }).errors).toEqual([]);
+    }
+  });
+
+  it("rejects an unknown id with an illegal ref_kind, an empty value, or no separator", () => {
+    for (const id of ["unknown:grpc/x", "unknown:symbol/", "unknown:symbol"]) {
+      const g = load("single-repo-minimal.json");
+      g.nodes.push({
+        id,
+        kind: "unknown",
+        label: "x",
+        tier: "domain",
+        parent: null,
+        sources: [],
+        confidence: "inferred",
+        confidence_reason: "unresolved reference",
+        is_entry_point: false,
+        entry_point_kind: null,
+        is_infrastructure: false,
+        tags: [],
+      });
+      g.nodes.sort((a, b) => byteSort(a.id, b.id));
+      const result = validate(g, { shape: "canonical" });
+      expect(result.ok).toBe(false);
+      if (!result.ok)
+        expect(result.errors.map((e) => e.code)).toEqual(["E_ID_FORMAT"]);
+    }
+  });
+
+  it("rejects non-empty skips_tiers on an edge into an unknown node (invariant 16)", () => {
+    const g = load("unknown-dangling-refs.json");
+    const e = g.edges.find((x) => x.to.startsWith("unknown:"));
+    if (!e) throw new Error("fixture has no edge into an unknown node");
+    e.skips_tiers = ["api"];
+    const result = validate(g, { shape: "canonical" });
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.errors.map((e) => e.code)).toEqual([
+        "E_SKIPS_TIERS_EXCLUDED",
+      ]);
   });
 
   it("rejects a mongo id without a dot, an ext id without a slash, and an id with no scope", () => {

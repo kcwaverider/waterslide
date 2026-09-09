@@ -208,5 +208,15 @@
     "code": "E_NOT_OBJECT",
     "path": "$",
     "why": "a JSON array, not a graph object"
+  },
+  "repo-named-unknown.json": {
+    "code": "E_ID_FORMAT",
+    "path": "$.repos[2].name",
+    "why": "a repo named 'unknown' collides with the fixed id scope minted for dangling references (invariant 18); it has no nodes so nothing else fires"
+  },
+  "unknown-illegal-ref-kind.json": {
+    "code": "E_ID_FORMAT",
+    "path": "$.nodes[4].id",
+    "why": "an unknown-scoped id whose ref_kind 'grpc' is not an UnresolvedRef kind; the locator must be {ref_kind}/{value} (invariant 18); the edge to it is updated so only invariant 18 fires"
   }
 }

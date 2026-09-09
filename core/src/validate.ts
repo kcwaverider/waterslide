@@ -1,6 +1,11 @@
 import type { z } from "zod";
 import { byteCompare, spanCompare } from "./canonical.js";
-import { FIXED_ID_SCOPES, SKIPS_TIERS_EXCLUDED_KINDS } from "./model/enums.js";
+import {
+  FIXED_ID_SCOPES,
+  RefKindSchema,
+  SKIPS_TIERS_EXCLUDED_KINDS,
+  UNKNOWN_SCOPE,
+} from "./model/enums.js";
 import {
   CanonicalGraphSchema,
   GRAPH_SCHEMA_VERSION,
@@ -574,6 +579,23 @@ function checkNodeId(
   }
   const scope = node.id.slice(0, colon);
   const locator = node.id.slice(colon + 1);
+
+  if (scope === UNKNOWN_SCOPE) {
+    // `unknown:{ref_kind}/{value}` — ref_kind is a legal UnresolvedRef kind and
+    // value is non-empty. Only the first "/" separates them: an http value is a
+    // path and carries its own slashes verbatim.
+    const slash = locator.indexOf("/");
+    const refKind = slash === -1 ? locator : locator.slice(0, slash);
+    const value = slash === -1 ? "" : locator.slice(slash + 1);
+    if (!RefKindSchema.safeParse(refKind).success || value.length === 0) {
+      err(
+        "E_ID_FORMAT",
+        `${path}.id`,
+        `node id "${node.id}" has scope "unknown" but its locator is not {ref_kind}/{value} with ref_kind one of ${RefKindSchema.options.join(", ")} and a non-empty value (graph model §1, parser §4.2)`,
+      );
+    }
+    return;
+  }
 
   if (FIXED_ID_SCOPES.has(scope)) {
     const separator =

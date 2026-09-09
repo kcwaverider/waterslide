@@ -54,7 +54,8 @@
               "external_service",
               "module",
               "service",
-              "tombstone"
+              "tombstone",
+              "unknown"
             ]
           },
           "label": {
